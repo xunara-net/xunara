@@ -3,9 +3,12 @@ module github.com/xunara/xunara
 go 1.27.1
 
 require (
+	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/go-chi/chi/v5 v5.3.2
+	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/tailscale/hujson v0.0.0-20260727124030-b80ff77dac4f
 	golang.org/x/net v0.59.0
+	golang.org/x/oauth2 v0.37.0
 	modernc.org/sqlite v1.60.1
 	tailscale.com v1.104.0
 )

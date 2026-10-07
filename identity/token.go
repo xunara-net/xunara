@@ -9,6 +9,9 @@ import (
 	"fmt"
 )
 
+// base64URL is the unpadded URL-safe encoding every secret uses.
+func base64URL(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
+
 // secretBytes is the entropy of every bearer secret this package generates:
 // session tokens, OAuth state, nonces, PKCE verifiers and browser cookies.
 const secretBytes = 32

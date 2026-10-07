@@ -225,6 +225,15 @@ reference/{go-oidc,oauth2,dex,webauthn}
     重复审批幂等、他人重放拒绝、过期拒绝。
   - 测试：`identity/state_machine_test.go`（生命周期 + 重放/过期/轮换/跨用户）。
 - `AuthTransaction` / `Session` / `DeviceAuthorization` **三者分离**（见 `AGENTS.md` §10）。
+- M4b-2 已完成：Generic OIDC Provider（`identity/oidc.go`）。
+  - 懒发现（启动不依赖 IdP 可用性）+ JWKS 自动轮换（go-oidc RemoteKeySet）。
+  - 强制校验：state（常量时间）、nonce、PKCE(S256)、签名（仅非对称算法，拒绝 HS*）、
+    issuer、audience、exp/nbf（库）+ iat 未来/过旧（本层，含 clock skew 与 MaxTokenAge）。
+  - 端点安全：issuer/授权/令牌/redirect URL 必须 https（或 loopback http），
+    拒绝算法混淆与明文端点；redirect_uri 只来自配置。
+  - 测试：`identity/oidc_test.go` 内置假 IdP（discovery/JWKS/token），覆盖
+    错误 state/nonce/issuer/audience/过期/未来 iat/过旧 iat/未知签名密钥/无 id_token/
+    PKCE 不匹配/code 重放/JWKS 轮换/懒发现失败关闭/URL 校验。
 - External Identity 唯一键 `(provider_id, subject)`，Email 仅属性。
 - OIDC 安全清单：state / nonce / PKCE(S256) / issuer / audience / signature / exp / iat / redirect allowlist / JWKS rotation / clock skew / code & state replay。
 - Session 存储必须支持多实例、吊销、过期、审计、轮换（禁止 server-local map 作为核心存储）。
