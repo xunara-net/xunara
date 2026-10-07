@@ -1,0 +1,38 @@
+package state
+
+import (
+	"errors"
+
+	"tailscale.com/types/key"
+)
+
+// ErrNodeKeyExists is returned by [Store.CreateNode] when a node with the same
+// node key already exists.
+var ErrNodeKeyExists = errors.New("node key already registered")
+
+// Store is the persistence boundary for tailnet state.
+//
+// Implementations must be safe for concurrent use. Node values returned by the
+// getters are copies: mutating them must not affect stored state. Callers
+// persist changes through [Store.UpdateNode].
+type Store interface {
+	// GetNodeByID returns the node with the given server-local ID.
+	GetNodeByID(id NodeID) (Node, bool)
+	// GetNodeByNodeKey returns the node registered under a node key.
+	GetNodeByNodeKey(nk key.NodePublic) (Node, bool)
+	// GetNodesByMachineKey returns all nodes sharing a machine key. A machine
+	// can host more than one node, so this is a list.
+	GetNodesByMachineKey(mk key.MachinePublic) []Node
+	// GetNodeByStableID returns the node with the given stable ID.
+	GetNodeByStableID(id string) (Node, bool)
+	// ListNodes returns every node in the store.
+	ListNodes() []Node
+
+	// CreateNode assigns an ID, stable ID, addresses and creation time to a new
+	// node and stores it.
+	CreateNode(n *Node) error
+	// UpdateNode replaces a stored node. It fails if the node is unknown.
+	UpdateNode(n Node) error
+	// DeleteNode removes a node. It is a no-op if the node is unknown.
+	DeleteNode(id NodeID) error
+}

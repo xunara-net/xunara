@@ -1,0 +1,254 @@
+package control
+
+import (
+	"context"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"slices"
+	"time"
+
+	"tailscale.com/tailcfg"
+	"tailscale.com/util/zstdframe"
+
+	"github.com/xunara/xunara/control/mapper"
+	"github.com/xunara/xunara/state"
+)
+
+// reservedResponseHeaderSize is the 4-byte little-endian length prefix that
+// precedes every MapResponse on the wire.
+const reservedResponseHeaderSize = 4
+
+// keepAliveInterval is how often a keep-alive MapResponse is sent on a
+// streaming (long-poll) map session.
+const keepAliveInterval = 50 * time.Second
+
+// errNodeNotInStore distinguishes an unknown node key from a node key presented
+// with the wrong machine key. Both are answered 404, but only the former means
+// the node is gone and the client should re-authenticate.
+var errNodeNotInStore = errors.New("node not found")
+
+// handleMap implements POST /machine/map inside a Noise session.
+//
+// This is the busiest endpoint: it carries endpoint/hostinfo updates (the "lite"
+// update) and maintains the long poll that pushes netmap changes.
+func (ns *noiseServer) handleMap(w http.ResponseWriter, req *http.Request) {
+	var mapRequest tailcfg.MapRequest
+	if err := json.NewDecoder(req.Body).Decode(&mapRequest); err != nil {
+		httpError(w, err)
+		return
+	}
+
+	if ns.rejectUnsupported(w, mapRequest.Version, mapRequest.NodeKey) {
+		return
+	}
+
+	node, err := ns.getAndValidateNode(mapRequest)
+	if err != nil {
+		// A streaming client whose node is gone needs a signalled "expired"
+		// response to drive it back to NeedsLogin; there is no explicit
+		// "deleted" field. See tailscale/tailscale#14636 semantics via
+		// reference/headscale/hscontrol/noise.go.
+		if errors.Is(err, errNodeNotInStore) && mapRequest.Stream {
+			expired := &tailcfg.MapResponse{
+				Node: &tailcfg.Node{
+					Key:       mapRequest.NodeKey,
+					KeyExpiry: time.Unix(1, 0).UTC(),
+					Expired:   true,
+				},
+			}
+			if werr := writeMapResponse(w, mapRequest.Compress, true, expired); werr != nil {
+				ns.server.log.Warn("writing expired map response", "err", werr)
+			}
+			return
+		}
+		httpError(w, err)
+		return
+	}
+
+	// Persist anything the request advertises about the node.
+	node = ns.server.recordMapRequest(node, mapRequest)
+
+	// Lite update: the client wants its endpoints refreshed without a new
+	// netmap. It only checks the status code.
+	if !mapRequest.Stream && mapRequest.OmitPeers {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	if mapRequest.Stream {
+		ns.serveStreamingMap(req.Context(), w, node, mapRequest)
+		return
+	}
+
+	if err := writeMapResponse(w, mapRequest.Compress, true, ns.server.fullMap(node, mapRequest)); err != nil {
+		ns.server.log.Warn("writing map response", "err", err)
+	}
+}
+
+// serveStreamingMap sends the initial netmap and then pushes a fresh netmap on
+// every change, interleaved with keep-alives, until the client goes away.
+func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWriter, node state.Node, req tailcfg.MapRequest) {
+	s := ns.server
+
+	s.markOnline(node.ID)
+	defer s.markOffline(node.ID)
+
+	updates, cancel := s.watch()
+	defer cancel()
+
+	if err := writeMapResponse(w, req.Compress, true, s.fullMap(node, req)); err != nil {
+		s.log.Debug("writing initial map response", "err", err)
+		return
+	}
+
+	ticker := time.NewTicker(keepAliveInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+
+		case <-ticker.C:
+			if err := writeMapResponse(w, req.Compress, true, &tailcfg.MapResponse{KeepAlive: true}); err != nil {
+				return
+			}
+
+		case <-updates:
+			self, ok := s.store.GetNodeByID(node.ID)
+			if !ok {
+				return
+			}
+			msg := s.updateMap(self)
+			if req.OmitPeers {
+				msg.Peers = nil
+			}
+			if err := writeMapResponse(w, req.Compress, true, msg); err != nil {
+				return
+			}
+		}
+	}
+}
+
+// fullMap builds the first netmap for a node: everything a client needs.
+func (s *Server) fullMap(self state.Node, req tailcfg.MapRequest) *tailcfg.MapResponse {
+	resp := mapper.Full(self, s.store.ListNodes(), s.mapperConfig(), s.isOnline, req.Version)
+	if req.OmitPeers {
+		resp.Peers = nil
+	}
+	return resp
+}
+
+// updateMap builds a netmap update for a node: only the fields that can change.
+func (s *Server) updateMap(self state.Node) *tailcfg.MapResponse {
+	return mapper.Update(self, s.store.ListNodes(), s.isOnline)
+}
+
+func (s *Server) mapperConfig() mapper.Config {
+	return mapper.Config{
+		Domain:  s.cfg.Domain,
+		DERPMap: s.cfg.DERPMap,
+	}
+}
+
+// getAndValidateNode looks the node up by node key and confirms the Noise
+// session's machine key matches the stored one (identity binding).
+func (ns *noiseServer) getAndValidateNode(req tailcfg.MapRequest) (state.Node, error) {
+	node, ok := ns.server.store.GetNodeByNodeKey(req.NodeKey)
+	if !ok {
+		return state.Node{}, NewHTTPError(http.StatusNotFound, "node not found", errNodeNotInStore)
+	}
+	if node.MachineKey != ns.machineKey {
+		return state.Node{}, NewHTTPError(http.StatusNotFound, "machine key does not match node", nil)
+	}
+	return node, nil
+}
+
+// recordMapRequest persists the node facts a MapRequest advertises, wakes
+// netmap watchers when something actually changed, and returns the updated
+// node.
+func (s *Server) recordMapRequest(node state.Node, req tailcfg.MapRequest) state.Node {
+	changed := false
+
+	if req.Version != 0 && req.Version != node.CapVer {
+		node.CapVer = req.Version
+		changed = true
+	}
+	if !req.DiscoKey.IsZero() && node.DiscoKey != req.DiscoKey {
+		node.DiscoKey = req.DiscoKey
+		changed = true
+	}
+	if len(req.Endpoints) > 0 && !slices.Equal(node.Endpoints, req.Endpoints) {
+		node.Endpoints = slices.Clone(req.Endpoints)
+		changed = true
+	}
+	if req.Hostinfo != nil && node.Hostinfo != req.Hostinfo {
+		node.Hostinfo = req.Hostinfo
+		if req.Hostinfo.Hostname != "" {
+			node.Hostname = req.Hostinfo.Hostname
+		}
+		changed = true
+	}
+	if node.HomeDERP == 0 {
+		if region, ok := s.singleDERPRegion(); ok {
+			node.HomeDERP = region
+			changed = true
+		}
+	}
+
+	if !changed {
+		return node
+	}
+	if err := s.store.UpdateNode(node); err != nil {
+		s.log.Warn("updating node from map request", "node_id", int(node.ID), "err", err)
+		return node
+	}
+	s.notifyWatchers()
+	return node
+}
+
+// singleDERPRegion returns the configured DERP region when the tailnet has
+// exactly one, so nodes can be homed without a latency hunt.
+func (s *Server) singleDERPRegion() (tailcfg.DERPRegionID, bool) {
+	m := s.cfg.DERPMap
+	if m == nil || len(m.Regions) != 1 {
+		return 0, false
+	}
+	for id := range m.Regions {
+		return id, true
+	}
+	return 0, false
+}
+
+// writeMapResponse writes a length-prefixed (optionally zstd-compressed)
+// MapResponse.
+func writeMapResponse(w http.ResponseWriter, compress string, flush bool, msg *tailcfg.MapResponse) error {
+	body, err := json.Marshal(msg)
+	if err != nil {
+		return err
+	}
+
+	if compress == "zstd" {
+		body = zstdframe.AppendEncode(nil, body, zstdframe.FastestCompression)
+	}
+
+	data := make([]byte, reservedResponseHeaderSize, reservedResponseHeaderSize+len(body))
+	// The JSON/zstd body length is bounded by the request body limit; the cast
+	// is safe.
+	binary.LittleEndian.PutUint32(data, uint32(len(body)))
+	data = append(data, body...)
+
+	if _, err := w.Write(data); err != nil {
+		return err
+	}
+
+	if flush {
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
+
+	return nil
+}
