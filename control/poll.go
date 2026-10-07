@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"tailscale.com/tailcfg"
@@ -141,6 +142,9 @@ func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWri
 			if sess.syncPacketFilter(msg, s.packetFilterFor(self), req.Version) {
 				changed = true
 			}
+			if sess.syncClientVersion(msg) {
+				changed = true
+			}
 			if !changed {
 				// Nothing the client can observe changed (for example a
 				// keep-alive woke us); sending a frame would only burn battery.
@@ -194,16 +198,52 @@ func (s *Server) updateMap(self state.Node) *tailcfg.MapResponse {
 // mapperConfig snapshots the tailnet-wide configuration for one netmap build.
 func (s *Server) mapperConfig() mapper.Config {
 	return mapper.Config{
-		Domain:       s.cfg.Domain,
-		Resolvers:    s.resolvers,
-		Routes:       s.dnsRoutes,
-		ExtraRecords: s.store.ListDNSRecords(),
-		DERPMap:      s.cfg.DERPMap,
-		FilterFor:    s.packetFilterFor,
-		UserProfile:  s.UserProfile,
-		SSHPolicyFor: s.sshPolicyFor,
-		NodeCaps:     s.nodeCapsFunc(),
+		Domain:        s.cfg.Domain,
+		Resolvers:     s.resolvers,
+		Routes:        s.dnsRoutes,
+		ExtraRecords:  s.store.ListDNSRecords(),
+		DERPMap:       s.cfg.DERPMap,
+		FilterFor:     s.packetFilterFor,
+		UserProfile:   s.UserProfile,
+		SSHPolicyFor:  s.sshPolicyFor,
+		NodeCaps:      s.nodeCapsFunc(),
+		ClientVersion: s.clientVersionFor(),
 	}
+}
+
+// clientVersionFor builds the client-version advisory from the configured
+// latest version and the version each node reported in its Hostinfo. It
+// returns nil when the feature is disabled or the node's version is unknown.
+//
+// The comparison is on the short version ("1.88.3"), so a client running
+// "1.88.3-t1234abcd" matches and gets RunningLatest.
+func (s *Server) clientVersionFor() func(state.Node) *tailcfg.ClientVersion {
+	latest := shortVersion(s.cfg.LatestClientVersion)
+	if latest == "" {
+		return nil
+	}
+	return func(n state.Node) *tailcfg.ClientVersion {
+		if n.Hostinfo == nil || shortVersion(n.Hostinfo.IPNVersion) == "" {
+			// The node never told us what it runs; advising would be a guess.
+			return nil
+		}
+		if shortVersion(n.Hostinfo.IPNVersion) == latest {
+			return &tailcfg.ClientVersion{RunningLatest: true}
+		}
+		return &tailcfg.ClientVersion{
+			LatestVersion: latest,
+			Notify:        true,
+			NotifyURL:     s.cfg.ClientVersionURL,
+			NotifyText:    "A newer Tailscale client (" + latest + ") is available.",
+		}
+	}
+}
+
+// shortVersion strips the build suffix from a Tailscale version string, so
+// "1.88.3-t1234abcd" and "1.88.3" compare equal.
+func shortVersion(v string) string {
+	short, _, _ := strings.Cut(v, "-")
+	return strings.TrimSpace(short)
 }
 
 // sshPolicyFor compiles the SSH policy for a node as an SSH destination.
@@ -293,6 +333,17 @@ func (s *Server) recordMapRequest(node state.Node, req tailcfg.MapRequest) state
 			changed = true
 		}
 	}
+	if node.Hostinfo != nil && node.Hostinfo.NetInfo != nil {
+		if region := node.Hostinfo.NetInfo.PreferredDERP; region != 0 && region != node.HomeDERP && s.derpRegionKnown(region) {
+			// Home DERP selection is delegated to the client: it measures DERP
+			// latency and reports the winner, and the control plane adopts it
+			// (mirrors headscale's mapper, which publishes
+			// NetInfo.PreferredDERP as the node's HomeDERP). The report is
+			// untrusted input, so only regions this server advertises count.
+			node.HomeDERP = region
+			changed = true
+		}
+	}
 	if node.HomeDERP == 0 {
 		if region, ok := s.singleDERPRegion(); ok {
 			node.HomeDERP = region
@@ -322,6 +373,17 @@ func (s *Server) singleDERPRegion() (tailcfg.DERPRegionID, bool) {
 		return id, true
 	}
 	return 0, false
+}
+
+// derpRegionKnown reports whether a DERP region is part of the configured DERP
+// map.
+func (s *Server) derpRegionKnown(region tailcfg.DERPRegionID) bool {
+	m := s.cfg.DERPMap
+	if m == nil {
+		return false
+	}
+	r, ok := m.Regions[region]
+	return ok && r != nil
 }
 
 // writeMapResponse writes a length-prefixed (optionally zstd-compressed)

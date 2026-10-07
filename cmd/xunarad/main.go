@@ -25,6 +25,8 @@ func main() {
 		serverURL    = flag.String("server-url", "", "externally reachable base URL (defaults to http://<listen>)")
 		domain       = flag.String("domain", "", "tailnet MagicDNS domain (empty disables MagicDNS)")
 		derpMapPath  = flag.String("derp-map", "", "path to a tailcfg.DERPMap JSON file to advertise to clients")
+		clientVer    = flag.String("client-version", "", "latest client version to advertise to clients (e.g. 1.88.3); empty disables the advisory")
+		clientVerURL = flag.String("client-version-url", "", "URL opened by the client's update notification (optional)")
 		policyPath   = flag.String("policy", "", "path to an ACL policy document (HuJSON); empty allows everything")
 		logLevel     = flag.String("log-level", "info", "log level: debug|info|warn|error")
 		oidcIssuer   = flag.String("oidc-issuer", "", "OIDC issuer URL; enables OIDC login when set")
@@ -80,17 +82,19 @@ func main() {
 	}
 
 	srv, err := control.New(control.Config{
-		ServerURL:       *serverURL,
-		ListenAddr:      *listen,
-		StateDir:        *stateDir,
-		Domain:          *domain,
-		Nameservers:     nameservers,
-		DNSRoutes:       routes,
-		PolicyPath:      *policyPath,
-		DERPMap:         derpMap,
-		OIDCProviders:   oidcProviders,
-		AllowLocalLogin: *allowLocalLogin,
-		Logger:          logger,
+		ServerURL:           *serverURL,
+		ListenAddr:          *listen,
+		StateDir:            *stateDir,
+		Domain:              *domain,
+		Nameservers:         nameservers,
+		DNSRoutes:           routes,
+		PolicyPath:          *policyPath,
+		DERPMap:             derpMap,
+		LatestClientVersion: *clientVer,
+		ClientVersionURL:    *clientVerURL,
+		OIDCProviders:       oidcProviders,
+		AllowLocalLogin:     *allowLocalLogin,
+		Logger:              logger,
 	})
 	if err != nil {
 		logger.Error("initializing server", "err", err)

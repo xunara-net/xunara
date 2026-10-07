@@ -51,6 +51,13 @@ type Config struct {
 	DNSRoutes map[string][]string
 	// DERPMap is advertised to clients when non-nil.
 	DERPMap *tailcfg.DERPMap
+	// LatestClientVersion is the newest client version to advertise to clients
+	// through MapResponse.ClientVersion, as a short version like "1.88.3".
+	// Empty disables the advisory.
+	LatestClientVersion string
+	// ClientVersionURL, when LatestClientVersion is set, is the URL a client
+	// opens when acting on the update notification. Optional.
+	ClientVersionURL string
 	// NodeKeyExpiry is the lifetime granted to node keys at registration. Zero
 	// means keys never expire.
 	NodeKeyExpiry time.Duration

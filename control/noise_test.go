@@ -199,6 +199,50 @@ func TestStreamingNetmapIsDeltaEncoded(t *testing.T) {
 	}
 }
 
+// TestStreamingNetmapAdoptsClientPreferredDERP checks the multi-region home
+// DERP flow: the client measures DERP latency and reports the winner, the
+// server adopts it for the node, and peers observe the change as a delta
+// rather than a full relist.
+func TestStreamingNetmapAdoptsClientPreferredDERP(t *testing.T) {
+	s := newServerWithConfig(t, Config{DERPMap: &tailcfg.DERPMap{
+		Regions: map[tailcfg.DERPRegionID]*tailcfg.DERPRegion{1: {}, 2: {}},
+	}})
+	hs := newTestHTTPServer(t, s)
+
+	connA, clientA, nodeKeyA := registerNode(t, s, hs, "node-a")
+	defer connA.Close()
+	connB, clientB, nodeKeyB := registerNode(t, s, hs, "node-b")
+	defer connB.Close()
+
+	sess := openMapSession(t, clientA, nodeKeyA.Public())
+	defer sess.Body.Close()
+	frames := mapFrames(sess.Body)
+	view := newNetmapView()
+	waitForNetmap(t, frames, view, func(v *netmapView) bool { return len(v.peerList()) == 1 })
+
+	postRaw(t, clientB, "/machine/map", tailcfg.MapRequest{
+		Version:  tailcfg.CurrentCapabilityVersion,
+		NodeKey:  nodeKeyB.Public(),
+		Hostinfo: &tailcfg.Hostinfo{NetInfo: &tailcfg.NetInfo{PreferredDERP: 2}},
+	})
+
+	frame := waitForNetmapFrame(t, frames, view, func(v *netmapView) bool {
+		peers := v.peerList()
+		return len(peers) == 1 && peers[0].HomeDERP == 2
+	})
+	if frame.Peers != nil {
+		t.Errorf("home DERP update repeated the full peer list: %v", frame.Peers)
+	}
+
+	stored, ok := s.store.GetNodeByNodeKey(nodeKeyB.Public())
+	if !ok {
+		t.Fatal("node B disappeared from the store")
+	}
+	if stored.HomeDERP != 2 {
+		t.Errorf("stored HomeDERP = %d, want 2", stored.HomeDERP)
+	}
+}
+
 // TestMapUnknownNodeStreamingSignalsExpired checks that a client asking for the
 // netmap of an unknown node is told 404 rather than served a bogus netmap.
 func TestMapUnknownNodeStreamingSignalsExpired(t *testing.T) {

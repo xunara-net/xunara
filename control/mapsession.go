@@ -33,6 +33,11 @@ type mapSession struct {
 	// filter fingerprints the packet filter this session already sent, for the
 	// same reason as dns.
 	filter string
+
+	// clientVersion fingerprints the update advisory this session already
+	// sent. Like DNSConfig, ClientVersion forces a client-side rebuild, so it
+	// is attached only when it actually changed.
+	clientVersion string
 }
 
 // newMapSession starts a session with a fresh opaque handle.
@@ -56,6 +61,7 @@ func (s *mapSession) initial(resp *tailcfg.MapResponse) {
 	s.record(resp.Node, peersOf(resp))
 	s.dns = fingerprintDNS(resp.DNSConfig)
 	s.filter = fingerprintFilter(filterFromResponse(resp))
+	s.clientVersion = fingerprintClientVersion(resp.ClientVersion)
 
 	s.seq = 1
 	resp.MapSessionHandle = s.handle
@@ -166,6 +172,25 @@ func (s *mapSession) syncPacketFilter(resp *tailcfg.MapResponse, rules []tailcfg
 	return true
 }
 
+// syncClientVersion attaches the update advisory when it differs from what
+// this session already sent, and clears it otherwise. ClientVersion is one of
+// the fields that make clients rebuild their whole netmap, so a repeated
+// advisory would defeat the incremental path.
+func (s *mapSession) syncClientVersion(resp *tailcfg.MapResponse) bool {
+	fp := fingerprintClientVersion(resp.ClientVersion)
+	if fp == s.clientVersion {
+		resp.ClientVersion = nil
+		return false
+	}
+	s.clientVersion = fp
+	if resp.ClientVersion == nil {
+		// nil means "unchanged", so a withdrawn advisory cannot be expressed;
+		// there is nothing to send.
+		return false
+	}
+	return true
+}
+
 // commit stamps a frame that is about to be written with the session sequence
 // number and records the state it puts the client in.
 //
@@ -196,6 +221,19 @@ func fingerprintFilter(rules []tailcfg.FilterRule) string {
 		return ""
 	}
 	b, err := json.Marshal(rules)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// fingerprintClientVersion renders an update advisory into a comparable
+// string. An empty string means "no advisory".
+func fingerprintClientVersion(cv *tailcfg.ClientVersion) string {
+	if cv == nil {
+		return ""
+	}
+	b, err := json.Marshal(cv)
 	if err != nil {
 		return ""
 	}

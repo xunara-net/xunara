@@ -225,6 +225,48 @@ func TestMapSessionDNSSync(t *testing.T) {
 	}
 }
 
+func TestMapSessionClientVersionSync(t *testing.T) {
+	sess, err := newMapSession()
+	if err != nil {
+		t.Fatalf("newMapSession: %v", err)
+	}
+
+	advisory := &tailcfg.ClientVersion{LatestVersion: "1.88.3", Notify: true}
+	sess.initial(&tailcfg.MapResponse{Node: sessionNode(1, "self"), ClientVersion: advisory})
+
+	// Repeating the same advisory on later frames would force a client-side
+	// rebuild every time, so it is cleared.
+	resp := &tailcfg.MapResponse{ClientVersion: &tailcfg.ClientVersion{LatestVersion: "1.88.3", Notify: true}}
+	if sess.syncClientVersion(resp) {
+		t.Error("an unchanged advisory was reported as changed")
+	}
+	if resp.ClientVersion != nil {
+		t.Error("an unchanged advisory must be cleared from the frame")
+	}
+
+	// The client updated: the advisory changes and is sent exactly once.
+	latest := &tailcfg.ClientVersion{RunningLatest: true}
+	resp = &tailcfg.MapResponse{ClientVersion: latest}
+	if !sess.syncClientVersion(resp) {
+		t.Fatal("a changed advisory was not reported")
+	}
+	if resp.ClientVersion != latest {
+		t.Error("syncClientVersion did not keep the changed advisory on the frame")
+	}
+
+	resp = &tailcfg.MapResponse{ClientVersion: &tailcfg.ClientVersion{RunningLatest: true}}
+	if sess.syncClientVersion(resp) || resp.ClientVersion != nil {
+		t.Error("a repeated advisory must be cleared")
+	}
+
+	// There is no wire form for withdrawing an advisory; that must not be
+	// reported as a change (and must not panic).
+	resp = &tailcfg.MapResponse{}
+	if sess.syncClientVersion(resp) || resp.ClientVersion != nil {
+		t.Error("withdrawing an advisory is not expressible and must be a no-op")
+	}
+}
+
 // slicesEqualAddrPorts is a local equality helper so the test does not have to
 // import slices just for one assertion.
 func slicesEqualAddrPorts(a, b []netip.AddrPort) bool {

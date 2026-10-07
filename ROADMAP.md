@@ -172,8 +172,24 @@ reference/{go-oidc,oauth2,dex,webauthn}
   `control/mapsession_test.go`（patch、结构性整节点、新节点、移除、全量回退）、
   `TestStreamingNetmapIsDeltaEncoded` 改为断言端点更新以 patch 下发且省略 self。
 
+已完成（M2b 追加，HomeDERP 延迟择优与 ClientVersion）：
+
+- `recordMapRequest` 采纳客户端上报的 `Hostinfo.NetInfo.PreferredDERP` 作为
+  `HomeDERP`：客户端测速后自行择优，服务端只接受自身 DERPMap 中存在的 region
+  （未知 region 视为不可信输入忽略）；例行更新未携带 NetInfo 时沿用既有值；
+  单 region 部署仍自动归位。多 region 下 peer 的 DERP 归属由此不再为空。
+- `-client-version` / `-client-version-url`（`Config.LatestClientVersion` /
+  `ClientVersionURL`）：`mapper.Full/Update` 下发 `tailcfg.ClientVersion`。
+  按短版本比较（`1.88.3-t1234abcd` 与 `1.88.3` 视为相同），已是最新则
+  `RunningLatest`，否则 `LatestVersion` + `Notify`（含 URL 与提示文本）；
+  节点未上报版本则不猜、不下发。
+- 会话指纹去重（`mapSession.syncClientVersion`）：`ClientVersion` 是客户端全量
+  重建字段，只在值真正变化时携带；与 DNS/packet filter 的处理一致。
+- 测试：`control/poll_test.go`（PreferredDERP 采纳/未知 region/无 NetInfo 保留/
+  单 region 回退、提示计算与 full/update 下发）、`TestMapSessionClientVersionSync`、
+  端到端 `TestStreamingNetmapAdoptsClientPreferredDERP`。
+
 待办（M2b 剩余）：
-- `ClientVersion` 下发（版本提示）；`HomeDERP` 延迟择优（当前仅单 region 自动归位）。
 - 说明：`set-dns` 记录通过 `ExtraRecords` 在 tailnet 内可见，**不**写入外部 DNS 提供商；
   公网 ACME 校验需要额外的 DNS 集成（后续里程碑）。
 - 已完成（M2b 追加）：`tag:` 的实际赋值。

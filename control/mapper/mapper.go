@@ -66,6 +66,10 @@ type Config struct {
 	// node advertises no capabilities.
 	NodeCaps func(state.Node) tailcfg.NodeCapMap
 
+	// ClientVersion returns the update advisory for a node, or nil when there
+	// is nothing to tell it. A nil function disables the field entirely.
+	ClientVersion func(state.Node) *tailcfg.ClientVersion
+
 	// DERPMap is advertised to clients when non-nil.
 	DERPMap *tailcfg.DERPMap
 }
@@ -77,13 +81,14 @@ type Config struct {
 func Full(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc, capVer tailcfg.CapabilityVersion) *tailcfg.MapResponse {
 	routes := NewRouteTable(nodes)
 	resp := &tailcfg.MapResponse{
-		Node:         Node(self, true, online, routes, cfg),
-		Peers:        peerNodes(self, nodes, online, routes, cfg),
-		Domain:       cfg.Domain,
-		DNSConfig:    DNSConfig(cfg),
-		DERPMap:      cfg.DERPMap,
-		UserProfiles: userProfiles(self, nodes, cfg),
-		SSHPolicy:    sshPolicyFor(cfg, self),
+		Node:          Node(self, true, online, routes, cfg),
+		Peers:         peerNodes(self, nodes, online, routes, cfg),
+		Domain:        cfg.Domain,
+		DNSConfig:     DNSConfig(cfg),
+		DERPMap:       cfg.DERPMap,
+		UserProfiles:  userProfiles(self, nodes, cfg),
+		SSHPolicy:     sshPolicyFor(cfg, self),
+		ClientVersion: clientVersionFor(cfg, self),
 	}
 	SetPacketFilters(resp, capVer, packetFilterFor(cfg, self))
 	return resp
@@ -96,11 +101,21 @@ func Full(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc, ca
 func Update(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc) *tailcfg.MapResponse {
 	routes := NewRouteTable(nodes)
 	return &tailcfg.MapResponse{
-		Node:         Node(self, true, online, routes, cfg),
-		Peers:        peerNodes(self, nodes, online, routes, cfg),
-		UserProfiles: userProfiles(self, nodes, cfg),
-		SSHPolicy:    sshPolicyFor(cfg, self),
+		Node:          Node(self, true, online, routes, cfg),
+		Peers:         peerNodes(self, nodes, online, routes, cfg),
+		UserProfiles:  userProfiles(self, nodes, cfg),
+		SSHPolicy:     sshPolicyFor(cfg, self),
+		ClientVersion: clientVersionFor(cfg, self),
 	}
+}
+
+// clientVersionFor builds a node's client-version advisory, tolerating a nil
+// hook.
+func clientVersionFor(cfg Config, self state.Node) *tailcfg.ClientVersion {
+	if cfg.ClientVersion == nil {
+		return nil
+	}
+	return cfg.ClientVersion(self)
 }
 
 // sshPolicyFor builds a node's SSH policy, tolerating a nil hook.
