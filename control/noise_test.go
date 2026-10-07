@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"path"
 	"testing"
 
@@ -76,24 +77,111 @@ func TestNetmapPushesPeerChanges(t *testing.T) {
 	sess := openMapSession(t, clientA, nodeKeyA.Public())
 	defer sess.Body.Close()
 
-	first := readMapResponse(t, sess.Body)
-	if len(first.Peers) != 0 {
-		t.Fatalf("peers before approval = %d, want 0", len(first.Peers))
+	frames := mapFrames(sess.Body)
+	view := newNetmapView()
+
+	first := waitForNetmapFrame(t, frames, view, func(*netmapView) bool { return true })
+	if first.MapSessionHandle == "" {
+		t.Error("the first frame of a stream must carry a MapSessionHandle")
+	}
+	if first.Seq != 1 {
+		t.Errorf("first frame seq = %d, want 1", first.Seq)
+	}
+	if got := len(view.peerList()); got != 0 {
+		t.Fatalf("peers before approval = %d, want 0", got)
 	}
 
 	if err := s.ApproveRegistration(authIDB); err != nil {
 		t.Fatalf("approving node B: %v", err)
 	}
 
-	second := readMapResponse(t, sess.Body)
-	if len(second.Peers) != 1 {
-		t.Fatalf("peers after approval = %d, want 1", len(second.Peers))
-	}
-	if got := second.Peers[0].Name; got != "node-b." {
+	waitForNetmap(t, frames, view, func(v *netmapView) bool { return len(v.peerList()) == 1 })
+	peer := view.peerList()[0]
+	if got := peer.Name; got != "node-b." {
 		t.Errorf("peer name = %q, want node-b.", got)
 	}
-	if second.Peers[0].Online == nil || *second.Peers[0].Online {
+	if peer.Online == nil || *peer.Online {
 		t.Error("node B has never polled, so it must not be online")
+	}
+
+	// The session's self node is what node A needs to keep: its own entry.
+	if view.self == nil {
+		t.Fatal("client state has no self node")
+	}
+	if view.self.Key != nodeKeyA.Public() {
+		t.Errorf("self node key = %v, want %v", view.self.Key, nodeKeyA.Public())
+	}
+}
+
+// TestStreamingNetmapIsDeltaEncoded checks the long-poll framing: the first
+// frame carries the full peer list and a session handle, later frames carry
+// only what changed, and Seq increases monotonically on state-bearing frames.
+func TestStreamingNetmapIsDeltaEncoded(t *testing.T) {
+	s := newTestServer(t)
+	hs := httptest.NewServer(s.Handler())
+	defer hs.Close()
+
+	connA, clientA, nodeKeyA := registerNode(t, s, hs, "node-a")
+	defer connA.Close()
+
+	connB, clientB, nodeKeyB := registerNode(t, s, hs, "node-b")
+	defer connB.Close()
+
+	sess := openMapSession(t, clientA, nodeKeyA.Public())
+	defer sess.Body.Close()
+
+	frames := mapFrames(sess.Body)
+	view := newNetmapView()
+
+	first := waitForNetmapFrame(t, frames, view, func(v *netmapView) bool { return len(v.peerList()) == 1 })
+	if first.Peers == nil {
+		t.Error("the first frame must carry the full peer list")
+	}
+	if first.PeersChanged != nil || first.PeersRemoved != nil {
+		t.Error("the first frame must not carry delta fields")
+	}
+
+	// A second peer makes the tailnet big enough for deltas to be worth it.
+	connC, _, _ := registerNode(t, s, hs, "node-c")
+	defer connC.Close()
+	waitForNetmap(t, frames, view, func(v *netmapView) bool { return len(v.peerList()) == 2 })
+
+	// A peer update (endpoints) must arrive as a delta, not a full relist.
+	postRaw(t, clientB, "/machine/map", tailcfg.MapRequest{
+		Version:   tailcfg.CurrentCapabilityVersion,
+		NodeKey:   nodeKeyB.Public(),
+		Endpoints: []netip.AddrPort{netip.MustParseAddrPort("198.51.100.7:41641")},
+	})
+
+	delta := waitForNetmapFrame(t, frames, view, func(v *netmapView) bool {
+		peers := v.peerList()
+		return len(peers) == 2 && len(peers[0].Endpoints) == 1
+	})
+	if delta.Peers != nil {
+		t.Errorf("a delta frame must not repeat the full peer list: %v", delta.Peers)
+	}
+	if len(delta.PeersChanged) != 1 {
+		t.Fatalf("PeersChanged = %d entries, want 1", len(delta.PeersChanged))
+	}
+	if delta.Seq <= first.Seq {
+		t.Errorf("Seq = %d, want greater than the first frame's %d", delta.Seq, first.Seq)
+	}
+	if delta.MapSessionHandle != "" {
+		t.Errorf("MapSessionHandle must only be sent on the first frame, got %q", delta.MapSessionHandle)
+	}
+
+	// Removing the peer must arrive as PeersRemoved.
+	if err := s.Store().DeleteNode(state.NodeID(delta.PeersChanged[0].ID)); err != nil {
+		t.Fatalf("deleting node B: %v", err)
+	}
+	s.notifyWatchers()
+
+	removal := waitForNetmapFrame(t, frames, view, func(v *netmapView) bool { return len(v.peerList()) == 1 })
+	if len(removal.PeersRemoved) != 1 {
+		t.Fatalf("PeersRemoved = %v, want the removed node ID", removal.PeersRemoved)
+	}
+	if removal.Peers != nil {
+		t.Errorf("Peers must stay nil on a delta frame: %v", removal.Peers)
 	}
 }
 

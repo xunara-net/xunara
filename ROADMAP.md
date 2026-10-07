@@ -97,9 +97,21 @@ reference/{go-oidc,oauth2,dex,webauthn}
 - `Server.Start(ctx)` 显式启动后台任务（janitor + config watcher）；`Serve` 内部调用。
 - CLI：`xunara routes list|approve|unapprove`（`-node <id|stable-id>`，`-all` 或显式前缀）。
 
+已完成（M2b-2，增量 netmap）：
+
+- `control/mapsession.go`：每会话记录已下发的 self/peers 指纹（`tailcfg.Node.Equal`），
+  后续帧用 `PeersChanged` / `PeersRemoved` 增量下发；全部 peer 都变化时退回全量列表
+  （非空 `Peers` 会让客户端忽略 delta 字段，二者不同时出现）。
+- 无可观察变化时不发帧（例如他人的 keep-alive 唤醒），keep-alive 仍每 50s 一次。
+- `MapSessionHandle`（首帧、会话唯一）+ `Seq`（状态帧单调递增）；客户端重连带
+  handle/seq 时按上游允许的方式开新会话并回全量 netmap。
+- 测试：`control/mapsession_test.go`（初始帧、无变化、仅 self、单 peer、全量回退、
+  移除、空 tailnet）、`TestStreamingNetmapIsDeltaEncoded`（真实流式端到端）；
+  测试侧新增 `netmapView`（按客户端语义合并 Peers/PeersChanged/PeersRemoved）。
+
 待办（M2b 剩余）：
 
-- 差分编码：`PeersChanged` / `PeersRemoved` / `PeersChangedPatch` 替代全量重发。
+- `PeersChangedPatch`（更细粒度端点/DERP patch）。
 - ACL → `PacketFilter` 真实策略引擎（替换 allow-all）。
 - MagicDNS 记录与 `/machine/set-dns`。
 - `MapSessionHandle` / `Seq` 会话续传；`ControlTime` 之外的 `ClientVersion` 下发。

@@ -98,7 +98,17 @@ func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWri
 	updates, cancel := s.watch()
 	defer cancel()
 
-	if err := writeMapResponse(w, req.Compress, true, s.fullMap(node, req)); err != nil {
+	sess, err := newMapSession()
+	if err != nil {
+		s.log.Error("creating map session", "err", err)
+		return
+	}
+
+	// The first frame is always the full netmap; later frames are deltas
+	// against it (PeersChanged/PeersRemoved).
+	initial := s.fullMap(node, req)
+	sess.initial(initial)
+	if err := writeMapResponse(w, req.Compress, true, initial); err != nil {
 		s.log.Debug("writing initial map response", "err", err)
 		return
 	}
@@ -122,8 +132,16 @@ func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWri
 				return
 			}
 			msg := s.updateMap(self)
+			peers := msg.Peers
+			if !sess.apply(msg, peers) {
+				// Nothing the client can observe changed (for example a
+				// keep-alive woke us); sending a frame would only burn battery.
+				continue
+			}
 			if req.OmitPeers {
 				msg.Peers = nil
+				msg.PeersChanged = nil
+				msg.PeersRemoved = nil
 			}
 			if err := writeMapResponse(w, req.Compress, true, msg); err != nil {
 				return

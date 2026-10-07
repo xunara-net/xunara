@@ -1,13 +1,9 @@
 package control
 
 import (
-	"encoding/binary"
-	"encoding/json"
-	"io"
 	"net/http/httptest"
 	"net/netip"
 	"testing"
-	"time"
 
 	"tailscale.com/tailcfg"
 
@@ -17,53 +13,6 @@ import (
 // advertisedHostinfo returns Hostinfo that advertises the given routes.
 func advertisedHostinfo(hostname string, routes ...netip.Prefix) *tailcfg.Hostinfo {
 	return &tailcfg.Hostinfo{Hostname: hostname, RoutableIPs: routes}
-}
-
-// mapFrames decodes the length-prefixed MapResponse frames of a streaming
-// session in the background. It closes the channel when the stream ends.
-func mapFrames(r io.Reader) <-chan *tailcfg.MapResponse {
-	out := make(chan *tailcfg.MapResponse)
-	go func() {
-		defer close(out)
-		for {
-			var header [reservedResponseHeaderSize]byte
-			if _, err := io.ReadFull(r, header[:]); err != nil {
-				return
-			}
-			payload := make([]byte, binary.LittleEndian.Uint32(header[:]))
-			if _, err := io.ReadFull(r, payload); err != nil {
-				return
-			}
-			var msg tailcfg.MapResponse
-			if err := json.Unmarshal(payload, &msg); err != nil {
-				return
-			}
-			out <- &msg
-		}
-	}()
-	return out
-}
-
-// waitForFrame consumes frames until cond accepts one or the deadline expires.
-func waitForFrame(t *testing.T, frames <-chan *tailcfg.MapResponse, cond func(*tailcfg.MapResponse) bool) *tailcfg.MapResponse {
-	t.Helper()
-
-	deadline := time.After(15 * time.Second)
-	var last *tailcfg.MapResponse
-	for {
-		select {
-		case msg, ok := <-frames:
-			if !ok {
-				t.Fatalf("map stream closed while waiting (last frame: %+v)", last)
-			}
-			last = msg
-			if cond(msg) {
-				return msg
-			}
-		case <-deadline:
-			t.Fatalf("timed out waiting for a netmap update (last frame: %+v)", last)
-		}
-	}
 }
 
 func containsPrefix(prefixes []netip.Prefix, want netip.Prefix) bool {
@@ -159,10 +108,11 @@ func TestRouteApprovalPushesToConnectedPeers(t *testing.T) {
 	defer sess.Body.Close()
 
 	frames := mapFrames(sess.Body)
+	view := newNetmapView()
 
-	first := waitForFrame(t, frames, func(*tailcfg.MapResponse) bool { return true })
-	if len(first.Peers) != 0 {
-		t.Fatalf("peers before node B registered = %d, want 0", len(first.Peers))
+	waitForNetmap(t, frames, view, func(*netmapView) bool { return true })
+	if got := len(view.peerList()); got != 0 {
+		t.Fatalf("peers before node B registered = %d, want 0", got)
 	}
 
 	connB, clientB, nodeKeyB := registerNode(t, s, hs, "node-b")
@@ -175,9 +125,10 @@ func TestRouteApprovalPushesToConnectedPeers(t *testing.T) {
 		Hostinfo: advertisedHostinfo("node-b", subnet),
 	})
 
-	second := waitForFrame(t, frames, func(m *tailcfg.MapResponse) bool { return len(m.Peers) == 1 })
-	if containsPrefix(second.Peers[0].AllowedIPs, subnet) {
-		t.Fatalf("unapproved route already visible to peers: %v", second.Peers[0].AllowedIPs)
+	waitForNetmap(t, frames, view, func(v *netmapView) bool { return len(v.peerList()) == 1 })
+	peer := view.peerList()[0]
+	if containsPrefix(peer.AllowedIPs, subnet) {
+		t.Fatalf("unapproved route already visible to peers: %v", peer.AllowedIPs)
 	}
 
 	nodeB, ok := s.Store().GetNodeByNodeKey(nodeKeyB.Public())
@@ -191,10 +142,11 @@ func TestRouteApprovalPushesToConnectedPeers(t *testing.T) {
 		t.Fatalf("BumpConfigRevision: %v", err)
 	}
 
-	third := waitForFrame(t, frames, func(m *tailcfg.MapResponse) bool {
-		return len(m.Peers) == 1 && containsPrefix(m.Peers[0].AllowedIPs, subnet)
+	waitForNetmap(t, frames, view, func(v *netmapView) bool {
+		peers := v.peerList()
+		return len(peers) == 1 && containsPrefix(peers[0].AllowedIPs, subnet)
 	})
-	if !containsPrefix(third.Peers[0].PrimaryRoutes, subnet) {
-		t.Errorf("approved route %s missing from peer PrimaryRoutes %v", subnet, third.Peers[0].PrimaryRoutes)
+	if peer := view.peerList()[0]; !containsPrefix(peer.PrimaryRoutes, subnet) {
+		t.Errorf("approved route %s missing from peer PrimaryRoutes %v", subnet, peer.PrimaryRoutes)
 	}
 }
