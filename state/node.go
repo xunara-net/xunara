@@ -16,6 +16,7 @@ import (
 
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
+	"tailscale.com/types/tkatype"
 	"tailscale.com/util/dnsname"
 )
 
@@ -55,6 +56,12 @@ type Node struct {
 	NodeKey key.NodePublic
 	// DiscoKey is the node's magicsock discovery key.
 	DiscoKey key.DiscoPublic
+
+	// KeySignature is the node's tailnet-lock node-key signature, present only
+	// when the tailnet has tailnet lock enabled and this node has been signed.
+	// It is published to every client (tailcfg.Node.KeySignature) so peers can
+	// verify the node key without trusting the control plane.
+	KeySignature tkatype.MarshaledSignature
 
 	// UserID is the owning user. In the single-tenant milestone this is always
 	// [DefaultUserID].

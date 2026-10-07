@@ -145,6 +145,19 @@ func (ns *noiseServer) router() http.Handler {
 		r.Patch("/set-device-attr", ns.handleNotImplemented("device posture attributes"))
 		r.Post("/id-token", ns.handleNotImplemented("OIDC ID tokens"))
 		r.Get("/ssh/action/{srcNodeID}/to/{dstNodeID}", ns.handleSSHAction)
+
+		// Tailnet lock (TKA). The official client issues all of these as GET
+		// requests with a JSON body; the paths mirror upstream.
+		r.Route("/tka", func(r chi.Router) {
+			r.Get("/init/begin", ns.handleTKAInitBegin)
+			r.Get("/init/finish", ns.handleTKAInitFinish)
+			r.Get("/bootstrap", ns.handleTKABootstrap)
+			r.Get("/sync/offer", ns.handleTKASyncOffer)
+			r.Get("/sync/send", ns.handleTKASyncSend)
+			r.Get("/disable", ns.handleTKADisable)
+			r.Get("/sign", ns.handleTKASign)
+			r.Get("/affected-sigs", ns.handleTKAAffectedSigs)
+		})
 	})
 
 	return r

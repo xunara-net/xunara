@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -79,6 +80,52 @@ func (ns *noiseServer) handleRegister(w http.ResponseWriter, req *http.Request) 
 
 // handleRegister is the transport-independent registration decision.
 func (s *Server) handleRegister(ctx context.Context, req tailcfg.RegisterRequest, machineKey key.MachinePublic) (*tailcfg.RegisterResponse, error) {
+	// Tailnet lock: a registration that presents a node-key signature claims
+	// the node key is authorized by the tailnet's key authority. Verify that
+	// claim before the request can create or rotate a node, so an
+	// unverifiable signature is never silently downgraded to an unsigned
+	// registration.
+	if len(req.NodeKeySignature) > 0 && s.tka.view().Enabled {
+		if err := s.tka.nodeKeyAuthorized(req.NodeKey, req.NodeKeySignature); err != nil {
+			s.log.Warn("rejecting registration with an unauthorized node key signature",
+				"node.key", req.NodeKey.ShortString(),
+				"machine.key", machineKey.ShortString(),
+				"err", err)
+			return nil, NewHTTPError(http.StatusUnauthorized, "node key signature is not authorized", err)
+		}
+	}
+
+	resp, err := s.decideRegistration(ctx, req, machineKey)
+	if err != nil {
+		return nil, err
+	}
+	s.storeNodeKeySignature(req)
+	return resp, nil
+}
+
+// storeNodeKeySignature persists the node-key signature a registration
+// presented, so peers receive it in the netmap. Registrations that verify all
+// reach this point; those without a signature (or on an unlocked tailnet) are
+// left alone.
+func (s *Server) storeNodeKeySignature(req tailcfg.RegisterRequest) {
+	if len(req.NodeKeySignature) == 0 || !s.tka.view().Enabled {
+		return
+	}
+	node, ok := s.store.GetNodeByNodeKey(req.NodeKey)
+	if !ok || slices.Equal(node.KeySignature, req.NodeKeySignature) {
+		return
+	}
+	node.KeySignature = slices.Clone(req.NodeKeySignature)
+	if err := s.store.UpdateNode(node); err != nil {
+		s.log.Error("storing node key signature", "node", node.StableID, "err", err)
+		return
+	}
+	s.audit(nodeActor(node), identity.AuditTailnetLockNodeSigned, nodeTarget(node), "node key signed at registration")
+	s.notifyWatchers()
+}
+
+// decideRegistration applies the registration state machine.
+func (s *Server) decideRegistration(ctx context.Context, req tailcfg.RegisterRequest, machineKey key.MachinePublic) (*tailcfg.RegisterResponse, error) {
 	// 1. Logout: a request whose expiry is in the past is a logout, regardless
 	//    of any other field. It takes precedence over an auth key.
 	if !req.Expiry.IsZero() && req.Expiry.Before(time.Now()) {

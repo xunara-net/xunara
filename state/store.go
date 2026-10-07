@@ -19,6 +19,7 @@ var ErrNodeKeyExists = errors.New("node key already registered")
 type Store interface {
 	PreAuthKeyStore
 	DNSRecordStore
+	TKAStore
 
 	// GetNodeByID returns the node with the given server-local ID.
 	GetNodeByID(id NodeID) (Node, bool)

@@ -93,6 +93,19 @@ ALTER TABLE preauthkeys ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
 	`
 ALTER TABLE nodes ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
 `,
+
+	// v7: tailnet-lock node-key signatures and control-plane bookkeeping.
+	`
+ALTER TABLE nodes ADD COLUMN key_signature BLOB;
+CREATE TABLE IF NOT EXISTS tka_meta (
+	id                  INTEGER PRIMARY KEY CHECK (id = 1),
+	ever_enabled        INTEGER NOT NULL DEFAULT 0,
+	enabled             INTEGER NOT NULL DEFAULT 0,
+	disabled            INTEGER NOT NULL DEFAULT 0,
+	disablement_secret  TEXT    NOT NULL DEFAULT ''
+);
+INSERT OR IGNORE INTO tka_meta (id) VALUES (1);
+`,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.
@@ -181,7 +194,7 @@ var _ Store = (*SQLiteStore)(nil)
 // nodeColumns is the column list every node SELECT and INSERT agrees on.
 const nodeColumns = `id, stable_id, machine_key, node_key, disco_key, user_id, hostname,
 	ipv4, ipv6, endpoints, home_derp, cap_ver, hostinfo, last_seen, expiry, created, method, ephemeral,
-	approved_routes, tags`
+	approved_routes, tags, key_signature`
 
 func (s *SQLiteStore) GetNodeByID(id NodeID) (Node, bool) {
 	return s.queryNode(context.Background(), "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", int64(id))
@@ -274,11 +287,12 @@ func scanNode(sc scanner) (Node, error) {
 		ephemeral int64
 		approved  string
 		tags      string
+		keySig    []byte
 	)
 
 	err := sc.Scan(&id, &stableID, &machineS, &nodeS, &discoS, &userID, &hostname,
 		&ipv4, &ipv6, &endpoints, &homeDERP, &capVer, &hostinfo, &lastSeen, &expiry,
-		&created, &method, &ephemeral, &approved, &tags)
+		&created, &method, &ephemeral, &approved, &tags, &keySig)
 	if err != nil {
 		return Node{}, err
 	}
@@ -293,6 +307,9 @@ func scanNode(sc scanner) (Node, error) {
 		Created:   time.Unix(0, created).UTC(),
 		Method:    RegisterMethod(method),
 		Ephemeral: ephemeral != 0,
+	}
+	if len(keySig) > 0 {
+		n.KeySignature = keySig
 	}
 
 	if err := n.MachineKey.UnmarshalText([]byte(machineS)); err != nil {
@@ -515,7 +532,7 @@ func (s *SQLiteStore) CreateNode(n *Node) error {
 	}
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO nodes (`+nodeColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		int64(n.ID),
 		n.StableID,
 		textOf(n.MachineKey, ""),
@@ -536,6 +553,7 @@ func (s *SQLiteStore) CreateNode(n *Node) error {
 		boolToInt(n.Ephemeral),
 		approved,
 		tags,
+		nullableBytes(n.KeySignature),
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -565,7 +583,7 @@ func (s *SQLiteStore) UpdateNode(n Node) error {
 			stable_id = ?, machine_key = ?, node_key = ?, disco_key = ?, user_id = ?,
 			hostname = ?, ipv4 = ?, ipv6 = ?, endpoints = ?, home_derp = ?,
 			cap_ver = ?, hostinfo = ?, last_seen = ?, expiry = ?, created = ?,
-			method = ?, ephemeral = ?, approved_routes = ?, tags = ?
+			method = ?, ephemeral = ?, approved_routes = ?, tags = ?, key_signature = ?
 		WHERE id = ?`,
 		n.StableID,
 		textOf(n.MachineKey, ""),
@@ -586,6 +604,7 @@ func (s *SQLiteStore) UpdateNode(n Node) error {
 		boolToInt(n.Ephemeral),
 		approved,
 		tags,
+		nullableBytes(n.KeySignature),
 		int64(n.ID),
 	)
 	if err != nil {
@@ -609,6 +628,42 @@ func (s *SQLiteStore) DeleteNode(id NodeID) error {
 	_, err := s.db.ExecContext(context.Background(), "DELETE FROM nodes WHERE id = ?", int64(id))
 	if err != nil {
 		return fmt.Errorf("state: deleting node %d: %w", id, err)
+	}
+	return nil
+}
+
+// TKAMeta implements [TKAStore].
+func (s *SQLiteStore) TKAMeta() TKAMeta {
+	var (
+		everEnabled, enabled, disabled int64
+		sealed                         string
+	)
+	err := s.db.QueryRowContext(context.Background(),
+		`SELECT ever_enabled, enabled, disabled, disablement_secret FROM tka_meta WHERE id = 1`).
+		Scan(&everEnabled, &enabled, &disabled, &sealed)
+	if err != nil {
+		return TKAMeta{}
+	}
+	return TKAMeta{
+		EverEnabled:             everEnabled != 0,
+		Enabled:                 enabled != 0,
+		Disabled:                disabled != 0,
+		DisablementSecretSealed: sealed,
+	}
+}
+
+// SetTKAMeta implements [TKAStore].
+func (s *SQLiteStore) SetTKAMeta(meta TKAMeta) error {
+	_, err := s.db.ExecContext(context.Background(), `UPDATE tka_meta SET
+			ever_enabled = ?, enabled = ?, disabled = ?, disablement_secret = ?
+		WHERE id = 1`,
+		boolToInt(meta.EverEnabled),
+		boolToInt(meta.Enabled),
+		boolToInt(meta.Disabled),
+		meta.DisablementSecretSealed,
+	)
+	if err != nil {
+		return fmt.Errorf("state: updating the tailnet-lock state: %w", err)
 	}
 	return nil
 }
@@ -699,6 +754,15 @@ func nullableAddr(a netip.Addr) any {
 		return nil
 	}
 	return a.String()
+}
+
+// nullableBytes stores an absent signature as SQL NULL, so "unsigned" and
+// "signed with an empty blob" cannot be confused.
+func nullableBytes(b []byte) any {
+	if len(b) == 0 {
+		return nil
+	}
+	return b
 }
 
 func nullableTime(t *time.Time) any {

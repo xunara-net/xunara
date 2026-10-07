@@ -146,6 +146,9 @@ func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWri
 			if sess.syncClientVersion(msg) {
 				changed = true
 			}
+			if sess.syncTKA(msg) {
+				changed = true
+			}
 			if !changed {
 				// Nothing the client can observe changed (for example a
 				// keep-alive woke us); sending a frame would only burn battery.
@@ -167,19 +170,25 @@ func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWri
 
 // packetFilterFor returns the packet filter a node receives: the compiled ACL
 // policy when the tailnet has one, allow-all otherwise.
+//
+// While tailnet lock is enforced the filter must not name an unsigned peer as
+// a source; clients reject such a filter wholesale and block everything.
 func (s *Server) packetFilterFor(self state.Node) []tailcfg.FilterRule {
-	engine := s.policy.Load()
-	if engine == nil {
-		return slices.Clone(tailcfg.FilterAllowAll)
-	}
 	nodes := s.store.ListNodes()
-	rules := engine.FilterFor(self, nodes)
-	if rules == nil {
-		// A policy that grants nothing must still be sent explicitly, or the
-		// client keeps the rules it had.
-		return []tailcfg.FilterRule{}
+	engine := s.policy.Load()
+
+	var rules []tailcfg.FilterRule
+	if engine == nil {
+		rules = slices.Clone(tailcfg.FilterAllowAll)
+	} else {
+		rules = engine.FilterFor(self, nodes)
+		if rules == nil {
+			// A policy that grants nothing must still be sent explicitly, or the
+			// client keeps the rules it had.
+			return []tailcfg.FilterRule{}
+		}
 	}
-	return rules
+	return restrictFilterToSignedPeers(rules, s.unsignedPeers(nodes), nodes)
 }
 
 // fullMap builds the first netmap for a node: everything a client needs.
@@ -210,6 +219,8 @@ func (s *Server) mapperConfig() mapper.Config {
 		SSHPolicyFor:   s.sshPolicyFor,
 		NodeCaps:       s.nodeCapsFunc(),
 		ClientVersion:  s.clientVersionFor(),
+		TKAInfo:        s.tkaInfo(),
+		UnsignedPeers:  s.unsignedPeers(s.store.ListNodes()),
 	}
 }
 
@@ -273,16 +284,17 @@ func (s *Server) sshPolicyFor(self state.Node) *tailcfg.SSHPolicy {
 }
 
 // nodeCapsFunc snapshots the capabilities each node advertises: the policy's
-// nodeAttrs grants plus tailscale.com/cap/ssh for the nodes the SSH policy
-// names as destinations. Nil when the tailnet grants no capabilities at all.
+// nodeAttrs grants, tailscale.com/cap/ssh for the nodes the SSH policy names
+// as destinations, and tailscale.com/cap/tailnet-lock once the tailnet has a
+// key authority. Nil when the tailnet grants no capabilities at all.
 func (s *Server) nodeCapsFunc() func(state.Node) tailcfg.NodeCapMap {
-	return nodeCapsAdvertiser(s.policy.Load(), s.store.ListNodes())
+	return nodeCapsAdvertiser(s.policy.Load(), s.store.ListNodes(), s.tkaInfo() != nil)
 }
 
 // nodeCapMap returns the capability map for one node, for handlers that need
 // the same view the netmap advertises (feature queries).
 func (s *Server) nodeCapMap(node state.Node) tailcfg.NodeCapMap {
-	advertise := nodeCapsAdvertiser(s.policy.Load(), s.store.ListNodes())
+	advertise := nodeCapsAdvertiser(s.policy.Load(), s.store.ListNodes(), s.tkaInfo() != nil)
 	if advertise == nil {
 		return nil
 	}
@@ -292,27 +304,40 @@ func (s *Server) nodeCapMap(node state.Node) tailcfg.NodeCapMap {
 // nodeCapsAdvertiser compiles the policy into a per-node capability lookup.
 // It returns nil when the tailnet grants no capabilities at all, which lets
 // the mapper omit CapMap entirely.
-func nodeCapsAdvertiser(engine *policy.Engine, nodes []state.Node) func(state.Node) tailcfg.NodeCapMap {
-	if engine == nil {
+//
+// tailnetLock adds tailscale.com/cap/tailnet-lock to every node once the
+// tailnet has a key authority: official clients only run their
+// /machine/tka* synchronization loop when the netmap self node carries it.
+func nodeCapsAdvertiser(engine *policy.Engine, nodes []state.Node, tailnetLock bool) func(state.Node) tailcfg.NodeCapMap {
+	if engine == nil && !tailnetLock {
 		return nil
 	}
-	grants := engine.NodeCapMaps(nodes)
-	sshDests := engine.SSHDestinations(nodes)
-	if len(grants) == 0 && len(sshDests) == 0 {
-		return nil
+
+	var grants map[state.NodeID]tailcfg.NodeCapMap
+	var sshDests map[state.NodeID]bool
+	if engine != nil {
+		grants = engine.NodeCapMaps(nodes)
+		sshDests = engine.SSHDestinations(nodes)
 	}
+
 	return func(n state.Node) tailcfg.NodeCapMap {
 		caps := grants[n.ID]
-		if !sshDests[n.ID] {
+		sshDest := sshDests[n.ID]
+		if !tailnetLock && !sshDest {
 			return caps
 		}
 		// Copy so the snapshot stays immutable and safe to reuse across the
 		// nodes of one netmap build.
-		merged := make(tailcfg.NodeCapMap, len(caps)+1)
+		merged := make(tailcfg.NodeCapMap, len(caps)+2)
 		for name, value := range caps {
 			merged[name] = value
 		}
-		merged[tailcfg.CapabilitySSH] = nil
+		if tailnetLock {
+			merged[tailcfg.CapabilityTailnetLock] = nil
+		}
+		if sshDest {
+			merged[tailcfg.CapabilitySSH] = nil
+		}
 		return merged
 	}
 }

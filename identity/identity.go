@@ -173,4 +173,11 @@ const (
 	AuditAPIKeyRevoked     = "apikey.revoked"
 	AuditSSHCheckApproved  = "ssh.check_approved"
 	AuditSSHCheckDenied    = "ssh.check_denied"
+	// AuditTailnetLockEnabled, AuditTailnetLockDisabled and
+	// AuditTailnetLockNodeSigned record tailnet-lock (TKA) lifecycle events:
+	// a genesis chain being installed, the authority being disabled, and a
+	// node key being signed.
+	AuditTailnetLockEnabled    = "tailnet_lock.enabled"
+	AuditTailnetLockDisabled   = "tailnet_lock.disabled"
+	AuditTailnetLockNodeSigned = "tailnet_lock.node_signed"
 )

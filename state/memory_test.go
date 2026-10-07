@@ -19,6 +19,10 @@ func TestMemoryDNSRecordConformance(t *testing.T) {
 	runDNSRecordConformance(t, func(*testing.T) Store { return NewMemoryStore() })
 }
 
+func TestMemoryTKAConformance(t *testing.T) {
+	runTKAConformance(t, func(*testing.T) Store { return NewMemoryStore() })
+}
+
 func TestMemoryStoreConcurrentAccess(t *testing.T) {
 	s := NewMemoryStore()
 

@@ -121,6 +121,8 @@ func runStoreConformance(t *testing.T, newStore storeFactory) {
 			Method:    RegisterMethodInteractive,
 			Ephemeral: true,
 			Tags:      []string{"tag:prod", "tag:server"},
+			// Node-key signatures are opaque CBOR blobs to the store.
+			KeySignature: []byte{0xa1, 0x01, 0x02},
 		}
 
 		if err := s.CreateNode(&n); err != nil {
@@ -161,6 +163,9 @@ func runStoreConformance(t *testing.T, newStore storeFactory) {
 		}
 		if !slices.Equal(got.Tags, n.Tags) {
 			t.Errorf("Tags = %v, want %v", got.Tags, n.Tags)
+		}
+		if !slices.Equal(got.KeySignature, n.KeySignature) {
+			t.Errorf("KeySignature = %v, want %v", got.KeySignature, n.KeySignature)
 		}
 	})
 
@@ -402,6 +407,71 @@ func runStoreConformance(t *testing.T, newStore storeFactory) {
 		}
 		if got := s.ConfigRevision(); got != start+2 {
 			t.Errorf("ConfigRevision = %d, want %d", got, start+2)
+		}
+	})
+}
+
+// runTKAConformance exercises the [TKAStore] contract.
+func runTKAConformance(t *testing.T, newStore storeFactory) {
+	t.Run("never enabled is the zero value", func(t *testing.T) {
+		s := newStore(t)
+		if got := s.TKAMeta(); got != (TKAMeta{}) {
+			t.Errorf("TKAMeta = %+v, want the zero value", got)
+		}
+	})
+
+	t.Run("state round-trips and persists a disablement", func(t *testing.T) {
+		s := newStore(t)
+
+		// init/begin installs the chain while enforcement is still off;
+		// init/finish turns it on.
+		pending := TKAMeta{EverEnabled: true}
+		if err := s.SetTKAMeta(pending); err != nil {
+			t.Fatalf("SetTKAMeta: %v", err)
+		}
+		if got := s.TKAMeta(); got != pending {
+			t.Errorf("TKAMeta = %+v, want %+v", got, pending)
+		}
+
+		enabled := TKAMeta{EverEnabled: true, Enabled: true}
+		if err := s.SetTKAMeta(enabled); err != nil {
+			t.Fatalf("SetTKAMeta(enabled): %v", err)
+		}
+		if got := s.TKAMeta(); got != enabled {
+			t.Errorf("TKAMeta = %+v, want %+v", got, enabled)
+		}
+
+		disabled := TKAMeta{
+			EverEnabled:             true,
+			Enabled:                 false,
+			Disabled:                true,
+			DisablementSecretSealed: "v1:sealed",
+		}
+		if err := s.SetTKAMeta(disabled); err != nil {
+			t.Fatalf("SetTKAMeta(disabled): %v", err)
+		}
+		if got := s.TKAMeta(); got != disabled {
+			t.Errorf("TKAMeta = %+v, want %+v", got, disabled)
+		}
+	})
+
+	t.Run("a disabled tailnet can be enabled again", func(t *testing.T) {
+		s := newStore(t)
+
+		if err := s.SetTKAMeta(TKAMeta{
+			EverEnabled:             true,
+			Disabled:                true,
+			DisablementSecretSealed: "v1:old",
+		}); err != nil {
+			t.Fatalf("SetTKAMeta: %v", err)
+		}
+		// Re-initializing replaces the record wholesale: the previous
+		// disablement secret must not survive.
+		if err := s.SetTKAMeta(TKAMeta{EverEnabled: true}); err != nil {
+			t.Fatalf("SetTKAMeta(re-enabled): %v", err)
+		}
+		if got := s.TKAMeta(); got != (TKAMeta{EverEnabled: true}) {
+			t.Errorf("TKAMeta = %+v, want a clean enabled state", got)
 		}
 	})
 }

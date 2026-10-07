@@ -60,7 +60,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
 已知限制（M2 起补齐）：
 
 - Store 无持久化；无预认证密钥（PAK）；`/register/{id}` 页面不自动审批（审批仅经 `ApproveRegistration` 接缝）。
-- 内层端点：`/machine/{register,map,set-dns,feature/query,audit-log,update-health,whoami}` 与 SSH check 已实现；`set-device-attr`、`id-token` 显式 501；TKA、Funnel 未处理。
+- 内层端点：`/machine/{register,map,set-dns,feature/query,audit-log,update-health,whoami}` 与 SSH check 已实现；`set-device-attr`、`id-token` 显式 501；TKA 见 M11（已完成）；Funnel 未处理。
 
 ---
 
@@ -808,6 +808,68 @@ in-place re-registration 与 `HandleNodeFromAuthPath` 的 reauth/convert 语义�
 - 测试：`control/rotation_test.go`（auth key 原地轮换且不重复、旧键失效、身份/地址
   保留、node.key_rotated 审计；已用单次密钥拒绝轮换且节点不变；标签替换与保留；
   交互式 relogin 原地轮换；歧义归属 409）。
+
+---
+
+## M11 — Tailnet Lock（TKA，已完成）
+
+目标：控制面成为 tailnet 的 key authority（TKA）存储与分发点——保存 AUM 链、向
+节点提供 `/machine/tka/*` RPC、把每个节点的 node-key signature 广播进 netmap，
+让客户端之间互相验证 node key 而不是信任控制面。协议形状以官方客户端为准
+（`reference/tailscale/ipn/ipnlocal/tailnet-lock.go`），不改变 TS2021/Noise/MapRequest。
+
+- `state`（迁移 v7，向后兼容的新列/新表）：
+  - `Node.KeySignature`（`tkatype.MarshaledSignature`，BLOB，可空）——netmap 广播的
+    node-key signature。
+  - `tka_meta` 单行表 + `TKAStore`（`TKAMeta`/`SetTKAMeta`）：`EverEnabled`、
+    `Enabled`（init/finish 之后才为真）、`Disabled`、密封后的 support disablement
+    secret。`Store` 接口内嵌 `TKAStore`，内存与 SQLite 实现同步更新
+    （`nodeColumns`/`scanNode`/INSERT/UPDATE 全部覆盖新列）。
+- `control/tka.go`：`tkaManager` 持有链（上游 `tailchonk`，落盘 `stateDir/tka/`，
+  因此磁盘格式与上游一致）与密封密钥（`stateDir/tka_secret.key`，0600）：
+  - `initBegin(genesis)` 只安装链，不生效；`enable(secret)` 在 init/finish 原子地
+    开启 enforcement 并密封 support disablement secret；`disable(secret)` 用
+    `Authority.ValidDisablement` 校验后关闭 enforcement（链保留，便于审计与
+    重新初始化）；`bootstrap()` 返回 genesis AUM（+禁用后的 secret）。
+  - `syncOffer`/`syncSend`（`ToSyncOffer`/`Authority.SyncOffer`/`MissingAUMs`/
+    `Inform`）、`verifyNodeSignature`（`NodeKeySignature.Unserialize` +
+    `NodeKeyAuthorized`）、`nodeKeyAuthorized`。
+- `control/tka_handlers.go`（全部 GET + JSON body，路径与客户端一致）：
+  `/machine/tka/{init/begin,init/finish,bootstrap,sync/offer,sync/send,disable,sign,affected-sigs}`。
+  每个请求的 `NodeKey` 必须属于 Noise 会话的 machine key（与其它内层端点同一认证），
+  并受 capability 下限约束。init/finish 先整体校验再写入，避免半启用状态。
+- `control/tka_netmap.go` + mapper：`MapResponse.TKAInfo`（从未启用 → nil；启用 →
+  `{Head}`；禁用 → `{Disabled:true}`，避免 delta 里 nil 被当成"不变"）、
+  `tailcfg.Node.KeySignature`、未签名节点在**他人** netmap 中
+  `UnsignedPeerAPIOnly=true`；只要链已启用，self CapMap 就带上
+  `tailscale.com/cap/tailnet-lock`（官方客户端据此启动 TKA 同步循环）。
+- 防火墙收窄：客户端会整体丢弃"允许未签名 peer"的 packet filter（fail closed），
+  因此启用 TKA 且存在未签名节点时，`*`/`0.0.0.0/0`/`::/0` 源被展开为已签名节点的
+  地址与它们服务的路由；显式命中未签名地址的规则整条丢弃（不做部分相减）。
+- 注册路径：`RegisterRequest.NodeKeySignature` 在启用状态下必须通过
+  `NodeKeyAuthorized` 校验，否则整个注册被拒（401），避免把无法验证的授权声明静默
+  降级成"未签名节点"；校验通过的签名随注册落库并广播。`RegisterResponse.NodeKeySignature`
+  （控制面要求客户端换 node key 后重签的路径）未实现——见已知限制。
+- 审计：`tailnet_lock.enabled` / `tailnet_lock.disabled` / `tailnet_lock.node_signed`。
+- 测试：
+  - `control/tka_test.go`：manager 生命周期（init 未生效 → enable → 重启恢复 →
+    disable/re-init）、同步 offer/send（含幂等与 stale 节点）、签名校验（恶意/未知
+    签名拒绝）、禁用后拒绝写入。
+  - `control/tka_e2e_test.go`：真实 Noise 会话上的完整链路（init begin/finish →
+    netmap 广播 head/capability/signature → 未签名节点被标记并收窄防火墙 →
+    sync pull → `/tka/sign` 解禁 → `affected-sigs` → disable 后 `TKAInfo.Disabled`
+    与 bootstrap 返回 secret）；流式会话收到显式的启用/禁用帧；注册携带可信/不可信
+    signature 的接受与拒绝。
+  - `control/tka_netmap_test.go`：防火墙收窄规则（通配展开、未签名源丢弃、exit route
+    不得回流）。
+  - `state`：`TKAStore` 一致性（内存/SQLite）、`KeySignature` 往返、SQLite 重启后
+    meta 保留。
+- 已知限制（后续里程碑）：
+  - `TKASignInfo.RotationPubkey` 未下发（未持久化节点的 `NLKey`），因此客户端换
+    node key 时需要管理员重新 `lock sign`；`RegisterResponse.NodeKeySignature`
+    的"控制面要求重签"路径未实现。
+  - 未提供 CLI/Platform API 的 TKA 状态与初始化入口（协议面已完整，官方客户端
+    可直接使用 `tailscale lock ...`）。
 
 ---
 

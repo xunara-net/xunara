@@ -38,6 +38,11 @@ type mapSession struct {
 	// sent. Like DNSConfig, ClientVersion forces a client-side rebuild, so it
 	// is attached only when it actually changed.
 	clientVersion string
+
+	// tka fingerprints the tailnet-lock state this session already sent. It
+	// is attached only when it changed, because nil means "unchanged" and a
+	// repeated or absent value would leave clients stuck on stale state.
+	tka string
 }
 
 // newMapSession starts a session with a fresh opaque handle.
@@ -62,6 +67,7 @@ func (s *mapSession) initial(resp *tailcfg.MapResponse) {
 	s.dns = fingerprintDNS(resp.DNSConfig)
 	s.filter = fingerprintFilter(filterFromResponse(resp))
 	s.clientVersion = fingerprintClientVersion(resp.ClientVersion)
+	s.tka = fingerprintTKA(resp.TKAInfo)
 
 	s.seq = 1
 	resp.MapSessionHandle = s.handle
@@ -191,6 +197,22 @@ func (s *mapSession) syncClientVersion(resp *tailcfg.MapResponse) bool {
 	return true
 }
 
+// syncTKA attaches the tailnet-lock state when it differs from what this
+// session already sent, and clears it otherwise.
+//
+// The three states (absent, enabled with a head, explicitly disabled) must be
+// distinguishable on the wire: nil means "no change", so a tailnet that went
+// from enabled to disabled has to send Disabled: true rather than nothing.
+func (s *mapSession) syncTKA(resp *tailcfg.MapResponse) bool {
+	fp := fingerprintTKA(resp.TKAInfo)
+	if fp == s.tka {
+		resp.TKAInfo = nil
+		return false
+	}
+	s.tka = fp
+	return resp.TKAInfo != nil
+}
+
 // commit stamps a frame that is about to be written with the session sequence
 // number and records the state it puts the client in.
 //
@@ -221,6 +243,19 @@ func fingerprintFilter(rules []tailcfg.FilterRule) string {
 		return ""
 	}
 	b, err := json.Marshal(rules)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// fingerprintTKA renders tailnet-lock state into a comparable string. An
+// empty string means "no tailnet lock".
+func fingerprintTKA(info *tailcfg.TKAInfo) string {
+	if info == nil {
+		return ""
+	}
+	b, err := json.Marshal(info)
 	if err != nil {
 		return ""
 	}

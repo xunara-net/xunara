@@ -40,6 +40,8 @@ type MemoryStore struct {
 	dns       map[uint64]DNSRecord
 	nextDNSID uint64
 
+	tka TKAMeta
+
 	// configRevision counts out-of-band configuration changes.
 	configRevision atomic.Uint64
 
@@ -214,6 +216,21 @@ func (s *MemoryStore) SetNodeApprovedRoutes(id NodeID, routes []netip.Prefix) er
 
 	n.ApprovedRoutes = normalizeRoutes(routes)
 	s.byID[id] = n
+	return nil
+}
+
+// TKAMeta implements [TKAStore].
+func (s *MemoryStore) TKAMeta() TKAMeta {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.tka
+}
+
+// SetTKAMeta implements [TKAStore].
+func (s *MemoryStore) SetTKAMeta(meta TKAMeta) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.tka = meta
 	return nil
 }
 

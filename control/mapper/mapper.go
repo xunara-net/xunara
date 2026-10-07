@@ -93,6 +93,17 @@ type Config struct {
 
 	// DERPMap is advertised to clients when non-nil.
 	DERPMap *tailcfg.DERPMap
+
+	// TKAInfo is the tailnet-lock state advertised to every client. Nil means
+	// the tailnet never had tailnet lock: clients then keep whatever local
+	// state they have instead of receiving an explicit disablement.
+	TKAInfo *tailcfg.TKAInfo
+
+	// UnsignedPeers are the peers whose node keys tailnet lock does not
+	// authorize. They are advertised to *other* nodes with
+	// UnsignedPeerAPIOnly set, so clients confine them to the peer API
+	// instead of the tailnet. Empty when the tailnet is not locked.
+	UnsignedPeers map[state.NodeID]bool
 }
 
 // Full builds the first MapResponse of a session: everything a client needs to
@@ -110,6 +121,7 @@ func Full(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc, ca
 		UserProfiles:  userProfiles(self, nodes, cfg),
 		SSHPolicy:     sshPolicyFor(cfg, self),
 		ClientVersion: clientVersionFor(cfg, self),
+		TKAInfo:       cfg.TKAInfo,
 	}
 	SetPacketFilters(resp, capVer, packetFilterFor(cfg, self))
 	return resp
@@ -127,6 +139,7 @@ func Update(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc) 
 		UserProfiles:  userProfiles(self, nodes, cfg),
 		SSHPolicy:     sshPolicyFor(cfg, self),
 		ClientVersion: clientVersionFor(cfg, self),
+		TKAInfo:       cfg.TKAInfo,
 	}
 }
 
@@ -218,6 +231,7 @@ func Node(n state.Node, self bool, online OnlineFunc, routes RouteTable, cfg Con
 		Cap:           n.CapVer,
 		LastSeen:      n.LastSeen,
 		Tags:          slices.Clone(n.Tags),
+		KeySignature:  slices.Clone(n.KeySignature),
 	}
 
 	if n.Hostinfo != nil {
@@ -244,7 +258,11 @@ func peerNodes(self state.Node, nodes []state.Node, online OnlineFunc, routes Ro
 		if n.ID == self.ID {
 			continue
 		}
-		out = append(out, Node(n, false, online, routes, cfg))
+		peer := Node(n, false, online, routes, cfg)
+		if cfg.UnsignedPeers[n.ID] {
+			peer.UnsignedPeerAPIOnly = true
+		}
+		out = append(out, peer)
 	}
 	slices.SortFunc(out, func(a, b *tailcfg.Node) int {
 		return int(a.ID) - int(b.ID)

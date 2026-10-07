@@ -42,6 +42,39 @@ func TestSQLiteDNSRecordConformance(t *testing.T) {
 	})
 }
 
+func TestSQLiteTKAConformance(t *testing.T) {
+	runTKAConformance(t, func(t *testing.T) Store {
+		return openTestSQLite(t, filepath.Join(t.TempDir(), "state.db"))
+	})
+}
+
+// TestSQLiteTKAMetaPersistsAcrossReopen checks the tailnet-lock bookkeeping
+// survives a restart, which multi-instance failover depends on.
+func TestSQLiteTKAMetaPersistsAcrossReopen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	first, err := OpenSQLite(context.Background(), path)
+	if err != nil {
+		t.Fatalf("OpenSQLite: %v", err)
+	}
+	want := TKAMeta{EverEnabled: true, Enabled: true, DisablementSecretSealed: "v1:sealed"}
+	if err := first.SetTKAMeta(want); err != nil {
+		t.Fatalf("SetTKAMeta: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second, err := OpenSQLite(context.Background(), path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { second.Close() })
+	if got := second.TKAMeta(); got != want {
+		t.Errorf("TKAMeta after reopen = %+v, want %+v", got, want)
+	}
+}
+
 // TestSQLitePreAuthKeyPersistsAcrossReopen checks keys survive a restart and
 // that the ID counter does not restart with them.
 func TestSQLitePreAuthKeyPersistsAcrossReopen(t *testing.T) {

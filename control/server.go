@@ -159,6 +159,10 @@ type Server struct {
 	// webhooks delivers audit events, or nil when no endpoint is configured.
 	webhooks *webhook.Dispatcher
 
+	// tka owns the tailnet's tailnet-lock (TKA) state: the AUM chain and the
+	// sealed support disablement secret.
+	tka *tkaManager
+
 	// certDomains are the extra certificate names from cfg, normalised at
 	// construction. Empty when no DNS provider is configured.
 	certDomains []string
@@ -340,6 +344,13 @@ func New(cfg Config) (*Server, error) {
 	// (sealed secrets in the database). They share one dispatcher, so leases
 	// and cursors stay per endpoint ID.
 	if err := srv.initWebhooks(cfg); err != nil {
+		store.Close()
+		return nil, err
+	}
+
+	// Tailnet lock state lives next to the database; opening it can fail on
+	// corrupt or incompatible on-disk state, which must stop the server.
+	if srv.tka, err = newTKAManager(cfg.StateDir, store, cfg.Logger); err != nil {
 		store.Close()
 		return nil, err
 	}
