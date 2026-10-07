@@ -856,3 +856,105 @@ credential ID、公钥、challenge、secret）；登录成功写既有 `login.su
 - cmd/xunarad：`-passkey`（默认 true）、`-passkey-rpid`、`-passkey-origin`
   （repeatable）、`-passkey-display-name`；Console 导航新增 Passkeys（所有
   角色的用户都管理自己的凭据）。
+
+## 25. Xunara Flux — Agent 文件投递（v1）
+
+目标：让两台运行 `xunara-agent` 的机器之间可以投递文件（Xunara Flux）。
+v1 是**存储转发**（控制面中转 + 端到端加密），不是 WireGuard 数据面：
+
+- 只服务原生 Agent 协议（`/api/agent/v1`）。与官方客户端的 Taildrop
+  （WireGuard 之上）不互通，也不改变 TS2021/Noise/netmap（AGENTS §4）。
+- 控制面只保存**密文**与元数据，看不到文件内容（E2E，§25.4）；收件人必须
+  显式接受（accept）才会上传数据，控制面不发起任何"推送"。
+- 控制面不做杀毒、不做 DLP、不索引内容；文件名与大小对控制面可见（元数据）。
+
+### 25.1 生命周期与状态机
+
+```text
+pending ──accept──▶ accepted ──upload──▶ uploaded ──complete──▶ completed
+   │                    │                    │
+   ├─deny──▶ denied     ├─fail──▶ failed     ├─fail──▶ failed
+   └─cancel(cancel by sender)                  └─expire──▶ expired
+```
+
+- `pending`：发送方已报价（名字/大小/SHA-256/收件人）；收件人可见并可
+  accept/deny。发送方也可 cancel。
+- `accepted`：收件人已接受并附上**本次传输的 X25519 公钥**（§25.4）；发送方
+  可以上传密文。
+- `uploaded`：密文已落库/落盘；收件人可下载。下载可重试（状态不变），直到
+  complete/fail/expire。
+- `completed`：收件人已解密并校验 SHA-256；控制面立即删除密文。
+- 终态：`completed` / `denied` / `failed` / `cancelled` / `expired`。
+- 非法转移一律拒绝（409），不做隐式状态跳转；转移在 store 层用条件 UPDATE
+  原子完成（多实例安全）。
+
+### 25.2 数据与限额（fail-closed）
+
+- 元数据：`name`（basename，≤128 runes、可打印、不含路径分隔符；服务端再
+  次校验）、`size`（明文字节数）、`sha256`（明文十六进制，64 字符小写）。
+- 密文体积上限 = `size + 64` 字节（X25519 公钥 32 + nonce 12 + GCM tag 16 =
+  60，留 4 字节余量）。超过即 413；接收方解密后必须重新校验 SHA-256。
+- 默认单文件 ≤ 8 MiB（`DefaultFluxMaxSize`，部署可配），报价与上传都强制。
+- 活跃（pending/accepted/uploaded）传输：每节点（作为任一角色）≤ 32 条，
+  每组织 ≤ 512 条、密文总量 ≤ 1 GiB；超限 429。终态行保留 24h 供双方查询，
+  janitor 清理；节点删除级联删除其传输行。
+- TTL 默认 1h（可配）：超过后任何非终态 → `expired`，密文删除。
+- 解析/校验失败 400；未认证 401；不是本人参与的传输 404（不泄漏存在性）；
+  状态冲突 409；文件超过声明大小/限额 413；配额 429。
+
+### 25.3 HTTP 端点（Agent 协议）
+
+认证与 M9 相同（Bearer agent token + machine/node key 复述；POST 走 JSON body，
+GET/PUT 走 `X-Xunara-Machine-Key`/`X-Xunara-Node-Key` 头）。所有响应不包含
+其他节点的私密材料；`recipientKey` 是收件人主动公开的本次公钥。
+
+```text
+POST /api/agent/v1/flux/transfers                   报价 {recipient, name, size, sha256}
+GET  /api/agent/v1/flux/transfers                   列出本人参与的全部传输
+POST /api/agent/v1/flux/transfers/{id}/accept        收件人 {publicKey}
+POST /api/agent/v1/flux/transfers/{id}/deny          收件人 {reason?}
+POST /api/agent/v1/flux/transfers/{id}/cancel        发送方
+PUT  /api/agent/v1/flux/transfers/{id}/content       发送方上传密文（application/octet-stream）
+GET  /api/agent/v1/flux/transfers/{id}/content       收件人下载密文
+POST /api/agent/v1/flux/transfers/{id}/complete      收件人校验通过后确认
+POST /api/agent/v1/flux/transfers/{id}/fail          收件人 {reason?}（解密/校验失败）
+```
+
+`recipient` 用节点 stable ID（CLI 可用 hostname 解析）。GET 列表返回
+`direction`（sent/received）、双方 hostname、状态与时间戳；`recipientKey`
+只在 accepted 之后出现。`reason` 是可打印 ASCII、≤200 字符的静态说明，
+渲染时按文本转义。
+
+### 25.4 端到端加密（控制面零知识）
+
+- 收件人有一份本机 Flux 种子（`<state-dir>/flux.seed`，32 随机字节，0600，
+  首次使用生成）。每条传输的收件人密钥对 =
+  `HKDF-SHA256(seed, info="xunara-flux-recipient|"+transferID)` 派生的
+  X25519 私钥；公钥在 accept 时上送（公钥不是秘密）。
+- 发送方每次上传生成一次性 X25519 密钥对；共享秘密 =
+  ECDH(一次性私钥, 收件人公钥) = ECDH(收件人私钥, 一次性公钥)。
+  对称密钥 = `HKDF-SHA256(shared, info="xunara-flux-v1|"+transferID)`，
+  密文 = `epk(32) || nonce(12) || AES-256-GCM(plaintext)`。
+- 收件人下载后解密、校验 `sha256`，成功才 complete；失败调用 fail 并把
+  reason 交给发送方。种子丢失时无法解密在途传输：收件人 fail，发送方重发。
+- 控制面永远不接触明文或对称密钥；`sha256` 与文件名只是元数据（文档明示）。
+
+### 25.5 本机落盘与 CLI
+
+- `xunara-agent flux send -to <hostname|stable-id> -file <path> [-timeout 5m]
+  [-json]`：报价 → 等待 accept（超时退出）→ 加密上传 → 等待终态并报告。
+- `xunara-agent flux list [-json]`：本人参与的传输（id/方向/对端/状态/大小/时间）。
+- `xunara-agent flux deny <id> [-reason ...]`：拒绝一条 inbound。
+- `xunara-agent flux receive -dir <dir> [-yes] [-watch]`：接受并取回 pending
+  inbound 传输；解密校验后原子写入 `<dir>/<name>`（0600）；`-yes` 表示无需
+  确认（非交互环境必须显式给出），`-watch` 持续轮询。默认不覆盖已存在文件
+  （改名为 `<name>.1` 等）。
+- 上传前 CLI 预检（名字/大小/路径存在），服务端仍是权威。
+
+### 25.6 清理与审计
+
+- 控制面 janitor：过期非终态 → expired 并删除密文；终态行超 24h 删除；
+  扫描内容目录删除无行对应的孤儿文件（节点删除的级联兜底）。
+- 审计：`flux.transfer_offered/accepted/denied/uploaded/completed/failed/
+  cancelled/expired`，detail 只写 id、名字、大小与静态 reason，绝不写密文或
+  密钥材料。
