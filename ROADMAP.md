@@ -646,7 +646,28 @@ reference/{go-oidc,oauth2,dex,webauthn}
     退避往返与游标互不覆盖）、`webhook/webhook_test.go`
     （两个实例共享 store 只投递一次、holder 停止后接管、
     重启后遵守持久化 retry_at）。
-- 待办（M8 剩余）：gRPC API、Webhook 管理 API/console 页面。
+- M8c 已完成：Webhook 管理 API 与 Console 页面。
+  - identity 迁移 v9：`webhook_endpoints`（id/url/secret/events/enabled/
+    时间戳）+ `WebhookEndpointStore`（Create/Get/List/Update/Delete，删除时
+    一并删除该端点的投递游标）。
+  - 运行时管理：`POST/GET /api/v2/webhooks`、`DELETE /api/v2/webhooks/{id}`
+    （需 ScopeWrite；创建返回 201，ID 冲突 409，校验失败 400）；
+    console `/console/webhooks`（列表 + 创建表单 + 删除按钮，写操作需
+    admin/owner 且带 CSRF）。
+  - 密钥处理（AGENTS §8）：创建请求的 secret 只在 POST body 中出现，
+    入库前用 AES-256-GCM 密封（`control/webhook_secret.go`，密钥文件
+    `state/webhook.key` 0600、O_EXCL 创建、权限校验），存储值为 `v1:` 前缀
+    密文；API/console 任何响应都不回显 secret；日志只记录端点 ID。
+  - 与配置型端点共存：`initWebhooks` 合并启动配置与托管端点（ID 冲突拒绝
+    启动），两者共用一个 dispatcher、游标与租约；配置型端点只能改启动配置，
+    API/console 删除返回 409。
+  - dispatcher 支持运行时 `Upsert`/`Remove`（每代 owner 独立，替换 goroutine
+    不会释放后继租约）。
+  - 审计：`webhook.created` / `webhook.deleted`。
+  - 测试：`control/api_v2_webhooks_test.go`（生命周期 + 真实投递 + 列表不泄漏
+    secret、校验表、密封往返/篡改/换密钥/密钥文件权限）、
+    `control/console_test.go`（console 创建/删除、配置型保护、只读角色）。
+- 待办（M8 剩余）：gRPC API。
 
 ---
 

@@ -103,6 +103,7 @@ type Store interface {
 	ExternalIdentityStore
 	AuditStore
 	WebhookCursorStore
+	WebhookEndpointStore
 	AuthTransactionStore
 	SessionStore
 	DeviceAuthorizationStore

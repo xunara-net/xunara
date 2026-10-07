@@ -151,6 +151,10 @@ const (
 	// AuditAgentTokenRevoked records an administrator revoking a native
 	// client's machine-bound credential.
 	AuditAgentTokenRevoked = "agent.token_revoked"
+	// AuditWebhookCreated and AuditWebhookDeleted record managed webhook
+	// receivers being added to or removed from the control plane.
+	AuditWebhookCreated    = "webhook.created"
+	AuditWebhookDeleted    = "webhook.deleted"
 	AuditRouteApproved     = "route.approved"
 	AuditRouteUnapproved   = "route.unapproved"
 	AuditDNSRecordSet      = "dns.record_set"

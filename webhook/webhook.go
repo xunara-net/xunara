@@ -24,6 +24,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/xunara/xunara/identity"
@@ -124,6 +126,15 @@ type Dispatcher struct {
 	client *http.Client
 	// owner is this process's identity in delivery leases.
 	owner string
+
+	// mu guards the runtime endpoint set. runCtx is non-nil once Run has
+	// started; running holds each endpoint's cancel function; endpoints added
+	// before Run are queued in cfg.Endpoints.
+	mu      sync.Mutex
+	runCtx  context.Context
+	running map[string]context.CancelFunc
+	wg      sync.WaitGroup
+	seq     atomic.Uint64
 }
 
 // Delivery is the JSON document POSTed to an endpoint.
@@ -187,16 +198,8 @@ func New(cfg Config) (*Dispatcher, error) {
 			return nil, fmt.Errorf("webhook: duplicate endpoint id %q", ep.ID)
 		}
 		seen[ep.ID] = true
-		if err := validateEndpointURL(ep.URL); err != nil {
-			return nil, fmt.Errorf("webhook: endpoint %q: %w", ep.ID, err)
-		}
-		if strings.TrimSpace(ep.Secret) == "" {
-			return nil, fmt.Errorf("webhook: endpoint %q: signing secret is required", ep.ID)
-		}
-		for _, pattern := range ep.Events {
-			if _, err := globMatch(pattern, ""); err != nil {
-				return nil, fmt.Errorf("webhook: endpoint %q: %w", ep.ID, err)
-			}
+		if err := ValidateEndpoint(*ep); err != nil {
+			return nil, err
 		}
 	}
 
@@ -229,19 +232,123 @@ func randomInstanceID() (string, error) {
 	return hex.EncodeToString(buf[:]), nil
 }
 
-// Run delivers events until ctx is cancelled. One goroutine per endpoint; the
-// call blocks until every endpoint has stopped.
+// ValidateEndpoint checks one endpoint's configuration. It is the validation
+// [New] applies, exported so the management API can reject a bad endpoint
+// before persisting it.
+func ValidateEndpoint(ep Endpoint) error {
+	if strings.TrimSpace(ep.ID) == "" {
+		return errors.New("webhook: endpoint id is required")
+	}
+	if err := validateEndpointURL(ep.URL); err != nil {
+		return fmt.Errorf("webhook: endpoint %q: %w", ep.ID, err)
+	}
+	if strings.TrimSpace(ep.Secret) == "" {
+		return fmt.Errorf("webhook: endpoint %q: signing secret is required", ep.ID)
+	}
+	for _, pattern := range ep.Events {
+		if _, err := globMatch(pattern, ""); err != nil {
+			return fmt.Errorf("webhook: endpoint %q: %w", ep.ID, err)
+		}
+	}
+	return nil
+}
+
+// Run delivers events until ctx is cancelled. One goroutine per endpoint; a
+// running dispatcher also accepts [Upsert] and [Remove], so endpoints can be
+// managed while it serves.
 func (d *Dispatcher) Run(ctx context.Context) {
-	var done = make(chan struct{}, len(d.cfg.Endpoints))
-	for _, ep := range d.cfg.Endpoints {
-		go func(ep Endpoint) {
-			defer func() { done <- struct{}{} }()
-			d.runEndpoint(ctx, ep)
-		}(ep)
+	d.mu.Lock()
+	d.runCtx = ctx
+	initial := append([]Endpoint(nil), d.cfg.Endpoints...)
+	d.cfg.Endpoints = nil
+	d.mu.Unlock()
+
+	for _, ep := range initial {
+		d.start(ctx, ep)
 	}
-	for range d.cfg.Endpoints {
-		<-done
+
+	<-ctx.Done()
+
+	d.mu.Lock()
+	for _, cancel := range d.running {
+		cancel()
 	}
+	d.mu.Unlock()
+	d.wg.Wait()
+}
+
+// Upsert adds an endpoint, or replaces the running one with the same ID. The
+// durable cursor is untouched, so a reconfiguration does not replay history.
+func (d *Dispatcher) Upsert(ep Endpoint) error {
+	if err := ValidateEndpoint(ep); err != nil {
+		return err
+	}
+
+	d.mu.Lock()
+	ctx := d.runCtx
+	d.mu.Unlock()
+
+	if ctx == nil {
+		// Not running yet: queue it for Run.
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		for i := range d.cfg.Endpoints {
+			if d.cfg.Endpoints[i].ID == ep.ID {
+				d.cfg.Endpoints[i] = ep
+				return nil
+			}
+		}
+		d.cfg.Endpoints = append(d.cfg.Endpoints, ep)
+		return nil
+	}
+
+	d.start(ctx, ep)
+	return nil
+}
+
+// Remove stops delivering to an endpoint. The next instance to start with the
+// same ID resumes from the durable cursor; removing an unknown endpoint is a
+// no-op.
+func (d *Dispatcher) Remove(id string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if cancel, ok := d.running[id]; ok {
+		cancel()
+		delete(d.running, id)
+	}
+	for i := range d.cfg.Endpoints {
+		if d.cfg.Endpoints[i].ID == id {
+			d.cfg.Endpoints = append(d.cfg.Endpoints[:i], d.cfg.Endpoints[i+1:]...)
+			return
+		}
+	}
+}
+
+// start launches (or restarts) one endpoint's goroutine.
+func (d *Dispatcher) start(ctx context.Context, ep Endpoint) {
+	// Each goroutine generation gets its own lease owner, so a replaced
+	// goroutine's deferred release cannot free its successor's claim.
+	owner := fmt.Sprintf("%s/%s/%d", d.owner, ep.ID, d.seq.Add(1))
+
+	epCtx, cancel := context.WithCancel(ctx)
+
+	d.mu.Lock()
+	if prev, ok := d.running[ep.ID]; ok {
+		prev()
+	}
+	if d.running == nil {
+		d.running = make(map[string]context.CancelFunc)
+	}
+	d.running[ep.ID] = cancel
+	d.wg.Add(1)
+	d.mu.Unlock()
+
+	go func() {
+		defer d.wg.Done()
+		defer cancel()
+		d.runEndpoint(epCtx, ep, owner)
+	}()
 }
 
 // runEndpoint drives one endpoint's cursor until ctx is cancelled.
@@ -250,12 +357,12 @@ func (d *Dispatcher) Run(ctx context.Context) {
 // lease delivers, and the others wait. That is what keeps several instances
 // sharing one database from double delivering; the retry backoff is persisted
 // with the same row, so a restart does not reset it.
-func (d *Dispatcher) runEndpoint(ctx context.Context, ep Endpoint) {
-	if !d.acquire(ctx, ep) {
+func (d *Dispatcher) runEndpoint(ctx context.Context, ep Endpoint, owner string) {
+	if !d.acquire(ctx, ep, owner) {
 		return
 	}
 	defer func() {
-		if err := d.cfg.Store.ReleaseWebhookClaim(ep.ID, d.owner); err != nil {
+		if err := d.cfg.Store.ReleaseWebhookClaim(ep.ID, owner); err != nil {
 			d.log.Warn("releasing webhook claim", "endpoint", ep.ID, "err", err)
 		}
 	}()
@@ -263,7 +370,7 @@ func (d *Dispatcher) runEndpoint(ctx context.Context, ep Endpoint) {
 	lost := make(chan struct{})
 	renewCtx, stopRenew := context.WithCancel(ctx)
 	defer stopRenew()
-	go d.renewLoop(renewCtx, ep.ID, lost)
+	go d.renewLoop(renewCtx, ep.ID, owner, lost)
 
 	attempts, retryAt := d.cfg.Store.WebhookRetryState(ep.ID)
 	delay := d.backoffFor(attempts)
@@ -334,10 +441,10 @@ func (d *Dispatcher) runEndpoint(ctx context.Context, ep Endpoint) {
 
 // acquire blocks until this instance holds the endpoint's delivery lease, and
 // reports false when ctx is cancelled first.
-func (d *Dispatcher) acquire(ctx context.Context, ep Endpoint) bool {
+func (d *Dispatcher) acquire(ctx context.Context, ep Endpoint, owner string) bool {
 	waiting := false
 	for {
-		claimed, err := d.cfg.Store.ClaimWebhookEndpoint(ep.ID, d.owner,
+		claimed, err := d.cfg.Store.ClaimWebhookEndpoint(ep.ID, owner,
 			d.cfg.Now(), d.cfg.Now().Add(d.cfg.LeaseDuration))
 		switch {
 		case err != nil:
@@ -364,7 +471,7 @@ func (d *Dispatcher) acquire(ctx context.Context, ep Endpoint) bool {
 
 // renewLoop extends the lease until ctx is cancelled or the lease is taken
 // over, in which case lost is closed.
-func (d *Dispatcher) renewLoop(ctx context.Context, endpoint string, lost chan<- struct{}) {
+func (d *Dispatcher) renewLoop(ctx context.Context, endpoint, owner string, lost chan<- struct{}) {
 	ticker := time.NewTicker(d.cfg.LeaseRenewInterval)
 	defer ticker.Stop()
 
@@ -373,7 +480,7 @@ func (d *Dispatcher) renewLoop(ctx context.Context, endpoint string, lost chan<-
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			ok, err := d.cfg.Store.RenewWebhookClaim(endpoint, d.owner, d.cfg.Now().Add(d.cfg.LeaseDuration))
+			ok, err := d.cfg.Store.RenewWebhookClaim(endpoint, owner, d.cfg.Now().Add(d.cfg.LeaseDuration))
 			if err != nil {
 				d.log.Error("renewing webhook claim", "endpoint", endpoint, "err", err)
 				continue

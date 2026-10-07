@@ -153,6 +153,10 @@ type Server struct {
 	// construction. Empty when no DNS provider is configured.
 	certDomains []string
 
+	// webhookKey seals operator-managed webhook signing secrets at rest. It
+	// is generated on first use next to the server's other state.
+	webhookKey [32]byte
+
 	// startOnce guards the background workers started by [Server.Start].
 	startOnce sync.Once
 
@@ -302,20 +306,63 @@ func New(cfg Config) (*Server, error) {
 		return nil, fmt.Errorf("control: loading policy %s: %w", cfg.PolicyPath, err)
 	}
 
-	if len(cfg.Webhooks) > 0 {
-		dispatcher, err := webhook.New(webhook.Config{
-			Endpoints: cfg.Webhooks,
-			Store:     identityStore,
-			Logger:    cfg.Logger,
-		})
-		if err != nil {
-			store.Close()
-			return nil, fmt.Errorf("control: %w", err)
-		}
-		srv.webhooks = dispatcher
+	// Webhook endpoints come from two places: deployment configuration
+	// (flags/environment, secrets never stored) and runtime management
+	// (sealed secrets in the database). They share one dispatcher, so leases
+	// and cursors stay per endpoint ID.
+	if err := srv.initWebhooks(cfg); err != nil {
+		store.Close()
+		return nil, err
 	}
 
 	return srv, nil
+}
+
+// initWebhooks merges deployment-configured and managed webhook endpoints and
+// builds the dispatcher.
+func (s *Server) initWebhooks(cfg Config) error {
+	key, err := loadOrCreateWebhookSecretKey(cfg.StateDir)
+	if err != nil {
+		return err
+	}
+	s.webhookKey = key
+
+	endpoints := make([]webhook.Endpoint, 0, len(cfg.Webhooks)+4)
+	configured := make(map[string]bool, len(cfg.Webhooks))
+	for _, ep := range cfg.Webhooks {
+		configured[ep.ID] = true
+		endpoints = append(endpoints, ep)
+	}
+
+	for _, managed := range s.identity.ListWebhookEndpoints() {
+		if configured[managed.ID] {
+			return fmt.Errorf("control: webhook endpoint %q is both configured and managed", managed.ID)
+		}
+		if !managed.Enabled {
+			continue
+		}
+		secret, err := openWebhookSecret(key, managed.Secret)
+		if err != nil {
+			return fmt.Errorf("control: webhook endpoint %q: %w", managed.ID, err)
+		}
+		endpoints = append(endpoints, webhook.Endpoint{
+			ID:     managed.ID,
+			URL:    managed.URL,
+			Secret: secret,
+			Events: managed.Events,
+		})
+	}
+
+	dispatcher, err := webhook.New(webhook.Config{
+		Endpoints: endpoints,
+		Store:     s.identity,
+		Logger:    cfg.Logger,
+	})
+	if err != nil {
+		return fmt.Errorf("control: %w", err)
+	}
+	s.webhooks = dispatcher
+	return nil
 }
 
 // Close releases the server's durable resources.

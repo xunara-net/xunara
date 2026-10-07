@@ -77,6 +77,7 @@ func (s *Server) consoleRouter() http.Handler {
 	r.Get("/dns", s.handleConsoleDNS)
 	r.Get("/auth-keys", s.handleConsoleAuthKeys)
 	r.Get("/agents", s.handleConsoleAgents)
+	r.Get("/webhooks", s.handleConsoleWebhooks)
 	r.Get("/policy", s.handleConsolePolicy)
 	r.Get("/audit", s.handleConsoleAudit)
 
@@ -93,6 +94,8 @@ func (s *Server) consoleRouter() http.Handler {
 		r.Post("/auth-keys", s.handleConsoleCreateAuthKey)
 		r.Post("/auth-keys/{id}/delete", s.handleConsoleDeleteAuthKey)
 		r.Post("/agents/{id}/revoke", s.handleConsoleRevokeAgentToken)
+		r.Post("/webhooks", s.handleConsoleCreateWebhook)
+		r.Post("/webhooks/{id}/delete", s.handleConsoleDeleteWebhook)
 	})
 
 	return r
@@ -708,6 +711,136 @@ func (s *Server) handleConsoleRevokeAgentToken(w http.ResponseWriter, r *http.Re
 	data["Notice"] = "Agent credential revoked."
 	data["Tokens"] = s.consoleAgentTokenViews()
 	s.renderConsole(w, consoleAgentsTemplate, data)
+}
+
+// consoleWebhookView is a webhook receiver as the console lists it. The
+// signing secret is never included (AGENTS.md section 8).
+type consoleWebhookView struct {
+	ID      string
+	URL     string
+	Events  []string
+	Enabled bool
+	Source  string
+	Created time.Time
+	Updated time.Time
+}
+
+// consoleWebhookViews renders both deployment-configured and managed
+// receivers; the source tells the operator which ones can be removed at
+// runtime.
+func (s *Server) consoleWebhookViews() []consoleWebhookView {
+	views := make([]consoleWebhookView, 0, len(s.cfg.Webhooks)+4)
+	for _, ep := range s.cfg.Webhooks {
+		views = append(views, consoleWebhookView{
+			ID:      ep.ID,
+			URL:     ep.URL,
+			Events:  ep.Events,
+			Enabled: true,
+			Source:  "config",
+		})
+	}
+	for _, managed := range s.identity.ListWebhookEndpoints() {
+		views = append(views, consoleWebhookView{
+			ID:      managed.ID,
+			URL:     managed.URL,
+			Events:  managed.Events,
+			Enabled: managed.Enabled,
+			Source:  "managed",
+			Created: managed.CreatedAt,
+			Updated: managed.UpdatedAt,
+		})
+	}
+	return views
+}
+
+// handleConsoleWebhooks implements GET /console/webhooks.
+func (s *Server) handleConsoleWebhooks(w http.ResponseWriter, r *http.Request) {
+	_, data, ok := s.consoleSession(w, r, "webhooks")
+	if !ok {
+		return
+	}
+	data["Webhooks"] = s.consoleWebhookViews()
+	s.renderConsole(w, consoleWebhooksTemplate, data)
+}
+
+// handleConsoleCreateWebhook implements POST /console/webhooks.
+func (s *Server) handleConsoleCreateWebhook(w http.ResponseWriter, r *http.Request) {
+	session, data, ok := s.consoleSession(w, r, "webhooks")
+	if !ok {
+		return
+	}
+	if !s.consoleCheckCSRF(w, r) {
+		return
+	}
+
+	endpoint, err := s.normalizeManagedWebhook(
+		strings.TrimSpace(r.PostFormValue("id")),
+		strings.TrimSpace(r.PostFormValue("url")),
+		r.PostFormValue("secret"),
+		splitTagInput(r.PostFormValue("events")),
+	)
+	switch {
+	case errors.Is(err, errWebhookIDInvalid):
+		s.renderError(w, http.StatusBadRequest, "Invalid webhook ID",
+			"The ID must start with a letter or digit and may contain letters, digits, dots, dashes and underscores.")
+		return
+	case errors.Is(err, errWebhookIDManaged):
+		s.renderError(w, http.StatusConflict, "Webhook exists",
+			"A managed webhook already uses this ID.")
+		return
+	case errors.Is(err, errWebhookConfigured):
+		s.renderError(w, http.StatusConflict, "Webhook exists",
+			"This ID belongs to a webhook configured at startup.")
+		return
+	case err != nil:
+		s.renderError(w, http.StatusBadRequest, "Invalid webhook", err.Error())
+		return
+	}
+
+	managed, err := s.storeManagedWebhook(endpoint, true)
+	if err != nil {
+		s.log.Error("creating webhook endpoint", "webhook", endpoint.ID, "err", err)
+		s.renderError(w, http.StatusInternalServerError, "Create failed", "Please try again.")
+		return
+	}
+	s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditWebhookCreated,
+		"webhook:"+managed.ID, "created through the console")
+
+	data["Notice"] = "Webhook created."
+	data["Webhooks"] = s.consoleWebhookViews()
+	s.renderConsole(w, consoleWebhooksTemplate, data)
+}
+
+// handleConsoleDeleteWebhook implements POST /console/webhooks/{id}/delete.
+func (s *Server) handleConsoleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
+	session, data, ok := s.consoleSession(w, r, "webhooks")
+	if !ok {
+		return
+	}
+	if !s.consoleCheckCSRF(w, r) {
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	switch err := s.deleteManagedWebhook(id); {
+	case errors.Is(err, errWebhookConfigured):
+		s.renderError(w, http.StatusConflict, "Configured webhook",
+			"This receiver comes from the server configuration. Remove it there and restart.")
+		return
+	case errors.Is(err, errWebhookUnknown):
+		s.renderError(w, http.StatusNotFound, "Unknown webhook", "This webhook does not exist.")
+		return
+	case err != nil:
+		s.log.Error("deleting webhook endpoint", "webhook", id, "err", err)
+		s.renderError(w, http.StatusInternalServerError, "Delete failed", "Please try again.")
+		return
+	}
+	s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditWebhookDeleted,
+		"webhook:"+id, "deleted through the console")
+
+	data["Notice"] = "Webhook deleted."
+	data["Webhooks"] = s.consoleWebhookViews()
+	s.renderConsole(w, consoleWebhooksTemplate, data)
 }
 
 // handleConsolePolicy implements GET /console/policy.

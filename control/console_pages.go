@@ -75,6 +75,7 @@ footer { text-align: center; color: #5b616e; font-size: .8rem; }
 <a href="/console/dns"{{if eq .Nav "dns"}} class="active"{{end}}>DNS</a>
 <a href="/console/auth-keys"{{if eq .Nav "auth-keys"}} class="active"{{end}}>Auth keys</a>
 <a href="/console/agents"{{if eq .Nav "agents"}} class="active"{{end}}>Agents</a>
+<a href="/console/webhooks"{{if eq .Nav "webhooks"}} class="active"{{end}}>Webhooks</a>
 <a href="/console/policy"{{if eq .Nav "policy"}} class="active"{{end}}>Policy</a>
 <a href="/console/audit"{{if eq .Nav "audit"}} class="active"{{end}}>Audit</a>
 </nav>
@@ -101,6 +102,7 @@ var consoleTitles = map[string]string{
 	"dns":       "DNS",
 	"auth-keys": "Auth keys",
 	"agents":    "Agents",
+	"webhooks":  "Webhooks",
 	"policy":    "Policy",
 	"audit":     "Audit",
 }
@@ -365,6 +367,54 @@ immediately; the device keeps its node identity and can enroll again.</p>
 {{else}}
 <p>No agent credentials. A device creates one when it enrolls with
 <code>/api/agent/v1/enroll</code>.</p>
+{{end}}
+`)
+
+	consoleWebhooksTemplate = consolePage("webhooks", `
+<h2>Webhooks</h2>
+<p>Audit events are POSTed to these receivers. The signing secret is stored
+sealed and is never shown again after creation.</p>
+{{if .Webhooks}}
+<table>
+<thead><tr><th>ID</th><th>URL</th><th>Events</th><th>State</th><th>Source</th><th>Created</th><th></th></tr></thead>
+<tbody>
+{{range .Webhooks}}
+<tr>
+<td><code>{{.ID}}</code></td>
+<td>{{.URL}}</td>
+<td>{{if .Events}}{{range .Events}}<span class="tag">{{.}}</span> {{end}}{{else}}all{{end}}</td>
+<td>{{if .Enabled}}<span class="ok">enabled</span>{{else}}<span class="off">paused</span>{{end}}</td>
+<td>{{.Source}}</td>
+<td>{{if .Created}}{{fmtTime .Created}}{{else}}—{{end}}</td>
+<td>
+{{if and $.CanWrite (eq .Source "managed")}}
+<form method="post" action="/console/webhooks/{{.ID}}/delete">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<button class="danger" type="submit">Delete</button>
+</form>
+{{else if eq .Source "config"}}from startup config{{else}}—{{end}}
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>No webhook receivers are configured.</p>
+{{end}}
+{{if .CanWrite}}
+<h3>Add a receiver</h3>
+<form method="post" action="/console/webhooks">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<div class="field"><label for="webhook-id">ID</label>
+<input id="webhook-id" name="id" required></div>
+<div class="field"><label for="webhook-url">URL</label>
+<input id="webhook-url" name="url" size="48" placeholder="https://example.com/hooks/xunara" required></div>
+<div class="field"><label for="webhook-secret">Secret</label>
+<input id="webhook-secret" name="secret" type="password" required></div>
+<div class="field"><label for="webhook-events">Events</label>
+<input id="webhook-events" name="events" placeholder="* (all)"></div>
+<button type="submit">Create webhook</button>
+</form>
 {{end}}
 `)
 

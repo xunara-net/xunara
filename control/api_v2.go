@@ -55,6 +55,10 @@ func (s *Server) apiV2Router() http.Handler {
 	r.Get("/agent-tokens", s.handleAPIV2AgentTokens)
 	r.Delete("/agent-tokens/{id}", s.handleAPIV2RevokeAgentToken)
 
+	r.Get("/webhooks", s.handleAPIV2Webhooks)
+	r.Post("/webhooks", s.handleAPIV2CreateWebhook)
+	r.Delete("/webhooks/{id}", s.handleAPIV2DeleteWebhook)
+
 	return r
 }
 

@@ -197,6 +197,22 @@ ALTER TABLE webhook_cursors ADD COLUMN retry_at INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE webhook_cursors ADD COLUMN claim_owner TEXT NOT NULL DEFAULT '';
 ALTER TABLE webhook_cursors ADD COLUMN claim_expires_at INTEGER NOT NULL DEFAULT 0;
 `,
+
+	// v9: operator-managed webhook endpoints. Deployment-configured endpoints
+	// stay in the process config; these are managed at runtime through the
+	// platform API and the console. The signing secret is stored sealed: the
+	// trust plane only ever sees ciphertext (AGENTS.md section 8).
+	`
+CREATE TABLE IF NOT EXISTS webhook_endpoints (
+	id         TEXT    PRIMARY KEY,
+	url        TEXT    NOT NULL,
+	secret     TEXT    NOT NULL,
+	events     TEXT    NOT NULL DEFAULT '[]',
+	enabled    INTEGER NOT NULL DEFAULT 1,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+`,
 }
 
 // SQLiteStore is a durable [Store] sharing the control plane's database.

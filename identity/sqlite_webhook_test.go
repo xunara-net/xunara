@@ -1,9 +1,86 @@
 package identity
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
+
+// TestWebhookEndpointStore covers the durable table behind the managed webhook
+// API: duplicate detection, listing order, updates, and a deletion that takes
+// the delivery cursor with it.
+func TestWebhookEndpointStore(t *testing.T) {
+	s := openTestStore(t)
+
+	alpha := WebhookEndpoint{
+		ID:      "alpha",
+		URL:     "https://example.com/a",
+		Secret:  "v1:sealed",
+		Events:  []string{"node.*"},
+		Enabled: true,
+	}
+	if err := s.CreateWebhookEndpoint(&alpha); err != nil {
+		t.Fatalf("CreateWebhookEndpoint: %v", err)
+	}
+	if alpha.CreatedAt.IsZero() || alpha.UpdatedAt.IsZero() {
+		t.Fatal("CreateWebhookEndpoint did not assign timestamps")
+	}
+	if err := s.CreateWebhookEndpoint(&WebhookEndpoint{
+		ID: "alpha", URL: "https://example.com/other", Secret: "v1:x", Enabled: true,
+	}); !errors.Is(err, ErrWebhookEndpointExists) {
+		t.Fatalf("duplicate create error = %v, want ErrWebhookEndpointExists", err)
+	}
+
+	beta := WebhookEndpoint{ID: "beta", URL: "https://example.com/b", Secret: "v1:sealed"}
+	if err := s.CreateWebhookEndpoint(&beta); err != nil {
+		t.Fatalf("CreateWebhookEndpoint(beta): %v", err)
+	}
+
+	got, ok := s.GetWebhookEndpoint("alpha")
+	if !ok {
+		t.Fatal("GetWebhookEndpoint(alpha) reported a missing endpoint")
+	}
+	if got.URL != alpha.URL || len(got.Events) != 1 || got.Events[0] != "node.*" || !got.Enabled || got.Secret != "v1:sealed" {
+		t.Errorf("alpha = %+v", got)
+	}
+	if _, ok := s.GetWebhookEndpoint("missing"); ok {
+		t.Error("GetWebhookEndpoint(missing) reported an endpoint")
+	}
+	if got := s.ListWebhookEndpoints(); len(got) != 2 || got[0].ID != "alpha" || got[1].ID != "beta" {
+		t.Fatalf("ListWebhookEndpoints = %+v, want alpha then beta", got)
+	}
+
+	got.URL = "https://example.com/a2"
+	got.Events = []string{"audit.*", "node.*"}
+	got.Enabled = false
+	if err := s.UpdateWebhookEndpoint(got); err != nil {
+		t.Fatalf("UpdateWebhookEndpoint: %v", err)
+	}
+	updated, _ := s.GetWebhookEndpoint("alpha")
+	if updated.URL != "https://example.com/a2" || updated.Enabled ||
+		len(updated.Events) != 2 || updated.Events[0] != "audit.*" {
+		t.Errorf("updated alpha = %+v", updated)
+	}
+	if err := s.UpdateWebhookEndpoint(WebhookEndpoint{ID: "missing"}); !errors.Is(err, ErrWebhookEndpointNotFound) {
+		t.Errorf("update unknown = %v, want ErrWebhookEndpointNotFound", err)
+	}
+
+	if err := s.SetWebhookCursor("alpha", 42); err != nil {
+		t.Fatalf("SetWebhookCursor: %v", err)
+	}
+	if err := s.DeleteWebhookEndpoint("alpha"); err != nil {
+		t.Fatalf("DeleteWebhookEndpoint: %v", err)
+	}
+	if _, ok := s.GetWebhookEndpoint("alpha"); ok {
+		t.Error("alpha still exists after deletion")
+	}
+	if got := s.GetWebhookCursor("alpha"); got != 0 {
+		t.Errorf("cursor after delete = %d, want it removed with the endpoint", got)
+	}
+	if err := s.DeleteWebhookEndpoint("alpha"); !errors.Is(err, ErrWebhookEndpointNotFound) {
+		t.Errorf("second delete = %v, want ErrWebhookEndpointNotFound", err)
+	}
+}
 
 // TestWebhookCursorRoundTrip checks the durable cursor that makes webhook
 // delivery restart-safe.

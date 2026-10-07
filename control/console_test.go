@@ -15,6 +15,7 @@ import (
 
 	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/state"
+	"github.com/xunara/xunara/webhook"
 )
 
 // TestConsoleRequiresSession checks that every console page sends anonymous
@@ -57,6 +58,7 @@ func TestConsolePagesRender(t *testing.T) {
 		{"/console/dns", "No extra DNS records."},
 		{"/console/auth-keys", "Create key"},
 		{"/console/agents", "No agent credentials."},
+		{"/console/webhooks", "No webhook receivers are configured."},
 		{"/console/policy", "No policy document is configured"},
 		{"/console/audit", identity.AuditNodeApproved},
 	}
@@ -373,6 +375,136 @@ func TestConsoleUserUpdate(t *testing.T) {
 	}
 	if !auditActionSet(t, s)[identity.AuditUserUpdated] {
 		t.Error("user update was not audited")
+	}
+}
+
+// TestConsoleWebhookManagement drives the console half of webhook
+// administration: the page lists receivers without their secret, creating one
+// stores the secret sealed, and deleting it removes the endpoint.
+func TestConsoleWebhookManagement(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/webhooks")
+
+	page := bodyString(t, getRequest(t, client, hs.URL+"/console/webhooks", cookie))
+	if !strings.Contains(page, "Create webhook") {
+		t.Fatalf("webhooks page lacks the create form:\n%s", page)
+	}
+
+	const secret = "console-webhook-secret"
+	resp := postForm(t, client, hs.URL+"/console/webhooks", url.Values{
+		"csrf":   {extractCSRF(t, page)},
+		"id":     {"ops"},
+		"url":    {"https://example.com/hook"},
+		"secret": {secret},
+		"events": {"node.*, audit.*"},
+	}, cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create status = %d, want 200", resp.StatusCode)
+	}
+	body := bodyString(t, resp)
+	if !strings.Contains(body, "Webhook created.") || !strings.Contains(body, "<code>ops</code>") {
+		t.Fatalf("created webhook is not listed:\n%s", body)
+	}
+	if strings.Contains(body, secret) {
+		t.Fatal("console page leaks the webhook secret")
+	}
+
+	stored, ok := s.Identity().GetWebhookEndpoint("ops")
+	if !ok {
+		t.Fatal("webhook endpoint was not stored")
+	}
+	if stored.Secret == secret || !strings.HasPrefix(stored.Secret, "v1:") {
+		t.Errorf("stored secret = %q, want sealed ciphertext", stored.Secret)
+	}
+	if got := stored.Events; len(got) != 2 || got[0] != "audit.*" || got[1] != "node.*" {
+		t.Errorf("stored events = %v, want sorted [audit.* node.*]", got)
+	}
+	if !stored.Enabled {
+		t.Error("a console-created webhook is not enabled")
+	}
+	if _, ok := findAudit(t, s, identity.AuditWebhookCreated); !ok {
+		t.Error("webhook.created audit event missing")
+	}
+
+	resp = postForm(t, client, hs.URL+"/console/webhooks/ops/delete",
+		url.Values{"csrf": {extractCSRF(t, body)}}, cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("delete status = %d, want 200", resp.StatusCode)
+	}
+	if body := bodyString(t, resp); !strings.Contains(body, "Webhook deleted.") {
+		t.Errorf("delete page lacks the notice:\n%s", body)
+	}
+	if _, ok := s.Identity().GetWebhookEndpoint("ops"); ok {
+		t.Error("webhook endpoint still exists after deletion")
+	}
+	if _, ok := findAudit(t, s, identity.AuditWebhookDeleted); !ok {
+		t.Error("webhook.deleted audit event missing")
+	}
+
+	page = bodyString(t, getRequest(t, client, hs.URL+"/console/webhooks", cookie))
+	resp = postForm(t, client, hs.URL+"/console/webhooks/ops/delete",
+		url.Values{"csrf": {extractCSRF(t, page)}}, cookie)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("second delete status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestConsoleWebhookConfiguredProtected checks that a deployment-configured
+// receiver is listed but can neither be deleted nor shadowed from the console,
+// and that read-only roles cannot add receivers.
+func TestConsoleWebhookConfiguredProtected(t *testing.T) {
+	s := newServerWithConfig(t, Config{
+		Webhooks: []webhook.Endpoint{{
+			ID: "configured", URL: "https://example.com/hook", Secret: "cfg-secret",
+		}},
+	})
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/webhooks")
+
+	page := bodyString(t, getRequest(t, client, hs.URL+"/console/webhooks", cookie))
+	if !strings.Contains(page, "from startup config") {
+		t.Fatalf("configured receiver is not marked as such:\n%s", page)
+	}
+	if strings.Contains(page, "cfg-secret") {
+		t.Fatal("console page leaks a configured webhook secret")
+	}
+	if strings.Contains(page, "/console/webhooks/configured/delete") {
+		t.Error("console offers a delete button for a configured receiver")
+	}
+
+	csrf := extractCSRF(t, page)
+	resp := postForm(t, client, hs.URL+"/console/webhooks/configured/delete",
+		url.Values{"csrf": {csrf}}, cookie)
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("delete configured status = %d, want 409", resp.StatusCode)
+	}
+	resp = postForm(t, client, hs.URL+"/console/webhooks", url.Values{
+		"csrf":   {csrf},
+		"id":     {"configured"},
+		"url":    {"https://example.com/hook"},
+		"secret": {"s"},
+	}, cookie)
+	if resp.StatusCode != http.StatusConflict {
+		t.Errorf("create with a configured id status = %d, want 409", resp.StatusCode)
+	}
+
+	memberID := seedRoleUser(t, s, "viewer@example.com", identity.RoleMember)
+	memberCookie, _ := seedUserSession(t, s, memberID)
+	memberPage := bodyString(t, getRequest(t, client, hs.URL+"/console/webhooks", memberCookie))
+	if strings.Contains(memberPage, "Create webhook") {
+		t.Error("read-only console page shows the create form")
+	}
+	resp = postForm(t, client, hs.URL+"/console/webhooks", url.Values{
+		"csrf":   {csrf},
+		"id":     {"ops"},
+		"url":    {"https://example.com/hook"},
+		"secret": {"s"},
+	}, memberCookie)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("member create status = %d, want 403", resp.StatusCode)
 	}
 }
 
