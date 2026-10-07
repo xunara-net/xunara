@@ -193,4 +193,8 @@ const (
 	// (upstream LocalBackend.SetExpirySooner). Extensions are rejected, so the
 	// expiry in this record is always sooner than the previous one.
 	AuditNodeExpiryShortened = "node.expiry_shortened"
+	// AuditServicesUpdated records a node publishing the set of services it
+	// advertises (Xunara Atlas). The detail lists names, protocols and ports,
+	// never metadata values.
+	AuditServicesUpdated = "node.services_updated"
 )

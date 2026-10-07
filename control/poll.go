@@ -236,7 +236,10 @@ func (s *Server) extraDNSRecords() []state.DNSRecord {
 		}
 		out = append(out, r)
 	}
-	return out
+	// Services a node advertises about itself (Xunara Atlas) resolve through
+	// MagicDNS to the node that publishes them; the records are derived from
+	// the registry rather than stored, so a withdrawal removes them.
+	return append(out, s.serviceDNSRecords()...)
 }
 
 // clientVersionFor builds the client-version advisory from the configured

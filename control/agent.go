@@ -91,6 +91,7 @@ func (s *Server) agentRouter() http.Handler {
 	r.Post("/netmap", s.handleAgentNetmap)
 	r.Post("/heartbeat", s.handleAgentHeartbeat)
 	r.Get("/events", s.handleAgentEvents)
+	r.Post("/services", s.handleAgentServices)
 	return r
 }
 
