@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -47,20 +48,37 @@ type RouterConfig struct {
 	// constant time with the request's bearer token. Empty disables the
 	// platform API (fail closed).
 	PlatformAdminToken string
+	// Registry, when non-nil, enables platform-managed organizations: the
+	// platform API can create, retarget and delete organizations at runtime,
+	// and the registry's rows are served alongside the configured ones.
+	// Managed organizations must declare domains, so enabling the registry
+	// requires every configured organization to declare domains too.
+	Registry *OrgRegistry
 	// Logger receives router logs. Defaults to slog.Default.
 	Logger *slog.Logger
 }
 
 // Router dispatches requests to organizations by Host.
 type Router struct {
-	cfg  RouterConfig
-	log  *slog.Logger
+	cfg RouterConfig
+	log *slog.Logger
+
+	// mu guards the organization table below. Requests read it on every
+	// dispatch, so platform CRUD takes it for writing.
+	mu sync.RWMutex
+	// orgs are the served organizations: configured ones first, then managed
+	// ones in registry order.
 	orgs []*routerOrg
 
 	// fallback is set when exactly one organization exists and declares no
 	// domains; it receives every request regardless of Host, preserving
 	// single-organization deployments (and tests that use a synthetic host).
 	fallback *routerOrg
+
+	// startCtx is the context [Router.Start] received; organizations created
+	// while the router serves are started with it.
+	startCtx context.Context
+	started  bool
 
 	// platformTokenHash is the SHA-256 of the platform admin token; hashing
 	// equalizes lengths so the constant-time comparison does not leak the
@@ -75,7 +93,19 @@ type routerOrg struct {
 	site     OrgSite
 	patterns []string
 	handler  http.Handler
+	// managed marks an organization created through the platform API, which
+	// may be updated or deleted at runtime; configured ones may not.
+	managed bool
+	// record is the registry row of a managed organization; the zero value
+	// for configured ones.
+	record ManagedOrg
 }
+
+// Errors the platform CRUD maps to HTTP responses.
+var (
+	errManagedOrgsDisabled = errors.New("platform-managed organizations are disabled")
+	errOrgConfigured       = errors.New("this organization is configured at startup")
+)
 
 // NewRouter validates the organization table and prepares the per-site
 // handlers.
@@ -91,35 +121,13 @@ func NewRouter(cfg RouterConfig) (*Router, error) {
 	}
 
 	r := &Router{cfg: cfg, log: cfg.Logger}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	seenID := make(map[string]bool, len(cfg.Orgs))
-	seenDomain := make(map[string]string, len(cfg.Orgs))
 	for _, site := range cfg.Orgs {
-		if site.ID == "" {
-			return nil, errors.New("control: organization ID is required")
+		if err := r.register(site, false); err != nil {
+			return nil, err
 		}
-		if site.Server == nil {
-			return nil, fmt.Errorf("control: organization %q has no server", site.ID)
-		}
-		if seenID[site.ID] {
-			return nil, fmt.Errorf("control: duplicate organization ID %q", site.ID)
-		}
-		seenID[site.ID] = true
-
-		org := &routerOrg{site: site, handler: site.Server.Handler()}
-		for _, domain := range site.Domains {
-			pattern, err := normalizeRouterDomain(domain)
-			if err != nil {
-				return nil, fmt.Errorf("control: organization %q: %w", site.ID, err)
-			}
-			if other, dup := seenDomain[pattern]; dup {
-				return nil, fmt.Errorf("control: domain %q is claimed by organizations %q and %q",
-					pattern, other, site.ID)
-			}
-			seenDomain[pattern] = site.ID
-			org.patterns = append(org.patterns, pattern)
-		}
-		r.orgs = append(r.orgs, org)
 	}
 
 	if len(r.orgs) == 1 && len(r.orgs[0].patterns) == 0 {
@@ -131,6 +139,15 @@ func NewRouter(cfg RouterConfig) (*Router, error) {
 		}
 	}
 
+	if cfg.Registry != nil {
+		if r.fallback != nil {
+			return nil, errors.New("control: platform-managed organizations require every configured organization to declare domains")
+		}
+		if err := r.loadManagedOrgs(); err != nil {
+			return nil, err
+		}
+	}
+
 	if cfg.PlatformAdminToken != "" {
 		r.platformTokenHash = sha256Sum(cfg.PlatformAdminToken)
 	}
@@ -138,12 +155,283 @@ func NewRouter(cfg RouterConfig) (*Router, error) {
 	return r, nil
 }
 
+// register adds one organization to the routing table. The caller holds mu.
+func (r *Router) register(site OrgSite, managed bool) error {
+	if site.ID == "" {
+		return errors.New("control: organization ID is required")
+	}
+	if site.Server == nil {
+		return fmt.Errorf("control: organization %q has no server", site.ID)
+	}
+	if r.orgByIDLocked(site.ID) != nil {
+		return fmt.Errorf("control: duplicate organization ID %q", site.ID)
+	}
+
+	org := &routerOrg{site: site, handler: site.Server.Handler(), managed: managed}
+	for _, domain := range site.Domains {
+		pattern, err := normalizeRouterDomain(domain)
+		if err != nil {
+			return fmt.Errorf("control: organization %q: %w", site.ID, err)
+		}
+		if other := r.domainOwner(pattern); other != "" {
+			return fmt.Errorf("control: domain %q is claimed by organizations %q and %q",
+				pattern, other, site.ID)
+		}
+		org.patterns = append(org.patterns, pattern)
+	}
+	if managed && len(org.patterns) == 0 {
+		return fmt.Errorf("control: managed organization %q has no domains", site.ID)
+	}
+
+	r.orgs = append(r.orgs, org)
+	return nil
+}
+
+// domainOwner returns the organization that already claims a routing pattern.
+// The caller holds mu.
+func (r *Router) domainOwner(pattern string) string {
+	for _, org := range r.orgs {
+		if slices.Contains(org.patterns, pattern) {
+			return org.site.ID
+		}
+	}
+	return ""
+}
+
+// loadManagedOrgs builds the control plane of every registered organization.
+// The caller holds mu.
+func (r *Router) loadManagedOrgs() error {
+	records, err := r.cfg.Registry.List(context.Background())
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		server, err := r.cfg.Registry.NewServer(record)
+		if err != nil {
+			return fmt.Errorf("control: starting managed organization %q: %w", record.ID, err)
+		}
+		if err := r.register(OrgSite{
+			ID:      record.ID,
+			Name:    record.Name,
+			Domains: record.Domains,
+			Server:  server,
+		}, true); err != nil {
+			_ = server.Close()
+			return err
+		}
+		r.orgs[len(r.orgs)-1].record = record
+	}
+	return nil
+}
+
+// orgByIDLocked returns the organization with this ID, or nil. The caller
+// holds mu.
+func (r *Router) orgByIDLocked(id string) *routerOrg {
+	for _, org := range r.orgs {
+		if org.site.ID == id {
+			return org
+		}
+	}
+	return nil
+}
+
+// orgByID returns the organization with this ID, or nil.
+func (r *Router) orgByID(id string) *routerOrg {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.orgByIDLocked(id)
+}
+
+// orgSnapshot copies the served organization list for read-only iteration.
+func (r *Router) orgSnapshot() []*routerOrg {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return append([]*routerOrg(nil), r.orgs...)
+}
+
+// CreateManagedOrg persists, builds and serves a new platform-managed
+// organization. The registry row is written first and rolled back if the
+// control plane cannot start, so a failure never claims the ID.
+func (r *Router) CreateManagedOrg(ctx context.Context, org ManagedOrg) (OrgSite, error) {
+	registry := r.cfg.Registry
+	if registry == nil {
+		return OrgSite{}, errManagedOrgsDisabled
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if err := validateManagedOrg(org); err != nil {
+		return OrgSite{}, err
+	}
+	if r.orgByIDLocked(org.ID) != nil {
+		return OrgSite{}, orgConflictf("organization %q already exists", org.ID)
+	}
+	patterns, err := normalizeManagedDomains(org.Domains)
+	if err != nil {
+		return OrgSite{}, err
+	}
+	for _, pattern := range patterns {
+		if other := r.domainOwner(pattern); other != "" {
+			return OrgSite{}, orgConflictf("domain %q is already used by organization %q", pattern, other)
+		}
+	}
+
+	record, err := registry.Create(ctx, org)
+	if err != nil {
+		return OrgSite{}, err
+	}
+
+	server, err := registry.NewServer(record)
+	if err != nil {
+		r.rollbackManagedOrg(ctx, record.ID, nil)
+		return OrgSite{}, err
+	}
+	site := OrgSite{ID: record.ID, Name: record.Name, Domains: record.Domains, Server: server}
+	if err := r.register(site, true); err != nil {
+		r.rollbackManagedOrg(ctx, record.ID, server)
+		return OrgSite{}, err
+	}
+	r.orgs[len(r.orgs)-1].record = record
+
+	// A router that already serves starts the new organization's background
+	// workers; one that has not started yet does so in Start.
+	if r.started {
+		server.Start(r.startCtx)
+	}
+	return site, nil
+}
+
+// UpdateManagedOrg changes the mutable fields of a managed organization: its
+// name and its routing domains. ID, server URL and MagicDNS domain stay fixed —
+// clients are configured with the URL, and the ID names the state directory.
+// The changes are persisted before any request is rerouted.
+func (r *Router) UpdateManagedOrg(ctx context.Context, id string, name *string, domains []string) (OrgSite, error) {
+	registry := r.cfg.Registry
+	if registry == nil {
+		return OrgSite{}, errManagedOrgsDisabled
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	org := r.orgByIDLocked(id)
+	if org == nil {
+		return OrgSite{}, ErrOrgNotFound
+	}
+	if !org.managed {
+		return OrgSite{}, errOrgConfigured
+	}
+
+	updated := org.record
+	if name != nil {
+		updated.Name = *name
+	}
+	if domains != nil {
+		updated.Domains = domains
+	}
+	if err := validateManagedOrg(updated); err != nil {
+		return OrgSite{}, err
+	}
+	patterns, err := normalizeManagedDomains(updated.Domains)
+	if err != nil {
+		return OrgSite{}, err
+	}
+	for _, pattern := range patterns {
+		if other := r.domainOwner(pattern); other != "" && other != id {
+			return OrgSite{}, orgConflictf("domain %q is already used by organization %q", pattern, other)
+		}
+	}
+
+	record, err := registry.Update(ctx, updated)
+	if err != nil {
+		return OrgSite{}, err
+	}
+	org.site.Name = record.Name
+	org.site.Domains = append([]string(nil), record.Domains...)
+	org.patterns = patterns
+	org.record = record
+	return org.site, nil
+}
+
+// DeleteManagedOrg stops serving an organization and archives its state
+// directory. The directory is moved aside before anything else changes, so a
+// re-created ID starts from an empty directory rather than inheriting the old
+// identity database and Noise key.
+func (r *Router) DeleteManagedOrg(ctx context.Context, id string) (string, error) {
+	registry := r.cfg.Registry
+	if registry == nil {
+		return "", errManagedOrgsDisabled
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	org := r.orgByIDLocked(id)
+	if org == nil {
+		return "", ErrOrgNotFound
+	}
+	if !org.managed {
+		return "", errOrgConfigured
+	}
+
+	archived, err := registry.ArchiveState(id)
+	if err != nil {
+		return "", err
+	}
+
+	r.removeOrgLocked(org)
+	if err := org.site.Server.Close(); err != nil {
+		r.log.Warn("closing a deleted organization", "organization", id, "err", err)
+	}
+	if err := registry.Delete(ctx, id); err != nil {
+		return archived, err
+	}
+	return archived, nil
+}
+
+// removeOrgLocked drops one organization from the routing table. The caller
+// holds mu.
+func (r *Router) removeOrgLocked(target *routerOrg) {
+	kept := r.orgs[:0]
+	for _, org := range r.orgs {
+		if org != target {
+			kept = append(kept, org)
+		}
+	}
+	r.orgs = kept
+}
+
+// rollbackManagedOrg undoes a partially created managed organization: the
+// control plane is closed (when one was built) and the registry row removed.
+// The caller holds mu.
+func (r *Router) rollbackManagedOrg(ctx context.Context, id string, server *Server) {
+	if server != nil {
+		_ = server.Close()
+	}
+	if err := r.cfg.Registry.Delete(ctx, id); err != nil && !errors.Is(err, ErrOrgNotFound) {
+		r.log.Error("rolling back a managed organization row", "organization", id, "err", err)
+	}
+}
+
 // Close releases every organization's durable resources.
 func (r *Router) Close() error {
+	r.mu.Lock()
+	orgs := r.orgs
+	r.orgs = nil
+	r.fallback = nil
+	registry := r.cfg.Registry
+	r.mu.Unlock()
+
 	var errs []error
-	for _, org := range r.orgs {
+	for _, org := range orgs {
 		if err := org.site.Server.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", org.site.ID, err))
+		}
+	}
+	if registry != nil {
+		if err := registry.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("platform registry: %w", err))
 		}
 	}
 	return errors.Join(errs...)
@@ -152,7 +440,13 @@ func (r *Router) Close() error {
 // Start launches every organization's background workers.
 func (r *Router) Start(ctx context.Context) {
 	r.startOnce.Do(func() {
-		for _, org := range r.orgs {
+		r.mu.Lock()
+		r.startCtx = ctx
+		r.started = true
+		orgs := append([]*routerOrg(nil), r.orgs...)
+		r.mu.Unlock()
+
+		for _, org := range orgs {
 			org.site.Server.Start(ctx)
 		}
 	})
@@ -171,7 +465,7 @@ func (r *Router) Serve(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go func() {
 		r.log.Info("control server listening",
-			"addr", r.cfg.ListenAddr, "organizations", len(r.orgs))
+			"addr", r.cfg.ListenAddr, "organizations", len(r.orgSnapshot()))
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
@@ -229,6 +523,9 @@ func (r *Router) Handler() http.Handler {
 // orgForHost returns the organization a request host belongs to.
 func (r *Router) orgForHost(hostport string) *routerOrg {
 	host := normalizeRouterHost(hostport)
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
 	if host != "" {
 		var best *routerOrg
 		bestLen := -1

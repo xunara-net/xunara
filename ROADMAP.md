@@ -647,8 +647,39 @@ reference/{go-oidc,oauth2,dex,webauthn}
   - 测试：`control/platform_audit_test.go`（归并顺序与 org 标注、游标续传、
     org/action 过滤与游标推进、limit 分页与 has_more、401、7 类 400 拒绝、
     时间戳为 UTC 真实时间）。
-- 待办（M7 剩余）：组织 CRUD（当前 org 表来自进程配置，改配置需重启）、
-  `api/v2` 组织级 API 版本。
+- M7d 已完成：组织 CRUD（平台托管组织）。
+  - `control/org_registry.go`：平台注册表（独立 SQLite `platform.db`，
+    `PRAGMA user_version` 迁移）+ `OrgRegistryConfig{Path, StateRoot,
+    NewServer}`。ID 形如 `^[a-z0-9][a-z0-9-]{0,31}$`（同时是路径组件与路由
+    键），状态目录由注册表推导（`<StateRoot>/<id>`），绝不接受请求里的路径
+    （避免目录穿越）。
+  - 校验 fail-closed（`validateManagedOrg`）：ID/名称/域名（≥1，通配符规则
+    与路由一致）/MagicDNS 域（禁通配）/`server_url`（http(s)、无凭据/查询/
+    片段，且 host 必须落在该组织域名内）。校验错误用 `orgAPIError{400/409}`
+    类型携带状态，DB 故障不会被误报成客户端错误。
+  - Router：组织表加读写锁，注册/加载逻辑抽成 `register`（配置型 + 托管型
+    共用，域名冲突检测同一份）；新增 `CreateManagedOrg`（先写注册表、起不来
+    就回滚行）、`UpdateManagedOrg`（仅 name/domains 可变；ID/server_url/
+    MagicDNS 域不可变，客户端是按 URL 配置的）、`DeleteManagedOrg`（先把状态
+    目录改名归档到 `<StateRoot>/deleted/<id>-<ts>` 再停止服务并删行，重新创建
+    同一 ID 不会继承旧身份库/密钥）。
+  - 平台 API：`POST /api/platform/v1/organizations`（201）、
+    `PATCH .../{id}`、`DELETE .../{id}`（返回 archivedAt）；配置型组织
+    PATCH/DELETE 返回 409，未启用注册表时返回 403。`PlatformOrg` 增加
+    `managed` 字段。
+  - 进程接线：`-platform-state-dir`（多租户模式启用；要求设置
+    `-platform-token-env`，单组织模式下拒绝）。托管组织继承部署的 logger，
+    其余（OIDC/DNS/webhook/DERP map）不共享，保持租户隔离。
+  - 并发的托管组织在 `Router.Start` 之后创建时会立即 `Server.Start(ctx)`。
+  - 测试：`control/org_registry_test.go`（CRUD/重复/不存在/持久化重开、
+    11 条校验拒绝、归档改名与幂等、状态目录推导）、
+    `control/platform_orgs_test.go`（HTTP 全生命周期 + 路由跟随 + 独立 Noise
+    key + 列表 managed 标记、11 条 400/409/404 拒绝表、未启用注册表 403、
+    跨进程重启后同一 Noise key）。
+- 待办（M7 剩余）：`api/v2` 组织级 API 版本。说明：每个组织已经通过 Host
+  路由直接提供 `/api/v2/*`（M5d），组织生命周期在 `/api/platform/v1`
+  （M7a/M7d）；若还需要"组织自省"的 v2 形状，应先补 spec 定义再实现
+  （不猜 API）。
 
 ---
 

@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -53,6 +54,8 @@ func main() {
 			"JSON file listing organizations to host (multi-tenant mode; mutually exclusive with the per-organization flags)")
 		platformTokenEnv = flag.String("platform-token-env", "XUNARA_PLATFORM_ADMIN_TOKEN",
 			"environment variable holding the /api/platform bearer token (multi-tenant mode)")
+		platformStateDir = flag.String("platform-state-dir", "",
+			"directory holding the platform registry and platform-managed organizations; empty disables runtime organization CRUD")
 		webhookURL = flag.String("webhook-url", "",
 			"HTTPS endpoint that receives audit events (enables webhook delivery)")
 		webhookSecretEnv = flag.String("webhook-secret-env", "XUNARA_WEBHOOK_SECRET",
@@ -80,8 +83,12 @@ func main() {
 			logger.Error("invalid configuration", "err", err)
 			os.Exit(1)
 		}
-		runRouter(*orgConfigPath, *listen, *platformTokenEnv, logger)
+		runRouter(*orgConfigPath, *listen, *platformTokenEnv, *platformStateDir, logger)
 		return
+	}
+	if *platformStateDir != "" {
+		logger.Error("-platform-state-dir requires -org-config (platform-managed organizations are a multi-tenant feature)")
+		os.Exit(1)
 	}
 
 	if *serverURL == "" {
@@ -215,7 +222,9 @@ func checkOrgScopedFlags(visited []string) error {
 }
 
 // runRouter serves a multi-tenant deployment until the process is signalled.
-func runRouter(path, listen, platformTokenEnv string, logger *slog.Logger) {
+// When platformStateDir is set, the platform API may also create and delete
+// organizations at runtime; their control planes live under that directory.
+func runRouter(path, listen, platformTokenEnv, platformStateDir string, logger *slog.Logger) {
 	sites, err := loadOrgSites(path, logger)
 	if err != nil {
 		logger.Error("loading the organization table", "err", err)
@@ -228,15 +237,46 @@ func runRouter(path, listen, platformTokenEnv string, logger *slog.Logger) {
 			"env", platformTokenEnv)
 	}
 
+	var registry *control.OrgRegistry
+	if platformStateDir != "" {
+		if platformToken == "" {
+			logger.Error("platform-managed organizations need a platform token",
+				"env", platformTokenEnv)
+			os.Exit(1)
+		}
+		registry, err = control.OpenOrgRegistry(context.Background(), control.OrgRegistryConfig{
+			Path:      filepath.Join(platformStateDir, "platform.db"),
+			StateRoot: filepath.Join(platformStateDir, "orgs"),
+			// Managed organizations inherit the deployment's process-level
+			// settings (the logger and nothing that carries a secret).
+			NewServer: func(org control.ManagedOrg, stateDir string) (*control.Server, error) {
+				return control.New(control.Config{
+					ServerURL: org.ServerURL,
+					Domain:    org.Domain,
+					StateDir:  stateDir,
+					Logger:    logger,
+				})
+			},
+		})
+		if err != nil {
+			logger.Error("opening the platform organization registry", "err", err)
+			os.Exit(1)
+		}
+	}
+
 	router, err := control.NewRouter(control.RouterConfig{
 		ListenAddr:         listen,
 		Orgs:               sites,
 		PlatformAdminToken: platformToken,
+		Registry:           registry,
 		Logger:             logger,
 	})
 	if err != nil {
 		for _, site := range sites {
 			_ = site.Server.Close()
+		}
+		if registry != nil {
+			_ = registry.Close()
 		}
 		logger.Error("initializing the organization router", "err", err)
 		os.Exit(1)

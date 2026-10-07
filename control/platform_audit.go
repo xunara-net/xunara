@@ -148,16 +148,6 @@ func (r *Router) selectAuditOrgs(w http.ResponseWriter, raw []string) ([]*router
 	return selected, true
 }
 
-// orgByID returns the organization with this ID, or nil.
-func (r *Router) orgByID(id string) *routerOrg {
-	for _, org := range r.orgs {
-		if org.site.ID == id {
-			return org
-		}
-	}
-	return nil
-}
-
 // parseAuditCursors parses "org:id" pairs, accepting the parameter once with
 // comma-separated pairs or repeated. Unknown organizations and malformed pairs
 // are rejected: a typo would otherwise silently re-export everything.

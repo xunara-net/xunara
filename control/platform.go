@@ -24,6 +24,9 @@ type PlatformOrg struct {
 	Name    string           `json:"name"`
 	Domains []string         `json:"domains,omitempty"`
 	Stats   PlatformOrgStats `json:"stats"`
+	// Managed is true for organizations created through the platform API.
+	// Configured organizations are read-only here.
+	Managed bool `json:"managed"`
 }
 
 // PlatformOrgStats is a small, read-only summary of an organization's control
@@ -41,6 +44,9 @@ func (r *Router) mountPlatform(pr chi.Router) {
 	pr.Use(r.requirePlatformToken)
 	pr.Get("/v1/organizations", r.handlePlatformOrganizations)
 	pr.Get("/v1/organizations/{orgID}", r.handlePlatformOrganization)
+	pr.Post("/v1/organizations", r.handlePlatformCreateOrganization)
+	pr.Patch("/v1/organizations/{orgID}", r.handlePlatformUpdateOrganization)
+	pr.Delete("/v1/organizations/{orgID}", r.handlePlatformDeleteOrganization)
 	pr.Get("/v1/audit", r.handlePlatformAudit)
 }
 
@@ -66,8 +72,9 @@ func (r *Router) requirePlatformToken(next http.Handler) http.Handler {
 
 // handlePlatformOrganizations lists every organization with a status summary.
 func (r *Router) handlePlatformOrganizations(w http.ResponseWriter, _ *http.Request) {
-	orgs := make([]PlatformOrg, 0, len(r.orgs))
-	for _, org := range r.orgs {
+	snapshot := r.orgSnapshot()
+	orgs := make([]PlatformOrg, 0, len(snapshot))
+	for _, org := range snapshot {
 		orgs = append(orgs, platformOrgView(org))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"organizations": orgs})
@@ -76,11 +83,9 @@ func (r *Router) handlePlatformOrganizations(w http.ResponseWriter, _ *http.Requ
 // handlePlatformOrganization returns one organization by ID.
 func (r *Router) handlePlatformOrganization(w http.ResponseWriter, req *http.Request) {
 	id := chi.URLParam(req, "orgID")
-	for _, org := range r.orgs {
-		if org.site.ID == id {
-			writeJSON(w, http.StatusOK, platformOrgView(org))
-			return
-		}
+	if org := r.orgByID(id); org != nil {
+		writeJSON(w, http.StatusOK, platformOrgView(org))
+		return
 	}
 	http.Error(w, "organization not found", http.StatusNotFound)
 }
@@ -92,6 +97,7 @@ func platformOrgView(org *routerOrg) PlatformOrg {
 		ID:      org.site.ID,
 		Name:    org.site.Name,
 		Domains: append([]string(nil), org.patterns...),
+		Managed: org.managed,
 		Stats: PlatformOrgStats{
 			Users:        len(server.identity.ListUsers()),
 			PolicyLoaded: server.policy.Load() != nil,
