@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"tailscale.com/tailcfg"
@@ -251,9 +252,10 @@ type Agent struct {
 	Logger   *slog.Logger
 	Client   *protocol.Client
 
-	// lastNetmap is the most recent netmap the server sent; guarded by the
-	// loop itself (Status is only called from the same goroutine in tests) and
-	// published for status reporting.
+	// netmapMu guards the netmap the agent last applied and how many it has
+	// applied in total.
+	netmapMu   sync.Mutex
+	netmaps    int
 	lastNetmap *tailcfg.MapResponse
 }
 
@@ -271,46 +273,192 @@ func NewAgent(state State, client *protocol.Client, logger *slog.Logger) (*Agent
 	return &Agent{State: state, Interval: defaultInterval, Logger: logger, Client: client}, nil
 }
 
-// Run heartbeats and refreshes the netmap until ctx is cancelled. Server
-// errors back off exponentially. A revoked credential stops the loop: retrying
-// with a dead token would only fill the audit log.
+// Run keeps this node present in the control plane until ctx is cancelled.
+//
+// Bring-up is one heartbeat plus one netmap fetch: it proves the credential
+// still works, so a revoked agent stops instead of reconnecting forever, and a
+// credential from a wrong state file fails before anything else happens.
+//
+// The steady state prefers the server's Server-Sent Events stream (M9 SSE):
+// netmaps arrive when the tailnet changes instead of on a poll timer, with a
+// heartbeat loop keeping liveness fresh next to it. A server that has no
+// stream endpoint, or a stream that keeps failing, falls back to the polling
+// cycle.
 func (a *Agent) Run(ctx context.Context) error {
 	keys, err := a.State.Keys()
 	if err != nil {
 		return err
 	}
 
-	interval := a.Interval
-	if interval <= 0 {
-		interval = defaultInterval
+	interval := a.interval()
+
+	if err := a.runWithBackoff(ctx, interval, func() error {
+		return a.tick(ctx, keys)
+	}); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return err
 	}
 
+	backoff := interval
+	for {
+		streamCtx, cancel := context.WithCancel(ctx)
+		go a.heartbeatLoop(streamCtx, keys, interval)
+
+		started := time.Now()
+		streamErr := a.Client.StreamNetmap(streamCtx, a.State.Token, keys, func(netmap *tailcfg.MapResponse) error {
+			a.setNetmap(netmap)
+			if netmap.Node != nil {
+				a.Logger.Debug("netmap pushed", "node", netmap.Node.Name, "peers", len(netmap.Peers))
+			}
+			return nil
+		})
+		cancel()
+
+		switch {
+		case ctx.Err() != nil:
+			return nil
+		case protocol.IsUnauthorized(streamErr):
+			return fmt.Errorf("daemon: credential rejected (%w); enroll again", streamErr)
+		case protocol.IsStreamUnsupported(streamErr):
+			a.Logger.Info("server has no event stream; polling instead")
+			return a.pollLoop(ctx, keys, interval)
+		}
+
+		// A stream that stayed up for a while was healthy; a fresh backoff
+		// would punish a server that restarts once.
+		if time.Since(started) > interval {
+			backoff = interval
+		}
+		a.Logger.Warn("event stream ended; reconnecting", "err", streamErr, "backoff", backoff)
+		if !sleep(ctx, backoff) {
+			return nil
+		}
+		backoff = nextBackoff(backoff)
+	}
+}
+
+// pollLoop is the pre-stream steady state: heartbeat plus netmap fetch on a
+// timer, with exponential backoff. It is used against servers without the
+// event stream.
+func (a *Agent) pollLoop(ctx context.Context, keys protocol.Keys, interval time.Duration) error {
+	backoff := interval
 	for {
 		err := a.tick(ctx, keys)
 		switch {
 		case err == nil:
-			interval = a.Interval
-			if interval <= 0 {
-				interval = defaultInterval
-			}
+			backoff = interval
 		case protocol.IsUnauthorized(err):
 			return fmt.Errorf("daemon: credential rejected (%w); enroll again", err)
+		case ctx.Err() != nil:
+			return nil
 		default:
 			a.Logger.Warn("agent cycle failed", "err", err)
-			interval *= 2
-			if interval > maxInterval {
-				interval = maxInterval
-			}
+			backoff = nextBackoff(backoff)
 		}
 
-		timer := time.NewTimer(interval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
+		if !sleep(ctx, backoff) {
 			return nil
-		case <-timer.C:
 		}
 	}
+}
+
+// heartbeatLoop reports liveness until ctx is cancelled.
+func (a *Agent) heartbeatLoop(ctx context.Context, keys protocol.Keys, interval time.Duration) {
+	hostname, _ := os.Hostname()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			err := a.Client.Heartbeat(ctx, a.State.Token, protocol.HeartbeatRequest{
+				MachineKey:   keys.Machine.Public().String(),
+				NodeKey:      keys.Node.Public().String(),
+				Hostname:     hostname,
+				AgentVersion: Version,
+			})
+			if err != nil && ctx.Err() == nil {
+				// A rejected heartbeat surfaces on the stream as a 401, which
+				// stops the agent; here it is only worth a log line.
+				a.Logger.Warn("heartbeat failed", "err", err)
+			}
+		}
+	}
+}
+
+// runWithBackoff calls fn until it succeeds, ctx is cancelled or the
+// credential is rejected. Rejections are returned; other failures back off.
+func (a *Agent) runWithBackoff(ctx context.Context, interval time.Duration, fn func() error) error {
+	for {
+		err := fn()
+		switch {
+		case err == nil:
+			return nil
+		case protocol.IsUnauthorized(err):
+			return fmt.Errorf("daemon: credential rejected (%w); enroll again", err)
+		case ctx.Err() != nil:
+			return ctx.Err()
+		default:
+			a.Logger.Warn("agent cycle failed", "err", err)
+		}
+
+		if !sleep(ctx, interval) {
+			return ctx.Err()
+		}
+		interval = nextBackoff(interval)
+	}
+}
+
+// interval returns the configured cycle interval with the default applied.
+func (a *Agent) interval() time.Duration {
+	if a.Interval > 0 {
+		return a.Interval
+	}
+	return defaultInterval
+}
+
+// nextBackoff doubles an interval up to maxInterval.
+func nextBackoff(interval time.Duration) time.Duration {
+	if interval <= 0 {
+		interval = defaultInterval
+	}
+	interval *= 2
+	if interval > maxInterval {
+		interval = maxInterval
+	}
+	return interval
+}
+
+// sleep waits for d, returning false when ctx is cancelled first.
+func sleep(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// setNetmap publishes the most recent netmap for status reporting.
+func (a *Agent) setNetmap(netmap *tailcfg.MapResponse) {
+	a.netmapMu.Lock()
+	defer a.netmapMu.Unlock()
+	a.lastNetmap = netmap
+	a.netmaps++
+}
+
+// netmapStats returns how many netmaps this agent has applied and the most
+// recent one (nil before the first).
+func (a *Agent) netmapStats() (int, *tailcfg.MapResponse) {
+	a.netmapMu.Lock()
+	defer a.netmapMu.Unlock()
+	return a.netmaps, a.lastNetmap
 }
 
 // tick performs one heartbeat + netmap refresh.
@@ -329,7 +477,7 @@ func (a *Agent) tick(ctx context.Context, keys protocol.Keys) error {
 	if err != nil {
 		return err
 	}
-	a.lastNetmap = netmap
+	a.setNetmap(netmap)
 
 	if netmap.Node != nil {
 		a.Logger.Debug("netmap refreshed",

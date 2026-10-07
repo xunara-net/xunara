@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/netip"
 	"strings"
@@ -89,6 +90,7 @@ func (s *Server) agentRouter() http.Handler {
 	r.Post("/enroll", s.handleAgentEnroll)
 	r.Post("/netmap", s.handleAgentNetmap)
 	r.Post("/heartbeat", s.handleAgentHeartbeat)
+	r.Get("/events", s.handleAgentEvents)
 	return r
 }
 
@@ -293,6 +295,94 @@ func (s *Server) handleAgentHeartbeat(w http.ResponseWriter, req *http.Request) 
 	s.markAgentSeen(node.ID)
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// agentEventHeartbeat is how often an idle event stream sends a keepalive
+// comment, so middleboxes do not drop the connection and the client can
+// detect a stalled server.
+const agentEventHeartbeat = 25 * time.Second
+
+// handleAgentEvents implements GET /api/agent/v1/events: a Server-Sent Events
+// stream that pushes a fresh full netmap whenever the tailnet changes.
+//
+// The same identity rules as the polling endpoints apply, with the request
+// body's place taken by headers (a GET has no body): a bearer agent token plus
+// the machine and node keys the token is bound to. The stream ends when the
+// node is deleted or its credential is revoked; the client re-enrolls then.
+func (s *Server) handleAgentEvents(w http.ResponseWriter, req *http.Request) {
+	body := agentRequest{
+		MachineKey: req.Header.Get("X-Xunara-Machine-Key"),
+		NodeKey:    req.Header.Get("X-Xunara-Node-Key"),
+	}
+	node, _, err := s.authenticateAgent(req, body)
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		httpError(w, NewHTTPError(http.StatusInternalServerError,
+			"streaming is not supported by this server", nil))
+		return
+	}
+
+	// SSE headers. "Connection: keep-alive" is deliberately absent: it is a
+	// protocol error under HTTP/2, and HTTP/1.1 keeps the connection open by
+	// default between frames.
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	io.WriteString(w, "retry: 3000\n\n")
+	flusher.Flush()
+
+	changes, cancelWatch := s.watch()
+	defer cancelWatch()
+
+	// send writes one netmap frame. It returns false when the node is gone or
+	// the client disconnected; the caller ends the stream then.
+	send := func() bool {
+		self, ok := s.store.GetNodeByID(node.ID)
+		if !ok {
+			return false
+		}
+		resp := s.fullMap(self, tailcfg.MapRequest{Version: tailcfg.CurrentCapabilityVersion})
+		payload, err := json.Marshal(resp)
+		if err != nil {
+			s.log.Error("encoding agent netmap event", "node_id", int(node.ID), "err", err)
+			return false
+		}
+		if _, err := fmt.Fprintf(w, "event: netmap\ndata: %s\n\n", payload); err != nil {
+			return false
+		}
+		flusher.Flush()
+		s.markAgentSeen(self.ID)
+		return true
+	}
+
+	if !send() {
+		return
+	}
+
+	heartbeat := time.NewTicker(agentEventHeartbeat)
+	defer heartbeat.Stop()
+
+	for {
+		select {
+		case <-req.Context().Done():
+			return
+		case <-changes:
+			if !send() {
+				return
+			}
+		case <-heartbeat.C:
+			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 // authenticateAgent resolves a bearer agent token and re-checks the machine

@@ -557,7 +557,21 @@ reference/{go-oidc,oauth2,dex,webauthn}
     不入 body/URL、错误映射）、`client/daemon/daemon_test.go`（状态 0600、
     pending/rejected、循环与停止、401 终止）、`client/daemon/e2e_test.go`
     （真实控制面端到端：授权、netmap 状态、心跳在线、删除后失效、交互审批）。
-  - 已知限制（M9 剩余）：netmap 为轮询而非 SSE；Remote/File Transfer 尚未构建。
+  - M9 收尾（已完成）：netmap SSE 推送。
+    - 服务端 `GET /api/agent/v1/events`（`control/agent.go`）：SSE
+      (`text/event-stream`/`no-store`/`X-Accel-Buffering: no`)，身份规则与轮询
+      端点相同（Bearer token + `X-Xunara-Machine-Key`/`X-Xunara-Node-Key` 头，
+      GET 无 body）；打开即推送一帧完整 netmap，tailnet 变化时经既有 watcher
+      推送新帧，25s 注释心跳保活；节点删除或凭证吊销后流结束。
+    - 客户端 `protocol.StreamNetmap`：SSE 解析（keepalive/未知事件忽略、
+      2 分钟滞留判定、ctx 取消即返回）、`IsStreamUnsupported` 识别老服务端；
+      `daemon.Run` 稳态优先走事件流（旁边跑心跳循环），流结束按指数退避重连，
+      老服务端或持续失败时回落到原轮询循环。
+    - 测试：`control/agent_test.go`（首帧、tailnet 变化推送、Content-Type/
+      no-store、匿名 401、键不匹配 403）、`client/protocol/stream_test.go`
+      （头、解析、取消、404 回落判定）、`client/daemon/e2e_test.go`
+      （真实控制面下 Interval=10m 仍收到推送，证明是 push 而非轮询）。
+  - 已知限制（M9 剩余）：Remote/File Transfer 尚未构建。
     （credential 的列出/吊销已完成：M5d 的 `/api/v2/agent-tokens` 与 console
     Agents 页面。）
 - ACL/Zero Trust（`Xunara Warden`）。

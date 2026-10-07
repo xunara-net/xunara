@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -306,5 +307,144 @@ func TestAgentEnrollRejectsBadInput(t *testing.T) {
 	}
 	if nodes := len(s2.Store().ListNodes()); nodes != 0 {
 		t.Errorf("nodes = %d, want 0", nodes)
+	}
+}
+
+// agentEventsGet opens the native-client event stream.
+func agentEventsGet(t *testing.T, client *http.Client, base, token string, keys agentRequest) *http.Response {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/agent/v1/events", nil)
+	if err != nil {
+		t.Fatalf("building events request: %v", err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if keys.MachineKey != "" {
+		req.Header.Set("X-Xunara-Machine-Key", keys.MachineKey)
+	}
+	if keys.NodeKey != "" {
+		req.Header.Set("X-Xunara-Node-Key", keys.NodeKey)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/agent/v1/events: %v", err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
+// readNetmapEvent reads one SSE data frame and decodes it as a MapResponse.
+func readNetmapEvent(t *testing.T, r *bufio.Reader) *tailcfg.MapResponse {
+	t.Helper()
+
+	var data []string
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatalf("reading event stream: %v", err)
+		}
+		line = strings.TrimRight(line, "\n")
+		switch {
+		case line == "":
+			if len(data) == 0 {
+				continue
+			}
+			var resp tailcfg.MapResponse
+			if err := json.Unmarshal([]byte(strings.Join(data, "\n")), &resp); err != nil {
+				t.Fatalf("decoding netmap event: %v", err)
+			}
+			return &resp
+		case strings.HasPrefix(line, "data: "):
+			data = append(data, strings.TrimPrefix(line, "data: "))
+		}
+	}
+}
+
+// TestAgentEventStreamPushesNetmapChanges covers the SSE stream: an enrolled
+// agent receives its netmap immediately and a fresh one when the tailnet
+// changes.
+func TestAgentEventStreamPushesNetmapChanges(t *testing.T) {
+	s := newServerWithConfig(t, Config{Domain: "example.com"})
+	hs := newTestHTTPServer(t, s)
+	client := hs.Client()
+
+	secret := seedPreAuthKey(t, s, state.PreAuthKey{})
+	machineKey := key.NewMachine()
+	nodeKey := key.NewNode()
+	enrolled := enrollAgent(t, client, hs.URL, machineKey, nodeKey, secret)
+	if enrolled.Token == "" {
+		t.Fatalf("enrollment = %+v", enrolled)
+	}
+
+	resp := agentEventsGet(t, client, hs.URL, enrolled.Token, agentRequest{
+		MachineKey: machineKey.Public().String(),
+		NodeKey:    nodeKey.Public().String(),
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("events status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", ct)
+	}
+	if cc := resp.Header.Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", cc)
+	}
+
+	reader := bufio.NewReader(resp.Body)
+	first := readNetmapEvent(t, reader)
+	if first.Node == nil || !strings.HasPrefix(first.Node.Name, "agent-node.") {
+		t.Fatalf("first netmap self = %+v, want the agent's node", first.Node)
+	}
+	if len(first.Peers) != 0 {
+		t.Fatalf("first netmap has %d peers, want 0", len(first.Peers))
+	}
+
+	// A second device joining the tailnet wakes the stream.
+	otherSecret := seedPreAuthKey(t, s, state.PreAuthKey{})
+	conn, _, _ := registerPreAuthedNode(t, hs, "stream-peer", otherSecret)
+	defer conn.Close()
+
+	pushed := readNetmapEvent(t, reader)
+	if len(pushed.Peers) != 1 {
+		t.Fatalf("pushed netmap has %d peers, want 1", len(pushed.Peers))
+	}
+	if pushed.Peers[0].Name != "stream-peer.example.com." {
+		t.Errorf("pushed peer = %q, want stream-peer.example.com.", pushed.Peers[0].Name)
+	}
+}
+
+// TestAgentEventStreamRequiresCredential checks the stream's identity rules.
+func TestAgentEventStreamRequiresCredential(t *testing.T) {
+	s := newServerWithConfig(t, Config{Domain: "example.com"})
+	hs := newTestHTTPServer(t, s)
+	client := hs.Client()
+
+	secret := seedPreAuthKey(t, s, state.PreAuthKey{})
+	machineKey := key.NewMachine()
+	nodeKey := key.NewNode()
+	enrolled := enrollAgent(t, client, hs.URL, machineKey, nodeKey, secret)
+	if enrolled.Token == "" {
+		t.Fatalf("enrollment = %+v", enrolled)
+	}
+
+	// No token.
+	if resp := agentEventsGet(t, client, hs.URL, "", agentRequest{}); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("anonymous events status = %d, want 401", resp.StatusCode)
+	}
+
+	// Valid token, wrong node key: the credential is bound to the keys.
+	other := key.NewNode()
+	if resp := agentEventsGet(t, client, hs.URL, enrolled.Token, agentRequest{
+		MachineKey: machineKey.Public().String(),
+		NodeKey:    other.Public().String(),
+	}); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("mismatched keys status = %d, want 403", resp.StatusCode)
 	}
 }
