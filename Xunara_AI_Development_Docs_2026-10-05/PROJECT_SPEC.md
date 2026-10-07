@@ -767,3 +767,92 @@ xunara-agent services import -from consul [-consul-addr http://127.0.0.1:8500]
 `-dry-run` 只把声明 JSON 打印到 stdout（可直接交给
 `xunara-agent services publish -file`），不需要已注册的 agent；告警始终走
 stderr，不进入声明。
+
+## 24. Passkey / WebAuthn（v1）
+
+目标：Human Identity 支持 passkey（WebAuthn）注册与登录。Passkey 只回答
+"这是哪个用户"，永不授权机器（AGENTS §5）；ceremony 是独立对象，不复用
+OAuth transaction / session / device authorization（AGENTS §10）。
+
+边界（v1 明确不做）：
+
+- 不做账号恢复：passkey 是附加登录方式，忘记 passkey 的用户仍走既有
+  OIDC / 本地登录路径；passkey 与机器信任永远无关。
+- 不做 attestation 策略（`PreferNoAttestation`）、AAGUID/厂商白名单、
+  conditional UI（autofill）；登录页是显式按钮。
+- passkey 的注册/删除由用户本人在 Console 完成，v1 没有管理员代操作。
+- 登录 begin 端点不额外限速（与登录页同一入口，部署方在反向代理层限速）。
+
+### 24.1 RP 配置（fail-closed）
+
+`identity.NewPasskeyService` 启动时校验，配置错误 = 启动失败：
+
+- `RPID`：裸域（无 scheme/port/path）；必须是域名而不是 IP 地址
+  （浏览器拒绝 IP RP ID），`localhost` 允许（loopback 例外）。
+- `Origins`：至少一个；必须 https（loopback 可 http）、host 是 RPID 或
+  其子域、不得带 path/query/userinfo；内部按 `scheme://host` 规范化比较。
+- `DisplayName` 缺省 = RPID；`UserVerification` 缺省 `required`；
+  `Timeout` 缺省 60s 且 `Enforce: true`（服务端强制超时）。
+
+未配置 = 功能关闭：`control.Config.Passkeys == nil` 时 passkey 端点返回
+404、登录页不渲染按钮。部署侧（cmd/xunarad）在未显式配置时从 `-server-url`
+推导 RPID=host、origin=ServerURL 且只接受"能通过 §24.1 校验"的组合，
+推导失败只告警并关闭，不阻塞启动；显式配置错误则启动失败。
+
+### 24.2 Ceremony：持久化、单次、浏览器绑定
+
+- `PasskeyCeremony{ID, Kind(register|login), UserID, Session, BrowserSessionHash,
+  CreatedAt, ExpiresAt, ConsumedAt}` 存 SQLite（`webauthn_ceremonies`）；
+  Session 是 go-webauthn 的挑战/状态 JSON。任何实例都能 finish 别的实例
+  开始的 ceremony（AGENTS §9），不依赖 server-local map。
+- TTL 5 分钟（`identity.DefaultPasskeyCeremonyTTL`）。begin 生成随机 browser
+  secret，库里只存 SHA-256；下发 HttpOnly cookie（`SameSite=Lax`、Path=/、
+  https 时 Secure，值 = `ceremonyID.secret`）。
+- finish 必须同时满足：cookie 存在且 secret 匹配、ceremony 未过期、未消费、
+  kind 匹配；任何一条不满足都返回 4xx 且不区分细节。
+- 单次消费在 SQLite 事务里完成（`consumed_at IS NULL AND expires_at > now`
+  才更新）：重放与并发双击最多成功一次（AGENTS §7 code/state replay）。
+- janitor 周期删除过期 ceremony，过期挑战不无限积累。
+
+### 24.3 凭据
+
+- `Passkey{ID, UserID, Name, CredentialID, Credential, CreatedAt, LastUsedAt}`；
+  `CredentialID`（WebAuthn raw ID）全局 UNIQUE；私钥永不离开认证器，库里
+  只有公钥与 sign counter。
+- 登录是 usernameless（discoverable credential，`residentKey: required`）：
+  begin 不带用户名，finish 由 assertion 的 raw ID 查 passkey → 所属 User，
+  不经过 Email/NodeKey 匹配（AGENTS §5/§11）。
+- 注册仅对已登录用户开放；`excludeCredentials` 防同一认证器重复注册；
+  ceremony.UserID 与当前用户不一致按 not found 处理（不泄漏账号存在性）。
+- finish 成功后写回 sign counter 与 `LastUsedAt`；计数器回退由 go-webauthn
+  判为克隆并拒绝。
+
+### 24.4 端点与审计
+
+登录（公开；绑定靠 ceremony cookie + challenge，不要求 CSRF）：
+
+```text
+POST /passkey/login/begin    -> 200 {"options": ...}; Set-Cookie 绑定本浏览器
+POST /passkey/login/finish   -> 200 {"redirect": <safe return_to>}; 创建会话
+```
+
+注册/管理（Console；session + CSRF header）：
+
+```text
+GET  /console/passkeys                列表（名字/创建时间/最后使用）
+POST /console/passkeys/begin          {"options": ...} + Set-Cookie
+POST /console/passkeys/finish         {"name": ..., "credential": ...}
+POST /console/passkeys/{id}/delete    只能删自己的
+```
+
+审计：`passkey.registered` / `passkey.deleted`（detail 只记名字，绝不记
+credential ID、公钥、challenge、secret）；登录成功写既有 `login.succeeded`
+（detail 注明 `method=passkey`）与 `session.created`，失败写 `login.failed`
+（detail 是静态原因，不含库错误文本）。
+
+### 24.5 配置接线
+
+- `control.Config.Passkeys *identity.PasskeyConfig`：nil 关闭功能。
+- cmd/xunarad：`-passkey`（默认 true）、`-passkey-rpid`、`-passkey-origin`
+  （repeatable）、`-passkey-display-name`；Console 导航新增 Passkeys（所有
+  角色的用户都管理自己的凭据）。

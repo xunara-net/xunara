@@ -1129,6 +1129,36 @@ Update}`（`AttrUpdate` = `map[string]any`，值可为 string / float64 / bool�
 
 ---
 
+## M17 — Passkey / WebAuthn 登录（进行中）
+
+目标：Human Identity 增加 passkey（WebAuthn）注册与登录。Passkey 只登录人类
+用户，永远不授权机器；ceremony 与 OAuth transaction/session/device
+authorization 分离（AGENTS §5/§10）。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §24（先写 spec 再实现）。
+
+- 身份层（M17a，已完成）：`identity` 迁移 v10 新增 `webauthn_credentials`
+  （credential_id 全局 UNIQUE、credential 存 JSON、last_used_at）与
+  `webauthn_ceremonies`（browser_session_hash、expires_at、consumed_at）；
+  `Store` 内嵌 `PasskeyStore`/`PasskeyCeremonyStore`；`DeleteUser` 级联删除。
+  `identity.PasskeyService`：RP 配置 fail-closed（RPID 裸域且非 IP、origin
+  必须 https/loopback 且属于 RPID、UV 缺省 required、timeout 60s 强制）；
+  usernameless 登录（discoverable credential）、exclusions、ceremony TTL
+  5 分钟、浏览器绑定 secret（库里只存 SHA-256）、SQLite 事务内单次消费、
+  sign counter/LastUsedAt 回写。测试覆盖配置校验、注册+登录端到端、错误绑定
+  不产生消费以外的副作用、重放、跨 RPID/origin、handle 稳定、级联删除。
+- 控制面接线（M17b，进行中）：`control.Config.Passkeys`（nil 关闭）；
+  登录页 passkey 按钮 + `POST /passkey/login/begin|finish`（HttpOnly ceremony
+  cookie，成功走既有 session 创建路径）；Console `/console/passkeys`（列表/
+  注册/删除自己的，CSRF）；审计 `passkey.registered`/`passkey.deleted` 与
+  `login.succeeded`（method=passkey）；janitor 清理过期 ceremony；
+  cmd/xunarad flags（未显式配置时从 `-server-url` 推导，推导失败告警并关闭）。
+- 收尾（M17c）：console 页面与浏览器流测试、文档、全量验证
+  （gofmt/vet/test，并发/Identity 变更跑 -race）。
+- 明确不做（v1）：账号恢复、attestation 策略/AAGUID 白名单、conditional UI、
+  管理员代管 passkey、登录 begin 限速（反向代理负责）。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。
