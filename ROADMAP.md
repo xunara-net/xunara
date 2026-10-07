@@ -1103,17 +1103,29 @@ Update}`（`AttrUpdate` = `map[string]any`，值可为 string / float64 / bool�
   （默认 5m）重读声明并重发——声明式收敛，服务端对未变化集合 no-op（不写库/
   不审计/不唤醒 netmap），所以刷新只在控制面丢数据（如恢复备份）时才有动作。
   客户端本地预检名称/协议/端口/metadata（镜像服务端限额，服务端仍是权威）。
+- 目录导入（M16e，Consul，spec §23）：`xunara-agent services import -from consul
+  [-consul-addr ...] [-dry-run]`。导入器在**节点侧**运行，控制面拿不到目录凭据，
+  §22.2 的"节点是唯一写入者"边界不变。读 `GET /v1/agent/services`（字段对照
+  `hashicorp/consul` 的 `api/agent.go`，含 `DefaultPort` 规则）；ACL token 只从
+  `CONSUL_HTTP_TOKEN` 读取、只走 `X-Consul-Token` 头。映射 fail-closed：跳过
+  Connect proxy/gateway、unix socket、peering 引入、空名/非法名/非法端口/metadata
+  超限（跳过原因告警，不含值）；同名多注册协议端口一致则去重、不一致整名跳过；
+  结果超过 32 条 → 导入失败（不截断，截断等于撤销）；`-dry-run` 打印声明 JSON
+  且不需要已注册的 agent。客户端预检抽到 `protocol.ValidateServices`（单一来源）。
 - 测试：state 一致性套件；`control/services_test.go`（发布/替换/清空/审计、
   认证三种失败、20 条非法输入、冲突、预算、DNS 记录、相同集合 no-op、原生
   客户端端到端 round trip）；`control/api_v2_test.go`、
   `control/grpc_platform_test.go`、`control/console_test.go`（页面与计数列）、
   `cmd/xunara/services_test.go`；客户端 `client/protocol`（发布/撤回/错误
-  映射）、`client/daemon`（声明文件、刷新循环、文件重读）、
-  `cmd/xunara-agent/services_test.go`（文件解析、校验、渲染）。
+  映射、声明校验）、`client/daemon`（声明文件、刷新循环、文件重读）、
+  `client/catalog`（Consul 映射/跳过/告警/凭据头/错误/超限）、
+  `cmd/xunara-agent/services_test.go`（文件解析、校验、渲染、导入发布与
+  dry-run）。
 - 明确不做（v1）：按 ACL 的可见性（与 MagicDNS 节点名一样组织内可见）、
   健康检查/自动摘除、跨组织共享、与上游 `svc:` VIP 互通（需要上游控制面
   语义，不猜 API）、控制面代理流量。
-- 下一步（未做）：Consul/Kubernetes 等服务目录导入。
+- 下一步（未做）：Kubernetes 服务导入（Service → "本节点提供"需要
+  EndpointSlice/Pod 语义，先补 spec 再实现）；Atlas 健康状态与自动摘除。
 
 ---
 

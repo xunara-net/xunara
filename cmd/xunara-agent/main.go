@@ -221,6 +221,7 @@ usage:
   xunara-agent run    [-state-dir d] [-interval 30s] [-services-interval 5m]
   xunara-agent status [-state-dir d] [-json]
   xunara-agent services publish -file <file> [-state-dir d]
+  xunara-agent services import -from consul [-consul-addr addr] [-dry-run] [-state-dir d]
   xunara-agent services list [-state-dir d] [-json]
   xunara-agent services clear [-state-dir d]
   xunara-agent version
@@ -230,6 +231,8 @@ The pre-auth key is read from the environment variable `+authKeyEnv+` or from
 
 The services declaration file is
   {"services": [{"name": "api", "protocol": "tcp", "port": 443}]}
+Import reads the Consul ACL token from the environment variable
+`+consulTokenEnv+`; it is never accepted as a flag.
 `)
 }
 

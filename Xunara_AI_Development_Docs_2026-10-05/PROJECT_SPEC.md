@@ -710,3 +710,60 @@ node.services_updated   # target=节点，detail=服务名列表（含协议/端
 - 服务就绪/健康状态与自动摘除；
 - 跨组织服务共享（Sharing）；
 - 与 `svc:`（Tailscale Services VIP）互通——需要上游控制面语义，不猜 API。
+
+## 23. Xunara Atlas — 目录导入（v1，Consul）
+
+目标：节点把本地服务目录里已注册的服务转换成 Atlas 声明并发布，不必手工维护
+`services.json`。导入器**在节点侧运行**，因此不破坏 §22.2 的"节点是唯一写入者"
+边界：控制面仍然只接受节点自己的声明，也永远拿不到目录凭据（AGENTS §8/§12）。
+
+边界（v1 明确不做）：
+
+- 只读节点本地 Consul agent 的 HTTP API（默认 `http://127.0.0.1:8500`；
+  可用 `CONSUL_HTTP_ADDR` / `-consul-addr` 覆盖）。指向远端 agent 等于把
+  那台机器的服务声明成本节点的服务，属于误用，文档明示。
+- ACL token 只从环境变量 `CONSUL_HTTP_TOKEN` 读取，只出现在
+  `X-Consul-Token` 请求头；绝不进 URL query、argv 或日志（AGENTS §8）。
+- 只做"目录 → 声明"的单向转换；不做健康过滤、不做反向同步（Atlas 的发布
+  不会写回 Consul）、不删除 Consul 中的任何东西。
+- Kubernetes 不在 v1：把 Service 映射成"本节点提供"需要 EndpointSlice/Pod
+  语义（ClusterIP 不是节点本地事实），先补 spec 再实现。
+
+### 23.1 映射规则（fail-closed）
+
+读取 `GET /v1/agent/services`（响应为 ID → `api.AgentService` 的 JSON 对象，
+字段已对照 `hashicorp/consul` 的 `api/agent.go` 核实）。逐条映射：
+
+| Consul | Atlas |
+|---|---|
+| `Service` | `name`，必须是合法 DNS label；非法不做重命名，跳过并告警 |
+| `Tags` 含 `udp` | `protocol=udp`；否则 `tcp` |
+| `Ports` 中 `Default=true` 的端口，否则 `Port` | `port`；0 或越界则跳过并告警 |
+| `Meta` | `metadata`；不满足 §22.4 任一限制（键/值/条目数/编码大小）则跳过该服务并告警（不截断） |
+
+跳过并告警（绝不猜测）：`Kind != ""`（Connect proxy 与各类 gateway 不是应用
+服务）、`SocketPath != ""`（unix socket 不是 tcp/udp 端口）、`PeerName != ""`
+（peering 引入的服务不是本节点事实）、`Service` 为空。
+
+同名多注册（Consul 中同一 agent 可以有多个 ID 指向同一 `Service` 名）：
+协议与端口一致则去重为一条；不一致视为歧义，**整个名字跳过**并告警。
+
+### 23.2 限额与原子性
+
+- 映射结果超过每节点 32 条 → 导入失败、不发布：发布是整批替换，截断等于把
+  多余服务从注册表撤销（§22.2）。
+- 发布仍走既有数据面，服务端执行 §22.4 的全部校验与冲突检查（名字冲突、
+  组织限额等）；导入失败不改变已经发布的声明——`services.json` 只在服务端
+  接受之后才更新。
+- 告警只说明跳过了什么，不包含 `Meta` 的值（值可能被当作敏感信息写入日志）。
+
+### 23.3 命令面
+
+```text
+xunara-agent services import -from consul [-consul-addr http://127.0.0.1:8500]
+                             [-dry-run] [-state-dir d]
+```
+
+`-dry-run` 只把声明 JSON 打印到 stdout（可直接交给
+`xunara-agent services publish -file`），不需要已注册的 agent；告警始终走
+stderr，不进入声明。

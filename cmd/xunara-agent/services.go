@@ -13,39 +13,29 @@ import (
 	"io"
 	"os"
 	"sort"
-	"strings"
 	"text/tabwriter"
 	"time"
-	"unicode"
 
+	"github.com/xunara/xunara/client/catalog"
 	"github.com/xunara/xunara/client/daemon"
 	"github.com/xunara/xunara/client/protocol"
 )
 
-// The server enforces these limits (control/services.go); the CLI mirrors them
-// so a declaration that cannot be published fails before a network round trip.
-// The server remains the authority: a rule added there still rejects what an
-// older agent accepts.
-const (
-	maxServicesPerNode         = 32
-	maxServiceNameLen          = 63
-	maxServiceMetadataEntries  = 16
-	maxServiceMetadataKeyLen   = 64
-	maxServiceMetadataValueLen = 256
-	maxServiceMetadataBytes    = 2 << 10
-	// maxServicesFileBytes bounds the declaration file; a declaration is tiny
-	// (32 services at most), so anything larger is a mistake.
-	maxServicesFileBytes = 1 << 20
-)
+// maxServicesFileBytes bounds the declaration file; a declaration is tiny
+// (protocol.MaxServicesPerNode services at most), so anything larger is a
+// mistake.
+const maxServicesFileBytes = 1 << 20
 
 // runServices implements `xunara-agent services`.
 func runServices(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("services needs a subcommand: publish, list or clear")
+		return errors.New("services needs a subcommand: publish, import, list or clear")
 	}
 	switch args[0] {
 	case "publish":
 		return runServicesPublish(ctx, args[1:])
+	case "import":
+		return runServicesImport(ctx, args[1:])
 	case "list":
 		return runServicesList(args[1:])
 	case "clear":
@@ -73,7 +63,68 @@ func runServicesPublish(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	state, keys, client, err := enrolledClient(*stateDir)
+	return publishDeclaration(ctx, *stateDir, services)
+}
+
+// consulTokenEnv is where the Consul ACL token comes from: like the Xunara
+// pre-auth key it is never accepted as a flag, because process arguments are
+// readable by every user on the host (AGENTS.md section 8). Consul's own
+// tooling reads the same variable.
+const consulTokenEnv = "CONSUL_HTTP_TOKEN"
+
+// consulAddressEnv mirrors Consul's own variable for the agent address.
+const consulAddressEnv = "CONSUL_HTTP_ADDR"
+
+// runServicesImport implements `xunara-agent services import -from consul`: it
+// maps the services registered on the local Consul agent into a declaration
+// and publishes it (or prints it with -dry-run).
+func runServicesImport(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("services import", flag.ExitOnError)
+	stateDir := fs.String("state-dir", defaultStateDir(), "directory holding agent.json")
+	from := fs.String("from", "", "catalog to import from; only \"consul\" is supported")
+	consulAddr := fs.String("consul-addr", "", "local Consul agent address (default $"+consulAddressEnv+", else "+catalog.DefaultConsulAddress+")")
+	dryRun := fs.Bool("dry-run", false, "print the declaration as JSON instead of publishing it")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *from != "consul" {
+		return fmt.Errorf("services import needs -from consul (got %q)", *from)
+	}
+
+	address := *consulAddr
+	if address == "" {
+		address = os.Getenv(consulAddressEnv)
+	}
+	services, warnings, err := catalog.ConsulServices(ctx, catalog.ConsulConfig{
+		Address: address,
+		Token:   os.Getenv(consulTokenEnv),
+	})
+	for _, warning := range warnings {
+		fmt.Fprintln(os.Stderr, "xunara-agent: consul:", warning)
+	}
+	if err != nil {
+		return err
+	}
+	if len(services) == 0 {
+		// An empty declaration withdraws every service; make sure that is a
+		// decision the operator can see, not a side effect of an empty or
+		// ACL-scoped catalog.
+		fmt.Fprintln(os.Stderr, "xunara-agent: warning: the Consul agent advertised no importable services")
+	}
+
+	if *dryRun {
+		fmt.Fprintf(os.Stderr, "xunara-agent: imported %d services from Consul\n", len(services))
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(serviceFile{Services: services})
+	}
+	return publishDeclaration(ctx, *stateDir, services)
+}
+
+// publishDeclaration sends a declaration and, only when the server accepted
+// it, saves it for `run` to keep published.
+func publishDeclaration(ctx context.Context, stateDir string, services []protocol.Service) error {
+	state, keys, client, err := enrolledClient(stateDir)
 	if err != nil {
 		return err
 	}
@@ -84,7 +135,7 @@ func runServicesPublish(ctx context.Context, args []string) error {
 	}
 	// Save the declaration only after the server accepted it: on any error
 	// above, a running agent keeps publishing what was working before.
-	if err := daemon.SaveServices(*stateDir, services); err != nil {
+	if err := daemon.SaveServices(stateDir, services); err != nil {
 		return err
 	}
 	return writePublishedServices(os.Stdout, views)
@@ -197,130 +248,7 @@ func readServicesFile(path string) ([]protocol.Service, error) {
 	if err := dec.Decode(&extra); err != io.EOF {
 		return nil, fmt.Errorf("parsing %s: trailing data after the declaration", path)
 	}
-	return normalizeServices(decl.Services)
-}
-
-// normalizeServices validates a declaration and returns the canonical form
-// (protocols lowercased). Every rule is fail-closed: one bad entry rejects the
-// whole file.
-func normalizeServices(services []protocol.Service) ([]protocol.Service, error) {
-	if len(services) > maxServicesPerNode {
-		return nil, fmt.Errorf("at most %d services may be advertised per node", maxServicesPerNode)
-	}
-
-	out := make([]protocol.Service, 0, len(services))
-	seen := make(map[string]bool, len(services))
-	for _, svc := range services {
-		if err := validateServiceName(svc.Name); err != nil {
-			return nil, err
-		}
-		if seen[svc.Name] {
-			return nil, fmt.Errorf("service name %q is listed twice", svc.Name)
-		}
-		seen[svc.Name] = true
-
-		proto := strings.ToLower(strings.TrimSpace(svc.Protocol))
-		if proto != "tcp" && proto != "udp" {
-			return nil, fmt.Errorf("service %q has an unsupported protocol %q", svc.Name, svc.Protocol)
-		}
-		if svc.Port == 0 || svc.Port > 65535 {
-			return nil, fmt.Errorf("service %q has an invalid port", svc.Name)
-		}
-		metadata, err := validateServiceMetadata(svc.Metadata)
-		if err != nil {
-			return nil, fmt.Errorf("service %q: %w", svc.Name, err)
-		}
-
-		out = append(out, protocol.Service{Name: svc.Name, Protocol: proto, Port: svc.Port, Metadata: metadata})
-	}
-	return out, nil
-}
-
-// validateServiceName enforces the DNS label shape a service name must have.
-func validateServiceName(name string) error {
-	if name == "" {
-		return errors.New("service name is empty")
-	}
-	if len(name) > maxServiceNameLen {
-		return fmt.Errorf("service name is longer than %d bytes", maxServiceNameLen)
-	}
-	for i := 0; i < len(name); i++ {
-		c := name[i]
-		switch {
-		case c >= 'a' && c <= 'z', c >= '0' && c <= '9':
-		case c == '-':
-			if i == 0 || i == len(name)-1 {
-				return fmt.Errorf("service name %q must not start or end with a hyphen", name)
-			}
-		default:
-			return fmt.Errorf("service name %q must be a lowercase DNS label", name)
-		}
-	}
-	return nil
-}
-
-// validateServiceMetadata bounds and cleans one service's metadata: printable
-// ASCII only, so terminal surfaces cannot be made to render escape sequences.
-func validateServiceMetadata(metadata map[string]string) (map[string]string, error) {
-	if len(metadata) == 0 {
-		return nil, nil
-	}
-	if len(metadata) > maxServiceMetadataEntries {
-		return nil, fmt.Errorf("metadata has more than %d entries", maxServiceMetadataEntries)
-	}
-
-	out := make(map[string]string, len(metadata))
-	for key, value := range metadata {
-		if key == "" || len(key) > maxServiceMetadataKeyLen || !printableASCII(key, false) {
-			return nil, fmt.Errorf("metadata key %q is invalid", sanitizeServiceName(key))
-		}
-		if len(value) > maxServiceMetadataValueLen || !printableASCII(value, true) {
-			return nil, fmt.Errorf("metadata value of %q is invalid", sanitizeServiceName(key))
-		}
-		out[key] = value
-	}
-
-	encoded, err := json.Marshal(out)
-	if err != nil {
-		return nil, errors.New("metadata cannot be encoded")
-	}
-	if len(encoded) > maxServiceMetadataBytes {
-		return nil, fmt.Errorf("metadata is larger than %d bytes", maxServiceMetadataBytes)
-	}
-	return out, nil
-}
-
-// printableASCII reports whether s is printable ASCII. Space is only allowed
-// when allowSpace is set (values may read as prose; keys may not).
-func printableASCII(s string, allowSpace bool) bool {
-	for _, r := range s {
-		if r > unicode.MaxASCII {
-			return false
-		}
-		if allowSpace && r == ' ' {
-			continue
-		}
-		if r < 0x21 || r > 0x7e {
-			return false
-		}
-	}
-	return true
-}
-
-// sanitizeServiceName makes an untrusted name safe to echo back in an error
-// message: printable ASCII only, bounded.
-func sanitizeServiceName(name string) string {
-	var b strings.Builder
-	for _, r := range name {
-		if r > unicode.MaxASCII || (r < 0x21 && r != ' ') || r == 0x7f {
-			continue
-		}
-		if b.Len() >= 64 {
-			break
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
+	return protocol.ValidateServices(decl.Services)
 }
 
 // serviceRow is the common render shape of a stored service and a declared

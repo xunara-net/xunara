@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,81 +18,6 @@ import (
 	"github.com/xunara/xunara/client/daemon"
 	"github.com/xunara/xunara/client/protocol"
 )
-
-// TestNormalizeServices checks the canonical form: protocol case and
-// whitespace are folded, metadata is copied as-is.
-func TestNormalizeServices(t *testing.T) {
-	services, err := normalizeServices([]protocol.Service{
-		{Name: "api", Protocol: " TCP ", Port: 8080, Metadata: map[string]string{"version": "1.2"}},
-		{Name: "metrics", Protocol: "UDP", Port: 9090},
-	})
-	if err != nil {
-		t.Fatalf("normalizeServices: %v", err)
-	}
-	if len(services) != 2 {
-		t.Fatalf("services = %+v", services)
-	}
-	if services[0].Protocol != "tcp" || services[1].Protocol != "udp" {
-		t.Errorf("protocols = %q / %q, want lowercased", services[0].Protocol, services[1].Protocol)
-	}
-	if services[0].Metadata["version"] != "1.2" {
-		t.Errorf("metadata = %+v", services[0].Metadata)
-	}
-}
-
-// TestNormalizeServicesRejectsInvalid declares the rules the CLI mirrors from
-// the server: one bad entry fails the whole declaration.
-func TestNormalizeServicesRejectsInvalid(t *testing.T) {
-	tooMany := make([]protocol.Service, maxServicesPerNode+1)
-	for i := range tooMany {
-		tooMany[i] = protocol.Service{Name: "svc", Protocol: "tcp", Port: 1}
-	}
-
-	tooMuchMetadata := map[string]string{}
-	for i := 0; i < maxServiceMetadataEntries+1; i++ {
-		tooMuchMetadata[string(rune('a'+i))] = "v"
-	}
-
-	cases := []struct {
-		name     string
-		services []protocol.Service
-		want     string
-	}{
-		{"empty name", []protocol.Service{{Name: "", Protocol: "tcp", Port: 1}}, "empty"},
-		{"uppercase name", []protocol.Service{{Name: "Api", Protocol: "tcp", Port: 1}}, "lowercase DNS label"},
-		{"name too long", []protocol.Service{{Name: strings.Repeat("a", maxServiceNameLen+1), Protocol: "tcp", Port: 1}}, "longer than"},
-		{"leading hyphen", []protocol.Service{{Name: "-api", Protocol: "tcp", Port: 1}}, "hyphen"},
-		{"bad protocol", []protocol.Service{{Name: "api", Protocol: "sctp", Port: 1}}, "unsupported protocol"},
-		{"zero port", []protocol.Service{{Name: "api", Protocol: "tcp", Port: 0}}, "invalid port"},
-		{"port out of range", []protocol.Service{{Name: "api", Protocol: "tcp", Port: 65536}}, "invalid port"},
-		{"duplicate name", []protocol.Service{
-			{Name: "api", Protocol: "tcp", Port: 1},
-			{Name: "api", Protocol: "udp", Port: 2},
-		}, "listed twice"},
-		{"too many services", tooMany, "at most"},
-		{"metadata key with space", []protocol.Service{
-			{Name: "api", Protocol: "tcp", Port: 1, Metadata: map[string]string{"a b": "v"}},
-		}, "metadata key"},
-		{"metadata control character", []protocol.Service{
-			{Name: "api", Protocol: "tcp", Port: 1, Metadata: map[string]string{"k": "a\x1bb"}},
-		}, "metadata value"},
-		{"metadata too large", []protocol.Service{
-			{Name: "api", Protocol: "tcp", Port: 1, Metadata: tooMuchMetadata},
-		}, "more than"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := normalizeServices(tc.services)
-			if err == nil {
-				t.Fatal("normalizeServices accepted an invalid declaration")
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("error = %q, want it to mention %q", err, tc.want)
-			}
-		})
-	}
-}
 
 // TestReadServicesFile covers the file format: canonical declarations are
 // accepted, typos are refused.
@@ -244,25 +170,7 @@ func TestServicesPublishListClear(t *testing.T) {
 	defer hs.Close()
 
 	stateDir := t.TempDir()
-	machine, node := key.NewMachine(), key.NewNode()
-	machineText, err := machine.MarshalText()
-	if err != nil {
-		t.Fatalf("machine marshaling: %v", err)
-	}
-	nodeText, err := node.MarshalText()
-	if err != nil {
-		t.Fatalf("node marshaling: %v", err)
-	}
-	if err := daemon.SaveState(stateDir, daemon.State{
-		ServerURL:  hs.URL,
-		MachineKey: string(machineText),
-		NodeKey:    string(nodeText),
-		Token:      "agent-token",
-		NodeID:     7,
-		StableID:   "n7",
-	}); err != nil {
-		t.Fatalf("SaveState: %v", err)
-	}
+	writeAgentState(t, stateDir, hs.URL)
 
 	dir := t.TempDir()
 	declPath := filepath.Join(dir, "services.json")
@@ -314,4 +222,119 @@ func TestServicesPublishListClear(t *testing.T) {
 	if _, err := daemon.LoadServices(stateDir); !os.IsNotExist(err) {
 		t.Errorf("declaration file survived clear: %v", err)
 	}
+}
+
+// writeAgentState enrolls a fake node on disk: the minimal state a command
+// that talks to the control plane needs.
+func writeAgentState(t *testing.T, stateDir, serverURL string) {
+	t.Helper()
+	machine, node := key.NewMachine(), key.NewNode()
+	machineText, err := machine.MarshalText()
+	if err != nil {
+		t.Fatalf("machine marshaling: %v", err)
+	}
+	nodeText, err := node.MarshalText()
+	if err != nil {
+		t.Fatalf("node marshaling: %v", err)
+	}
+	if err := daemon.SaveState(stateDir, daemon.State{
+		ServerURL:  serverURL,
+		MachineKey: string(machineText),
+		NodeKey:    string(nodeText),
+		Token:      "agent-token",
+		NodeID:     7,
+		StableID:   "n7",
+	}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+}
+
+// TestServicesImportFromConsul maps a local Consul catalog and publishes it,
+// warning about what it skipped; -dry-run needs no enrolled agent.
+func TestServicesImportFromConsul(t *testing.T) {
+	control := &fakeServicesControl{}
+	controlServer := httptest.NewServer(control)
+	defer controlServer.Close()
+
+	consulServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.URL.Path != "/v1/agent/services" {
+			http.NotFound(w, req)
+			return
+		}
+		_, _ = w.Write([]byte(`{
+			"dns": {"ID":"dns","Service":"dns","Tags":["udp"],"Port":53},
+			"web": {"ID":"web","Service":"web","Port":8080},
+			"proxy": {"ID":"api-proxy","Service":"api-proxy","Kind":"connect-proxy","Port":21000}
+		}`))
+	}))
+	defer consulServer.Close()
+
+	stateDir := t.TempDir()
+	writeAgentState(t, stateDir, controlServer.URL)
+
+	err := runServicesImport(context.Background(), []string{
+		"-state-dir", stateDir,
+		"-from", "consul",
+		"-consul-addr", consulServer.URL,
+	})
+	if err != nil {
+		t.Fatalf("services import: %v", err)
+	}
+
+	auth, publishes := control.state()
+	if auth != "Bearer agent-token" {
+		t.Errorf("publish auth = %q, want the bearer token", auth)
+	}
+	if len(publishes) != 1 || len(publishes[0]) != 2 {
+		t.Fatalf("publishes = %+v, want one set of two services", publishes)
+	}
+	if publishes[0][0].Name != "dns" || publishes[0][0].Protocol != "udp" || publishes[0][1].Name != "web" {
+		t.Errorf("published set = %+v", publishes[0])
+	}
+	if declared, err := daemon.LoadServices(stateDir); err != nil || len(declared) != 2 {
+		t.Errorf("saved declaration = %+v (%v)", declared, err)
+	}
+
+	// -dry-run prints the declaration and does not need an enrolled agent.
+	dryDir := t.TempDir()
+	out := captureStdout(t, func() error {
+		return runServicesImport(context.Background(), []string{
+			"-state-dir", dryDir,
+			"-from", "consul",
+			"-consul-addr", consulServer.URL,
+			"-dry-run",
+		})
+	})
+	if !strings.Contains(out, `"name": "dns"`) || !strings.Contains(out, `"protocol": "udp"`) {
+		t.Errorf("dry-run output = %q", out)
+	}
+	if _, err := daemon.LoadServices(dryDir); !os.IsNotExist(err) {
+		t.Errorf("dry-run saved a declaration: %v", err)
+	}
+
+	if err := runServicesImport(context.Background(), []string{"-from", "kubernetes"}); err == nil {
+		t.Error("an unsupported catalog was accepted")
+	}
+}
+
+// captureStdout runs fn with stdout redirected and returns what it printed.
+func captureStdout(t *testing.T, fn func() error) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("creating pipe: %v", err)
+	}
+	os.Stdout = w
+	runErr := fn()
+	_ = w.Close()
+	os.Stdout = old
+	if runErr != nil {
+		t.Fatalf("command: %v", runErr)
+	}
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("reading captured stdout: %v", err)
+	}
+	return string(out)
 }
