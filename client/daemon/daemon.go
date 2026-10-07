@@ -33,6 +33,11 @@ const defaultInterval = 30 * time.Second
 // maxInterval bounds the exponential backoff after server errors.
 const maxInterval = 5 * time.Minute
 
+// defaultServicesInterval is how often a running agent re-publishes its
+// service declaration. The publish is declarative and the control plane
+// leaves an unchanged set alone, so a refresh only costs one request.
+const defaultServicesInterval = 5 * time.Minute
+
 // State is the agent's durable identity and credential.
 //
 // The machine and node keys are private key material: the file is written
@@ -81,36 +86,41 @@ func LoadState(stateDir string) (State, error) {
 
 // SaveState writes the agent state atomically with 0600 permissions.
 func SaveState(stateDir string, s State) error {
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
-		return fmt.Errorf("daemon: creating state directory: %w", err)
-	}
-
 	raw, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return fmt.Errorf("daemon: encoding state: %w", err)
 	}
+	return writeFileAtomic(stateDir, stateFile, raw)
+}
 
-	final := filepath.Join(stateDir, stateFile)
-	tmp, err := os.CreateTemp(stateDir, stateFile+".tmp*")
+// writeFileAtomic writes raw to <stateDir>/<name> atomically, creating the
+// directory 0700 and the file 0600: both hold private key material.
+func writeFileAtomic(stateDir, name string, raw []byte) error {
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return fmt.Errorf("daemon: creating state directory: %w", err)
+	}
+
+	final := filepath.Join(stateDir, name)
+	tmp, err := os.CreateTemp(stateDir, name+".tmp*")
 	if err != nil {
-		return fmt.Errorf("daemon: creating state file: %w", err)
+		return fmt.Errorf("daemon: creating %s: %w", name, err)
 	}
 	tmpName := tmp.Name()
 	defer os.Remove(tmpName)
 
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
-		return fmt.Errorf("daemon: setting state file permissions: %w", err)
+		return fmt.Errorf("daemon: setting %s permissions: %w", name, err)
 	}
 	if _, err := tmp.Write(raw); err != nil {
 		tmp.Close()
-		return fmt.Errorf("daemon: writing state: %w", err)
+		return fmt.Errorf("daemon: writing %s: %w", name, err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("daemon: closing state file: %w", err)
+		return fmt.Errorf("daemon: closing %s: %w", name, err)
 	}
 	if err := os.Rename(tmpName, final); err != nil {
-		return fmt.Errorf("daemon: replacing state file: %w", err)
+		return fmt.Errorf("daemon: replacing %s: %w", name, err)
 	}
 	return nil
 }
@@ -252,6 +262,19 @@ type Agent struct {
 	Logger   *slog.Logger
 	Client   *protocol.Client
 
+	// Services is the service declaration to keep published when StateDir is
+	// empty (embedded use). With a StateDir the declaration file is the
+	// source of truth.
+	Services []protocol.Service
+	// StateDir is the agent's state directory. When set, the declaration file
+	// is re-read on every refresh, so a `services publish` run next to a
+	// running agent takes effect without a restart; a missing file publishes
+	// nothing.
+	StateDir string
+	// ServicesInterval is how often the declaration is re-published. Zero
+	// uses the default.
+	ServicesInterval time.Duration
+
 	// netmapMu guards the netmap the agent last applied and how many it has
 	// applied in total.
 	netmapMu   sync.Mutex
@@ -299,6 +322,10 @@ func (a *Agent) Run(ctx context.Context) error {
 			return nil
 		}
 		return err
+	}
+
+	if len(a.Services) > 0 || a.StateDir != "" {
+		go a.servicesLoop(ctx, keys)
 	}
 
 	backoff := interval
@@ -388,6 +415,71 @@ func (a *Agent) heartbeatLoop(ctx context.Context, keys protocol.Keys, interval 
 			}
 		}
 	}
+}
+
+// servicesLoop keeps the agent's service declaration published until ctx is
+// cancelled. It is a reconciliation: re-publishing repairs a control plane
+// that lost the record (after a restore, for example) and is a no-op there
+// when the set is unchanged, so a failed or skipped refresh is simply retried
+// on the next tick.
+func (a *Agent) servicesLoop(ctx context.Context, keys protocol.Keys) {
+	interval := a.servicesInterval()
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+
+		if services := a.declaredServices(); len(services) > 0 {
+			_, err := a.Client.Services(ctx, a.State.Token, keys, services)
+			switch {
+			case err == nil:
+				a.Logger.Debug("services published", "count", len(services))
+			case ctx.Err() != nil:
+				return
+			case protocol.IsUnauthorized(err):
+				// The main loop turns this into a stopped agent; publishing
+				// is not the place to report the rejection twice.
+				return
+			default:
+				a.Logger.Warn("publishing services failed", "err", err)
+			}
+		}
+
+		timer.Reset(interval)
+	}
+}
+
+// declaredServices returns the set to publish. A state directory is
+// authoritative: its declaration file is re-read so edits take effect without
+// a restart, and a missing file means nothing is published.
+func (a *Agent) declaredServices() []protocol.Service {
+	if a.StateDir == "" {
+		return a.Services
+	}
+	services, err := LoadServices(a.StateDir)
+	switch {
+	case err == nil:
+		return services
+	case errors.Is(err, os.ErrNotExist):
+		return nil
+	default:
+		a.Logger.Warn("reading service declaration failed", "err", err)
+		return nil
+	}
+}
+
+// servicesInterval returns the configured refresh interval with the default
+// applied.
+func (a *Agent) servicesInterval() time.Duration {
+	if a.ServicesInterval > 0 {
+		return a.ServicesInterval
+	}
+	return defaultServicesInterval
 }
 
 // runWithBackoff calls fn until it succeeds, ctx is cancelled or the

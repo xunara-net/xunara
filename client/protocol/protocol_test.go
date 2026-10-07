@@ -23,6 +23,9 @@ type fakeControl struct {
 	netmapBody   string
 
 	heartbeatStatus int
+
+	servicesStatus int
+	servicesBody   string
 }
 
 type recordedRequest struct {
@@ -55,6 +58,16 @@ func (f *fakeControl) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		_, _ = w.Write([]byte(f.netmapBody))
 	case "/api/agent/v1/heartbeat":
 		w.WriteHeader(f.heartbeatStatus)
+	case "/api/agent/v1/services":
+		if f.servicesStatus != 0 {
+			http.Error(w, "conflict", f.servicesStatus)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if f.servicesBody == "" {
+			f.servicesBody = `{"services":[]}`
+		}
+		_, _ = w.Write([]byte(f.servicesBody))
 	default:
 		http.NotFound(w, req)
 	}
@@ -186,6 +199,96 @@ func TestErrorMapping(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "403") {
 		t.Errorf("enroll error = %v, want an HTTP 403 error", err)
+	}
+}
+
+// TestServicesPublishShape checks the Atlas publish request: the bearer
+// credential, the key binding and the declarative set, plus the response
+// decode.
+func TestServicesPublishShape(t *testing.T) {
+	fake := &fakeControl{servicesBody: `{"services":[{
+		"name":"api","protocol":"tcp","port":8080,
+		"nodeId":7,"stableId":"n7","hostname":"agent","dnsName":"api.example.com",
+		"created":"2026-10-01T00:00:00Z","updated":"2026-10-02T00:00:00Z"}]}`}
+	hs := httptest.NewServer(fake)
+	defer hs.Close()
+
+	client := New(hs.URL)
+	machine, node := key.NewMachine(), key.NewNode()
+
+	views, err := client.Services(context.Background(), "secret-token", Keys{Machine: machine, Node: node}, []Service{
+		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "1"}},
+	})
+	if err != nil {
+		t.Fatalf("Services: %v", err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("views = %+v", views)
+	}
+	view := views[0]
+	if view.Name != "api" || view.Protocol != "tcp" || view.Port != 8080 || view.DNSName != "api.example.com" {
+		t.Errorf("view = %+v", view)
+	}
+	if view.NodeID != 7 || view.StableID != "n7" || view.Updated.IsZero() {
+		t.Errorf("view bookkeeping = %+v", view)
+	}
+
+	got := fake.requests[0]
+	if got.path != "/api/agent/v1/services" || got.contentType != "application/json" {
+		t.Errorf("request = %+v", got)
+	}
+	if got.auth != "Bearer secret-token" {
+		t.Errorf("auth = %q, want the bearer token", got.auth)
+	}
+
+	var body struct {
+		MachineKey string    `json:"machine_key"`
+		NodeKey    string    `json:"node_key"`
+		Services   []Service `json:"services"`
+	}
+	if err := json.Unmarshal(got.raw, &body); err != nil {
+		t.Fatalf("decoding services body: %v", err)
+	}
+	if body.MachineKey != machine.Public().String() || body.NodeKey != node.Public().String() {
+		t.Errorf("keys = %q / %q", body.MachineKey, body.NodeKey)
+	}
+	if len(body.Services) != 1 || body.Services[0].Name != "api" || body.Services[0].Metadata["version"] != "1" {
+		t.Errorf("services = %+v", body.Services)
+	}
+}
+
+// TestServicesWithdrawAndError checks that a nil set withdraws everything on
+// the wire and that a rejected publish surfaces the server's answer.
+func TestServicesWithdrawAndError(t *testing.T) {
+	fake := &fakeControl{}
+	hs := httptest.NewServer(fake)
+	defer hs.Close()
+
+	keys := Keys{Machine: key.NewMachine(), Node: key.NewNode()}
+	if _, err := New(hs.URL).Services(context.Background(), "secret-token", keys, nil); err != nil {
+		t.Fatalf("Services(nil): %v", err)
+	}
+
+	var body struct {
+		Services []Service `json:"services"`
+	}
+	if err := json.Unmarshal(fake.requests[0].raw, &body); err != nil {
+		t.Fatalf("decoding withdraw body: %v", err)
+	}
+	if body.Services == nil || len(body.Services) != 0 {
+		t.Errorf("withdraw sent services = %#v, want an empty array", body.Services)
+	}
+
+	fake2 := &fakeControl{servicesStatus: http.StatusConflict}
+	hs2 := httptest.NewServer(fake2)
+	defer hs2.Close()
+
+	_, err := New(hs2.URL).Services(context.Background(), "secret-token", keys, []Service{{Name: "api", Protocol: "tcp", Port: 80}})
+	if err == nil || !strings.Contains(err.Error(), "409") {
+		t.Fatalf("Services conflict error = %v, want HTTP 409", err)
+	}
+	if IsUnauthorized(err) {
+		t.Error("a 409 must not be read as a revoked credential")
 	}
 }
 

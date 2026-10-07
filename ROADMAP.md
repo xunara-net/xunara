@@ -1097,15 +1097,23 @@ Update}`（`AttrUpdate` = `map[string]any`，值可为 string / float64 / bool�
     Machines 表格增加 Services 计数列。
   - CLI `xunara services list|show <name>`（直接读状态目录；DNS 名依赖部署
     配置的域，由平台 API 提供）。
+- 原生客户端（M16d）：`xunara-agent services publish -file <file> | list |
+  clear`。声明文件 `<state-dir>/services.json`（0600、原子写，只有服务端接受
+  后才落盘；与凭据文件分离）；`xunara-agent run` 每 `-services-interval`
+  （默认 5m）重读声明并重发——声明式收敛，服务端对未变化集合 no-op（不写库/
+  不审计/不唤醒 netmap），所以刷新只在控制面丢数据（如恢复备份）时才有动作。
+  客户端本地预检名称/协议/端口/metadata（镜像服务端限额，服务端仍是权威）。
 - 测试：state 一致性套件；`control/services_test.go`（发布/替换/清空/审计、
-  认证三种失败、20 条非法输入、冲突、预算、DNS 记录）；`control/api_v2_test.go`、
+  认证三种失败、20 条非法输入、冲突、预算、DNS 记录、相同集合 no-op、原生
+  客户端端到端 round trip）；`control/api_v2_test.go`、
   `control/grpc_platform_test.go`、`control/console_test.go`（页面与计数列）、
-  `cmd/xunara/services_test.go`。
+  `cmd/xunara/services_test.go`；客户端 `client/protocol`（发布/撤回/错误
+  映射）、`client/daemon`（声明文件、刷新循环、文件重读）、
+  `cmd/xunara-agent/services_test.go`（文件解析、校验、渲染）。
 - 明确不做（v1）：按 ACL 的可见性（与 MagicDNS 节点名一样组织内可见）、
   健康检查/自动摘除、跨组织共享、与上游 `svc:` VIP 互通（需要上游控制面
   语义，不猜 API）、控制面代理流量。
-- 下一步（未做）：`xunara-agent` 端一键发布（`services publish -file`）与
-  定期刷新；Consul/Kubernetes 等服务目录导入。
+- 下一步（未做）：Consul/Kubernetes 等服务目录导入。
 
 ---
 

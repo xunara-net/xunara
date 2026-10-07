@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"sort"
 	"strings"
@@ -106,6 +107,23 @@ func (s *Server) handleAgentServices(w http.ResponseWriter, req *http.Request) {
 		httpError(w, NewHTTPError(http.StatusBadRequest, err.Error(), nil))
 		return
 	}
+
+	// A node's declaration is reconciled: an agent may re-publish it on a
+	// timer to repair a control plane that lost the record. A publish that
+	// already matches the store is therefore in effect and must not rewrite
+	// rows, append an audit event or wake every netmap stream; everything
+	// below this point is a real change.
+	current, err := s.store.ServicesForNode(node.ID)
+	if err != nil {
+		s.log.Error("reading services", "node", node.StableID, "err", err)
+		httpError(w, NewHTTPError(http.StatusInternalServerError, "internal error", nil))
+		return
+	}
+	if sameServiceSet(current, services) {
+		writeJSON(w, http.StatusOK, agentServicesResponse{Services: s.serviceViews(node, current)})
+		return
+	}
+
 	if err := s.checkServiceNameConflicts(node, services); err != nil {
 		httpError(w, NewHTTPError(http.StatusConflict, err.Error(), nil))
 		return
@@ -137,11 +155,43 @@ func (s *Server) handleAgentServices(w http.ResponseWriter, req *http.Request) {
 		s.log.Error("reading back services", "node", node.StableID, "err", err)
 		stored = services
 	}
-	views := make([]serviceView, 0, len(stored))
-	for _, svc := range stored {
+	writeJSON(w, http.StatusOK, agentServicesResponse{Services: s.serviceViews(node, stored)})
+}
+
+// serviceViews renders a stored set for a response.
+func (s *Server) serviceViews(node state.Node, services []state.Service) []serviceView {
+	views := make([]serviceView, 0, len(services))
+	for _, svc := range services {
 		views = append(views, s.serviceView(svc, node))
 	}
-	writeJSON(w, http.StatusOK, agentServicesResponse{Services: views})
+	return views
+}
+
+// sameServiceSet reports whether a declaration matches the stored set. A
+// declaration is a set, not a list: order carries no meaning. Names are unique
+// on both sides (the store enforces it, normalizeAgentServices enforces it),
+// so comparing by name is unambiguous.
+func sameServiceSet(stored, declared []state.Service) bool {
+	if len(stored) != len(declared) {
+		return false
+	}
+	byName := make(map[string]state.Service, len(stored))
+	for _, svc := range stored {
+		byName[svc.Name] = svc
+	}
+	for _, svc := range declared {
+		other, ok := byName[svc.Name]
+		if !ok {
+			return false
+		}
+		if svc.Protocol != other.Protocol || svc.Port != other.Port {
+			return false
+		}
+		if !maps.Equal(svc.Metadata, other.Metadata) {
+			return false
+		}
+	}
+	return true
 }
 
 // normalizeAgentServices validates a published set and converts it to store

@@ -651,8 +651,14 @@ Service = (node_id, name, protocol, port, metadata?)
   + machine key/node key 复述，与 `/heartbeat` 同一身份规则）。
 - 发布是**整批替换**（声明式、幂等）：请求体列出该节点当前的全部服务；
   空数组表示撤销全部服务。
+- 重复发布与已存集合相同的集合是 no-op：不写库、不追加审计、不唤醒 netmap
+  （顺序无关，比较前做与写入相同的归一化）。客户端因此可以定期重发声明来
+  修复丢失的控制面数据，而不产生写入与审计噪音。
 - 管理面永远只读（HTTP v2 / gRPC / Console / CLI），与设备姿态属性同一模式
   （AGENTS §10 的边界：节点行为数据由节点负责，管理员只观察）。
+- 节点本地的声明文件与运行中的 agent 不做跨进程加锁：`publish`/`clear`
+  先经服务端确认，再更新文件；`run` 在下一次刷新重读文件。二者恰好并发的
+  窗口（一次请求内）以最后一次写入为准，重跑命令即可收敛。
 - 删除节点 → 服务级联删除；节点过期不自动删除服务（管理员仍能看到"过期
   节点持有某服务名"，便于排障；过期节点不参与 netmap）。
 
@@ -687,6 +693,9 @@ HTTP   GET  /api/v2/services             # read scope，cursor 分页，node/nam
 gRPC   PlatformService.ListServices      # 同规则、同值
 CLI    xunara services list|show         # 直接读状态目录
 Console  Machines 页 Services 计数 / Services 页
+Agent  xunara-agent services publish|list|clear
+                                         # 节点自身的声明（唯一写入者）；
+                                         # run 定期重读 <state-dir>/services.json 重发
 ```
 
 ### 22.6 审计

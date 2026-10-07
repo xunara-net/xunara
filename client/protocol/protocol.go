@@ -125,6 +125,67 @@ func (c *Client) Heartbeat(ctx context.Context, token string, req HeartbeatReque
 	return c.postJSON(ctx, "/api/agent/v1/heartbeat", token, req, nil)
 }
 
+// Service is one service a native client advertises about itself (Xunara
+// Atlas). Publishing a name grants nothing: discovery is not authorization,
+// and the control plane never proxies the traffic.
+type Service struct {
+	Name string `json:"name"`
+	// Protocol is "tcp" or "udp".
+	Protocol string `json:"protocol"`
+	Port     uint32 `json:"port"`
+	// Metadata is human/automation readable description (version, region).
+	// It must not carry secrets: it is stored on the control plane and shown
+	// on its read surfaces.
+	Metadata map[string]string `json:"metadata,omitempty"`
+}
+
+// ServiceView is a stored service as the control plane reports it.
+type ServiceView struct {
+	Name     string            `json:"name"`
+	Protocol string            `json:"protocol"`
+	Port     uint16            `json:"port"`
+	Metadata map[string]string `json:"metadata,omitempty"`
+	NodeID   uint64            `json:"nodeId"`
+	StableID string            `json:"stableId"`
+	Hostname string            `json:"hostname"`
+	// DNSName is the MagicDNS name the service is reachable under; empty when
+	// the deployment has no domain configured.
+	DNSName string    `json:"dnsName,omitempty"`
+	Created time.Time `json:"created"`
+	Updated time.Time `json:"updated"`
+}
+
+// servicesBody is the authenticated body of a service publish.
+type servicesBody struct {
+	keyBody
+	Services []Service `json:"services"`
+}
+
+// Services publishes this node's complete service set: names left out are
+// withdrawn, and an empty set withdraws everything. The control plane treats
+// a set it already holds as a no-op, so an agent may re-publish its
+// declaration on a timer to repair a control plane that lost the record.
+func (c *Client) Services(ctx context.Context, token string, keys Keys, services []Service) ([]ServiceView, error) {
+	if services == nil {
+		services = []Service{}
+	}
+	body := servicesBody{
+		keyBody: keyBody{
+			MachineKey: keys.Machine.Public().String(),
+			NodeKey:    keys.Node.Public().String(),
+		},
+		Services: services,
+	}
+
+	var resp struct {
+		Services []ServiceView `json:"services"`
+	}
+	if err := c.postJSON(ctx, "/api/agent/v1/services", token, body, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Services, nil
+}
+
 // keyBody is the common authenticated request body.
 type keyBody struct {
 	MachineKey string `json:"machine_key"`

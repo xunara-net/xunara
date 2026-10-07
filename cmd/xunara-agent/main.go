@@ -43,6 +43,8 @@ func main() {
 		err = runAgent(ctx, os.Args[2:])
 	case "status":
 		err = runStatus(ctx, os.Args[2:])
+	case "services":
+		err = runServices(ctx, os.Args[2:])
 	case "version":
 		fmt.Println("xunara-agent", daemon.Version)
 	case "help", "-h", "--help":
@@ -131,6 +133,7 @@ func runAgent(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	stateDir := fs.String("state-dir", defaultStateDir(), "directory holding agent.json")
 	interval := fs.Duration("interval", 30*time.Second, "heartbeat/netmap interval")
+	servicesInterval := fs.Duration("services-interval", 5*time.Minute, "how often to re-publish the service declaration")
 	logLevel := fs.String("log-level", "info", "log level: debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -150,6 +153,10 @@ func runAgent(ctx context.Context, args []string) error {
 		return err
 	}
 	agent.Interval = *interval
+	// The declaration file is re-read on every refresh, so a `services
+	// publish` next to a running agent takes effect without a restart.
+	agent.StateDir = *stateDir
+	agent.ServicesInterval = *servicesInterval
 
 	if !state.Enrolled() {
 		return errors.New("this agent has not been approved yet; run `xunara-agent enroll` again after approving the device")
@@ -211,12 +218,18 @@ func usage() {
 
 usage:
   xunara-agent enroll -server <url> [-auth-key-file f] [-state-dir d] [-hostname h]
-  xunara-agent run    [-state-dir d] [-interval 30s]
+  xunara-agent run    [-state-dir d] [-interval 30s] [-services-interval 5m]
   xunara-agent status [-state-dir d] [-json]
+  xunara-agent services publish -file <file> [-state-dir d]
+  xunara-agent services list [-state-dir d] [-json]
+  xunara-agent services clear [-state-dir d]
   xunara-agent version
 
 The pre-auth key is read from the environment variable `+authKeyEnv+` or from
 -auth-key-file; it is never accepted as a flag.
+
+The services declaration file is
+  {"services": [{"name": "api", "protocol": "tcp", "port": 443}]}
 `)
 }
 

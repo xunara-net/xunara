@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"tailscale.com/types/key"
 
+	"github.com/xunara/xunara/client/protocol"
 	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/state"
 )
@@ -141,6 +143,70 @@ func TestAgentServicesPublishWithdrawAndAudit(t *testing.T) {
 	if event, ok := lastAudit(t, s, identity.AuditServicesUpdated); !ok || event.Detail != "withdrew all services" {
 		t.Errorf("last audit event = %+v", event)
 	}
+}
+
+// TestAgentServicesRepublishUnchangedIsNoOp covers the periodic refresh path:
+// re-publishing the stored set must not touch rows, timestamps or the audit
+// log, while a real change still does.
+func TestAgentServicesRepublishUnchangedIsNoOp(t *testing.T) {
+	s := newServerWithConfig(t, Config{Domain: "example.com"})
+	hs := newTestHTTPServer(t, s)
+	agent := enrollServiceAgent(t, s, hs, "noop")
+
+	declaration := []agentService{
+		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "1"}},
+		{Name: "web", Protocol: "tcp", Port: 80},
+	}
+	first, status, raw := publishServices(t, s, hs, agent, declaration, nil)
+	if status != http.StatusOK {
+		t.Fatalf("first publish status = %d (%s)", status, raw)
+	}
+	audits := countAudit(t, s, identity.AuditServicesUpdated)
+
+	// Reordered, with protocol spelling differences that normalize away: the
+	// declaration is the same set, so nothing may change.
+	second, status, raw := publishServices(t, s, hs, agent, []agentService{
+		{Name: "web", Protocol: " TCP ", Port: 80},
+		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "1"}},
+	}, nil)
+	if status != http.StatusOK {
+		t.Fatalf("identical republish status = %d (%s)", status, raw)
+	}
+	if len(second.Services) != len(first.Services) {
+		t.Fatalf("identical republish returned %d services, want %d", len(second.Services), len(first.Services))
+	}
+	for i := range second.Services {
+		if second.Services[i].Name != first.Services[i].Name {
+			t.Fatalf("identical republish reordered the response: %+v", second.Services)
+		}
+		if !second.Services[i].Updated.Equal(first.Services[i].Updated) {
+			t.Errorf("identical republish moved %s updated from %v to %v",
+				first.Services[i].Name, first.Services[i].Updated, second.Services[i].Updated)
+		}
+	}
+	if got := countAudit(t, s, identity.AuditServicesUpdated); got != audits {
+		t.Errorf("audit events after an identical republish = %d, want %d", got, audits)
+	}
+
+	// A changed set is still written and audited.
+	if _, status, raw := publishServices(t, s, hs, agent, []agentService{{Name: "web", Protocol: "tcp", Port: 80}}, nil); status != http.StatusOK {
+		t.Fatalf("changed republish status = %d (%s)", status, raw)
+	}
+	if got := countAudit(t, s, identity.AuditServicesUpdated); got != audits+1 {
+		t.Errorf("audit events after a changed republish = %d, want %d", got, audits+1)
+	}
+}
+
+// countAudit returns how many stored events carry the given action.
+func countAudit(t *testing.T, s *Server, action string) int {
+	t.Helper()
+	count := 0
+	for _, event := range auditEvents(t, s) {
+		if event.Action == action {
+			count++
+		}
+	}
+	return count
 }
 
 // lastAudit returns the most recent event with the given action.
@@ -419,5 +485,79 @@ func TestServiceDNSRecordsFromRegistry(t *testing.T) {
 	}
 	if got := s.extraDNSRecords(); len(got) != 0 {
 		t.Errorf("records after withdrawing = %+v", got)
+	}
+}
+
+// TestAgentServicesNativeClientRoundTrip runs the real native client against
+// the real server: the wire contract between client/protocol and this package
+// is what the CLI and the daemon speak, so it is exercised end to end here.
+func TestAgentServicesNativeClientRoundTrip(t *testing.T) {
+	s := newServerWithConfig(t, Config{Domain: "example.com"})
+	hs := newTestHTTPServer(t, s)
+	agent := enrollServiceAgent(t, s, hs, "native")
+
+	client := protocol.New(hs.URL)
+	keys := protocol.Keys{Machine: agent.machineKey, Node: agent.nodeKey}
+	ctx := context.Background()
+
+	views, err := client.Services(ctx, agent.token, keys, []protocol.Service{
+		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "1"}},
+	})
+	if err != nil {
+		t.Fatalf("Services: %v", err)
+	}
+	if len(views) != 1 {
+		t.Fatalf("published views = %+v", views)
+	}
+	view := views[0]
+	if view.Name != "api" || view.Protocol != "tcp" || view.Port != 8080 || view.DNSName != "api.example.com" {
+		t.Errorf("view = %+v", view)
+	}
+	if view.NodeID != uint64(agent.node.ID) || view.StableID != agent.node.StableID || view.Hostname != "native" {
+		t.Errorf("view publisher = %+v", view)
+	}
+	if view.Metadata["version"] != "1" || view.Created.IsZero() || view.Updated.IsZero() {
+		t.Errorf("view bookkeeping = %+v", view)
+	}
+
+	// The service resolves through MagicDNS for official clients.
+	found := false
+	for _, rec := range s.extraDNSRecords() {
+		if rec.Name == "api.example.com" && rec.Value == agent.node.IPv4.String() {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("api.example.com is missing from MagicDNS")
+	}
+
+	// A token without the matching key pair must not publish for this node.
+	impostor := enrollServiceAgent(t, s, hs, "impostor")
+	impostorKeys := protocol.Keys{Machine: impostor.machineKey, Node: impostor.nodeKey}
+	if _, err := client.Services(ctx, agent.token, impostorKeys, []protocol.Service{{Name: "evil", Protocol: "tcp", Port: 1}}); err == nil {
+		t.Error("a mismatched key pair was accepted")
+	}
+	if _, ok := s.store.GetServiceByName("evil"); ok {
+		t.Error("a rejected publish stored a service")
+	}
+
+	// An unchanged republish is a no-op, and an empty set withdraws.
+	if _, err := client.Services(ctx, agent.token, keys, []protocol.Service{
+		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "1"}},
+	}); err != nil {
+		t.Fatalf("identical republish: %v", err)
+	}
+	views, err = client.Services(ctx, agent.token, keys, nil)
+	if err != nil {
+		t.Fatalf("withdraw: %v", err)
+	}
+	if len(views) != 0 {
+		t.Errorf("withdraw left services: %+v", views)
+	}
+	if _, ok := s.store.GetServiceByName("api"); ok {
+		t.Error("withdrawn service is still stored")
+	}
+	if records := s.extraDNSRecords(); len(records) != 0 {
+		t.Errorf("records after withdrawing = %+v", records)
 	}
 }
