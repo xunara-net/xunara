@@ -102,6 +102,23 @@ CREATE TABLE IF NOT EXISTS device_authorizations (
 CREATE INDEX IF NOT EXISTS idx_device_authorizations_node ON device_authorizations(node_key);
 CREATE INDEX IF NOT EXISTS idx_device_authorizations_expires ON device_authorizations(expires_at);
 `,
+
+	// v3: service identities. An API key authenticates automation; it is not
+	// a user, a session or a device.
+	`
+CREATE TABLE IF NOT EXISTS api_keys (
+	id           TEXT    PRIMARY KEY,
+	token_hash   TEXT    NOT NULL UNIQUE,
+	name         TEXT    NOT NULL,
+	user_id      INTEGER NOT NULL,
+	scopes       TEXT    NOT NULL,
+	created_at   INTEGER NOT NULL,
+	expires_at   INTEGER,
+	last_used_at INTEGER,
+	revoked_at   INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+`,
 }
 
 // SQLiteStore is a durable [Store] sharing the control plane's database.

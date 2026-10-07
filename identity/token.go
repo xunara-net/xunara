@@ -12,6 +12,15 @@ import (
 // base64URL is the unpadded URL-safe encoding every secret uses.
 func base64URL(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
+// newID returns a fresh 128-bit hex identifier with a prefix.
+func newID(prefix string) (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("identity: generating an identifier: %w", err)
+	}
+	return prefix + hex.EncodeToString(b[:]), nil
+}
+
 // secretBytes is the entropy of every bearer secret this package generates:
 // session tokens, OAuth state, nonces, PKCE verifiers and browser cookies.
 const secretBytes = 32

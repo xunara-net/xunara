@@ -102,6 +102,10 @@ type DeviceAuthorizationStore interface {
 	// follow it up.
 	GetDeviceAuthorizationByNodeKey(nodeKey string) (DeviceAuthorization, bool)
 
+	// ListPendingDeviceAuthorizations returns pending, unexpired
+	// authorizations, newest first.
+	ListPendingDeviceAuthorizations(now time.Time) []DeviceAuthorization
+
 	// ApproveDeviceAuthorization approves a pending, unexpired authorization
 	// for the given user. The machine and node keys are taken from the stored
 	// row, never from the caller.

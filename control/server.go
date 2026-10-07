@@ -393,6 +393,7 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/register/{authID}", s.handleRegisterPage)
 	r.Post("/register/{authID}/approve", s.handleApproveDevice)
 	r.Post("/register/{authID}/deny", s.handleDenyDevice)
+	r.Mount("/api/v1", s.apiRouter())
 	r.Get("/", s.handleRoot)
 
 	return r

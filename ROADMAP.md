@@ -261,9 +261,21 @@ reference/{go-oidc,oauth2,dex,webauthn}
 
 ## M5 — Platform API 与 Web Console
 
-- `api/v1`、`api/v2`、`api/platform`（REST + 鉴权中间件）。
-- Web Console P0：Machines / Users / DNS / ACL-Grants / Routes / Exit Nodes / Auth Keys。
-- 审批流接线：`/register/{id}` → 登录 → 审批 → 设备授权。
+- M5a 已完成：Platform API（`/api/v1`）。
+  - 认证：`Authorization: Bearer`（Service Identity API Key，token 只存哈希，
+    带 read/write scope、TTL、吊销、last-used）或浏览器会话 cookie。
+  - 端点：overview、machines（列表/详情/删除/路由审批）、routes、users（列表/详情/改名）、
+    dns（列表/删除）、policy、auth-keys（创建/列表/删除，secret 仅创建时返回）、
+    devices（待审批列表/批准/拒绝）、audit、api-keys（创建/列表/吊销）、sessions（列出/吊销）。
+  - 节点视图不包含任何 key 材料；所有写操作落审计（actor 含 `apikey:<id>`）。
+  - `state.ApplyRouteApproval`/`RouteDelta`：路由审批的纯函数（CLI 与 API 共用语义）。
+  - CLI：`xunara apikey create|list|revoke`（bootstrap 第一把管理员 key）。
+  - 测试：`control/api_test.go`（401/403/scope、密钥不泄漏、注册/路由/删除、
+    用户改名冲突、auth-key 一次性 secret、设备审批归属、key 吊销即时生效）。
+- 待办（M5 剩余）：`api/v2`、`api/platform`（组织/多租户）、gRPC/Webhook。
+
+- Web Console P0（M5b，进行中）：Machines / Users / DNS / ACL-Grants / Routes / Exit Nodes / Auth Keys。
+- 审批流接线（已完成）：`/register/{id}` → 登录 → 审批 → 设备授权。
 
 ## M6 — 服务与客户端
 

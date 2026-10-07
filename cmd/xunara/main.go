@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -40,6 +41,8 @@ func main() {
 		runUser(os.Args[2:])
 	case "audit":
 		runAudit(os.Args[2:])
+	case "apikey":
+		runAPIKey(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -65,6 +68,9 @@ Commands:
   user list            List users in the trust plane
   user update          Change a user's login name, display name or email
   audit list           Show the control plane audit log
+  apikey create        Create a platform API key (prints the token once)
+  apikey list          List API keys (never their tokens)
+  apikey revoke        Revoke an API key
 
 Run "xunara <command> -h" for command options.
 `)
@@ -228,4 +234,18 @@ func formatTime(t time.Time) string {
 func fatal(what string, err error) {
 	fmt.Fprintf(os.Stderr, "xunara: %s: %v\n", what, err)
 	os.Exit(1)
+}
+
+// splitCSV splits a comma-separated flag value, dropping empty entries.
+func splitCSV(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }

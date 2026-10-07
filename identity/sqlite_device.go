@@ -77,6 +77,28 @@ func (s *SQLiteStore) GetDeviceAuthorizationByNodeKey(nodeKey string) (DeviceAut
 	return da, true
 }
 
+// ListPendingDeviceAuthorizations implements [DeviceAuthorizationStore].
+func (s *SQLiteStore) ListPendingDeviceAuthorizations(now time.Time) []DeviceAuthorization {
+	rows, err := s.db.QueryContext(context.Background(),
+		"SELECT "+deviceAuthorizationColumns+
+			" FROM device_authorizations WHERE state = ? AND expires_at > ? ORDER BY created_at DESC",
+		string(DevicePending), now.UnixNano())
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var out []DeviceAuthorization
+	for rows.Next() {
+		da, err := scanDeviceAuthorization(rows)
+		if err != nil {
+			return nil
+		}
+		out = append(out, da)
+	}
+	return out
+}
+
 // ApproveDeviceAuthorization implements [DeviceAuthorizationStore].
 //
 // The UPDATE is conditional on the row still being pending and unexpired, so

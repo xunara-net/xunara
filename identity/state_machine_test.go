@@ -1,6 +1,7 @@
 package identity
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -366,5 +367,97 @@ func TestGetDeviceAuthorizationByNodeKey(t *testing.T) {
 	}
 	if _, ok := s.GetDeviceAuthorizationByNodeKey("nkey:unknown"); ok {
 		t.Error("unknown node key returned an authorization")
+	}
+}
+
+func TestAPIKeyLifecycle(t *testing.T) {
+	s := openTestStore(t)
+	alice := createTestUser(t, s, "alice")
+
+	key, token, err := s.CreateAPIKey(NewAPIKeyOptions{
+		Name: "ci", UserID: alice.ID, Scopes: []string{ScopeRead, ScopeWrite}, TTL: time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("CreateAPIKey: %v", err)
+	}
+	if key.ID == "" || key.Name != "ci" || key.UserID != alice.ID {
+		t.Fatalf("key = %+v", key)
+	}
+	if !strings.HasPrefix(token, APIKeyPrefix) {
+		t.Errorf("token %q does not carry the %q prefix", token, APIKeyPrefix)
+	}
+	if !key.HasScope(ScopeWrite) || key.HasScope("admin") {
+		t.Errorf("scopes = %v", key.Scopes)
+	}
+
+	// The token must be stored hashed, never verbatim.
+	var storedHash string
+	if err := s.db.QueryRow("SELECT token_hash FROM api_keys WHERE id = ?", key.ID).Scan(&storedHash); err != nil {
+		t.Fatalf("reading token hash: %v", err)
+	}
+	if storedHash == token || storedHash != HashSecret(token) {
+		t.Error("API key token must be stored hashed")
+	}
+
+	got, err := s.GetAPIKeyByToken(token)
+	if err != nil || got.ID != key.ID {
+		t.Fatalf("GetAPIKeyByToken = %+v, %v", got, err)
+	}
+	if _, err := s.GetAPIKeyByToken("xunara_nope"); err != ErrAPIKeyNotFound {
+		t.Errorf("unknown token = %v, want ErrAPIKeyNotFound", err)
+	}
+
+	if err := s.TouchAPIKey(key.ID, time.Now()); err != nil {
+		t.Fatalf("TouchAPIKey: %v", err)
+	}
+	got, _ = s.GetAPIKeyByToken(token)
+	if got.LastUsedAt.IsZero() {
+		t.Error("LastUsedAt was not recorded")
+	}
+
+	if err := s.RevokeAPIKey(key.ID); err != nil {
+		t.Fatalf("RevokeAPIKey: %v", err)
+	}
+	if _, err := s.GetAPIKeyByToken(token); err != ErrAPIKeyNotFound {
+		t.Errorf("revoked token = %v, want ErrAPIKeyNotFound", err)
+	}
+	if err := s.RevokeAPIKey("key-999"); err != nil {
+		t.Errorf("revoking an unknown key = %v, want nil (no-op)", err)
+	}
+
+	keys := s.ListAPIKeys()
+	if len(keys) != 1 {
+		t.Fatalf("ListAPIKeys = %+v", keys)
+	}
+	if keys[0].RevokedAt.IsZero() {
+		t.Error("revoked key is missing its revocation time")
+	}
+}
+
+func TestAPIKeyValidationAndExpiry(t *testing.T) {
+	s := openTestStore(t)
+	alice := createTestUser(t, s, "alice")
+
+	bad := []NewAPIKeyOptions{
+		{UserID: alice.ID, Scopes: []string{ScopeRead}},
+		{Name: "x", Scopes: []string{ScopeRead}},
+		{Name: "x", UserID: alice.ID},
+		{Name: "x", UserID: alice.ID, Scopes: []string{"admin"}},
+	}
+	for _, opts := range bad {
+		if _, _, err := s.CreateAPIKey(opts); err == nil {
+			t.Errorf("CreateAPIKey(%+v) succeeded", opts)
+		}
+	}
+
+	_, token, err := s.CreateAPIKey(NewAPIKeyOptions{
+		Name: "short", UserID: alice.ID, Scopes: []string{ScopeRead}, TTL: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("CreateAPIKey: %v", err)
+	}
+	time.Sleep(10 * time.Millisecond)
+	if _, err := s.GetAPIKeyByToken(token); err != ErrAPIKeyNotFound {
+		t.Errorf("expired token = %v, want ErrAPIKeyNotFound", err)
 	}
 }

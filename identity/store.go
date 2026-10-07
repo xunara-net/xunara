@@ -67,4 +67,5 @@ type Store interface {
 	AuthTransactionStore
 	SessionStore
 	DeviceAuthorizationStore
+	APIKeyStore
 }
