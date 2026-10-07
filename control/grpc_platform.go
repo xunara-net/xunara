@@ -198,6 +198,31 @@ func (g *grpcPlatformServer) GetMeta(ctx context.Context, _ *xunarav2.GetMetaReq
 	}, nil
 }
 
+// GetTailnetLock implements PlatformService.GetTailnetLock: the same
+// read-only tailnet-lock status as GET /api/v2/tka. The AUM chain contents,
+// the trusted key material and the sealed disablement secret stay on the
+// server; the head hash and node counts are what clients already receive in
+// the netmap.
+func (g *grpcPlatformServer) GetTailnetLock(ctx context.Context, _ *xunarav2.GetTailnetLockRequest) (*xunarav2.TailnetLockStatus, error) {
+	s, _, err := g.authorize(ctx, identity.ScopeRead)
+	if err != nil {
+		return nil, err
+	}
+
+	status := s.TKAStatus()
+	return &xunarav2.TailnetLockStatus{
+		EverEnabled: status.EverEnabled,
+		Enabled:     status.Enabled,
+		Disabled:    status.Disabled,
+		Head:        status.Head,
+		Nodes: &xunarav2.TailnetLockNodeCounts{
+			Total:    uint32(status.Nodes.Total),
+			Signed:   uint32(status.Nodes.Signed),
+			Unsigned: uint32(status.Nodes.Unsigned),
+		},
+	}, nil
+}
+
 // ListMachines implements PlatformService.ListMachines. Filters and cursor
 // semantics match GET /api/v2/machines.
 func (g *grpcPlatformServer) ListMachines(ctx context.Context, req *xunarav2.ListMachinesRequest) (*xunarav2.ListMachinesResponse, error) {

@@ -190,6 +190,7 @@ func (s *Server) handleConsoleOverview(w http.ResponseWriter, r *http.Request) {
 	}
 	data["Agents"] = liveAgents
 	data["Policy"] = policyState
+	data["TailnetLock"] = s.TKAStatus()
 
 	s.renderConsole(w, consoleOverviewTemplate, data)
 }

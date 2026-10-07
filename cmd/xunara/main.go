@@ -44,6 +44,8 @@ func main() {
 		runAudit(os.Args[2:])
 	case "apikey":
 		runAPIKey(os.Args[2:])
+	case "tka":
+		runTKA(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -73,6 +75,7 @@ Commands:
   apikey create        Create a platform API key (prints the token once)
   apikey list          List API keys (never their tokens)
   apikey revoke        Revoke an API key
+  tka status           Show the tailnet-lock (key authority) state
 
 Run "xunara <command> -h" for command options.
 `)

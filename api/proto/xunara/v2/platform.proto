@@ -16,6 +16,14 @@
 // router does. PlatformAdminService is deployment-scoped and ignores the
 // authority.
 
+// Regenerate from the repository root (protoc + protoc-gen-go, and
+// protoc-gen-go-grpc on PATH; the include path must contain the well-known
+// types imported below):
+//
+//	protoc -I api/proto --go_out=api/gen --go_opt=paths=source_relative \
+//	  --go-grpc_out=api/gen --go-grpc_opt=paths=source_relative \
+//	  api/proto/xunara/v2/platform.proto
+
 syntax = "proto3";
 
 package xunara.v2;
@@ -29,6 +37,12 @@ service PlatformService {
   // GetMeta reports what this control plane is and which optional features
   // are configured. It never returns secrets or key material.
   rpc GetMeta(GetMetaRequest) returns (Meta);
+
+  // GetTailnetLock reports the state of the tailnet key authority (tailnet
+  // lock): whether it is enabled, the current chain head, and how many nodes
+  // carry a node-key signature. It never returns the AUM chain contents, the
+  // trusted key material, or the sealed disablement secret.
+  rpc GetTailnetLock(GetTailnetLockRequest) returns (TailnetLockStatus);
 
   // ListMachines returns machines ordered by id, resumable with page_token.
   rpc ListMachines(ListMachinesRequest) returns (ListMachinesResponse);
@@ -62,6 +76,26 @@ message Meta {
   bool derp_map_configured = 12;
   string derp_policy = 13;
   uint32 derp_regions_served = 14;
+}
+
+message GetTailnetLockRequest {}
+
+// TailnetLockStatus mirrors GET /api/v2/tka.
+message TailnetLockStatus {
+  bool ever_enabled = 1;
+  bool enabled = 2;
+  bool disabled = 3;
+  // Head is the current head AUM hash; empty unless enabled.
+  string head = 4;
+  TailnetLockNodeCounts nodes = 5;
+}
+
+// TailnetLockNodeCounts counts registered nodes and how many of them are
+// signed.
+message TailnetLockNodeCounts {
+  uint32 total = 1;
+  uint32 signed = 2;
+  uint32 unsigned = 3;
 }
 
 message Machine {

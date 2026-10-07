@@ -896,6 +896,35 @@ in-place re-registration 与 `HandleNodeFromAuthPath` 的 reauth/convert 语义�
 
 ---
 
+## M12 — Tailnet Lock 管理面（只读状态，已完成）
+
+目标：把 TKA 的运行状态交给运维与自动化（CLI、平台 API、Console），补上 M11
+「无 CLI/Platform API 入口」的限制。启用/禁用/签名仍由持有 NL 私钥的客户端经
+`/machine/tka/*` 驱动——控制面不代持任何私钥（AGENTS.md §5/§8），所以这一层只读。
+
+- `control/tka_status.go`：`Server.TKAStatus()`（`everEnabled`/`enabled`/`disabled`/
+  `head` + `nodes{total,signed,unsigned}`）。数据取自 netmap 与 `/machine/tka/*`
+  共用的同一个 manager，平台面不会与客户端看到的状态漂移；head 与"节点是否已有
+  签名"本就是 netmap 公开信息，响应不含 AUM 链内容、可信 key 材料或密封的
+  disablement secret。
+- HTTP：`GET /api/v2/tka`（read scope；未认证 401、缺 scope 403）。
+- gRPC：`PlatformService.GetTailnetLock`（同一份状态与相同的 scope 规则；
+  `platform.proto` 补上可复现的 protoc 生成命令，`api/gen` 已重新生成）。
+- Console：Overview 增加 Tailnet lock 段落——未启用 / 已启用（chain head、已签名
+  节点数）/ 已禁用（链保留）三态。
+- CLI：`xunara tka status [-state-dir]`（只读）。读 SQLite 的 `tka_meta` 与
+  `<state-dir>/tka` 链（`tka.ChonkDir` + `tka.Open`，不创建目录、不写入），并交叉
+  校验「启用但磁盘无链」「有链但库说从未启用」两种不一致并告警。
+- 明确不做：init/disable/sign 的 CLI/API 入口。genesis AUM 必须由管理员持有的
+  NL 私钥在本地生成并签名（`tailscale lock init`），把它搬进控制面等于让控制面
+  代持管理员私钥，会让 TKA 的威胁模型失效。
+- 测试：`control/api_v2_test.go`（三态、字段形状、未认证 401）、
+  `control/grpc_platform_test.go`（未认证/缺 scope、与 HTTP 同值）、
+  `control/console_test.go`（Overview 三态渲染）、`cmd/xunara/tka_test.go`
+  （缺失/空/有链三种 state dir）。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。

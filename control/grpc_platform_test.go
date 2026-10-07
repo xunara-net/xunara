@@ -450,3 +450,62 @@ func TestRouterServeRejectsBadGRPCAddress(t *testing.T) {
 		t.Fatal("Router.Serve accepted an unbindable gRPC address")
 	}
 }
+
+// TestPlatformGRPCTailnetLock checks the gRPC tailnet-lock status: read scope
+// only, same values as GET /api/v2/tka, and nothing from the chain beyond the
+// head hash.
+func TestPlatformGRPCTailnetLock(t *testing.T) {
+	s := newTestServer(t)
+	client := startGRPCTestServer(t, s.RegisterPlatformGRPC)
+
+	_, readToken := seedAPIKey(t, s, identity.ScopeRead)
+	_, writeToken := seedAPIKey(t, s, identity.ScopeWrite)
+
+	if _, err := client.GetTailnetLock(grpcCtx(""), &xunarav2.GetTailnetLockRequest{}); status.Code(err) != codes.Unauthenticated {
+		t.Errorf("anonymous GetTailnetLock error = %v, want Unauthenticated", err)
+	}
+	if _, err := client.GetTailnetLock(grpcCtx(writeToken), &xunarav2.GetTailnetLockRequest{}); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("write-only GetTailnetLock error = %v, want PermissionDenied", err)
+	}
+
+	signed := seedAPIMachine(t, s, "signed", nil)
+	seedAPIMachine(t, s, "unsigned", nil)
+
+	status, err := client.GetTailnetLock(grpcCtx(readToken), &xunarav2.GetTailnetLockRequest{})
+	if err != nil {
+		t.Fatalf("GetTailnetLock: %v", err)
+	}
+	if status.GetEverEnabled() || status.GetEnabled() || status.GetDisabled() || status.GetHead() != "" {
+		t.Errorf("status before enablement = %+v, want an untouched tailnet", status)
+	}
+	if status.GetNodes().GetTotal() != 2 || status.GetNodes().GetUnsigned() != 2 {
+		t.Errorf("node counts = %+v, want 2 unsigned nodes", status.GetNodes())
+	}
+
+	adminKey, genesis := newTestTKAKey(t)
+	if err := s.tka.initBegin(genesis); err != nil {
+		t.Fatalf("initBegin: %v", err)
+	}
+	signed = storedNode(t, s, signed.NodeKey)
+	signed.KeySignature = signTestNodeKey(t, adminKey, signed.NodeKey)
+	if err := s.store.UpdateNode(signed); err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+	if err := s.tka.enable(nil); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	status, err = client.GetTailnetLock(grpcCtx(readToken), &xunarav2.GetTailnetLockRequest{})
+	if err != nil {
+		t.Fatalf("GetTailnetLock after enablement: %v", err)
+	}
+	if !status.GetEnabled() || status.GetDisabled() {
+		t.Errorf("status after enablement = %+v, want enabled", status)
+	}
+	if status.GetHead() != genesis.Hash().String() {
+		t.Errorf("head = %q, want %q", status.GetHead(), genesis.Hash().String())
+	}
+	if status.GetNodes().GetSigned() != 1 || status.GetNodes().GetTotal() != 2 {
+		t.Errorf("node counts = %+v, want one of two nodes signed", status.GetNodes())
+	}
+}

@@ -135,6 +135,19 @@ var (
 </div>
 <h2>Access control</h2>
 <p>{{.Policy}}</p>
+<h2>Tailnet lock</h2>
+{{if .TailnetLock.Enabled}}
+<p><span class="ok">enabled</span> — chain head <code>{{.TailnetLock.Head}}</code>;
+{{.TailnetLock.Nodes.Signed}} of {{.TailnetLock.Nodes.Total}} nodes carry a node-key
+signature, so peers verify every node key without trusting this control plane.</p>
+{{else if .TailnetLock.Disabled}}
+<p><span class="warn">disabled</span> — the chain is kept, so a node that still
+enforces tailnet lock locally can fetch the disablement secret and clear its
+state. Node keys are no longer verified by peers.</p>
+{{else}}
+<p>Not enabled. Node keys are not verified by peers; an administrator turns it on
+with <code>tailscale lock init</code> from a trusted machine.</p>
+{{end}}
 `)
 
 	consoleMachinesTemplate = consolePage("machines", `

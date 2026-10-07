@@ -1,8 +1,10 @@
 package control
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 
 	"tailscale.com/types/key"
@@ -271,4 +273,92 @@ func TestAPIV2AgentTokensListAndRevoke(t *testing.T) {
 	if _, ok := findAudit(t, s, identity.AuditAgentTokenRevoked); !ok {
 		t.Error("agent.token_revoked audit event missing")
 	}
+}
+
+// TestAPIV2TailnetLockStatus drives GET /api/v2/tka through the key-authority
+// lifecycle: it reports the state the netmap advertises, counts signed nodes,
+// and never needs more than the read scope.
+func TestAPIV2TailnetLockStatus(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+
+	if resp := apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/tka", "", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous status = %d, want 401", resp.StatusCode)
+	}
+
+	_, token := seedAPIKey(t, s, identity.ScopeRead)
+	signed := seedAPIMachine(t, s, "signed", nil)
+	seedAPIMachine(t, s, "unsigned", nil)
+
+	// Before any enablement the tailnet looks untouched.
+	raw := bodyString(t, apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/tka", token, nil))
+	var status TKAStatus
+	if err := json.Unmarshal([]byte(raw), &status); err != nil {
+		t.Fatalf("decoding status: %v\n%s", err, raw)
+	}
+	for _, field := range []string{"everEnabled", "enabled", "disabled", "nodes", "signed", "unsigned"} {
+		if !strings.Contains(raw, `"`+field+`"`) {
+			t.Errorf("status JSON lacks %q:\n%s", field, raw)
+		}
+	}
+	if status.EverEnabled || status.Enabled || status.Disabled || status.Head != "" {
+		t.Errorf("status before enablement = %+v, want an untouched tailnet", status)
+	}
+	if status.Nodes != (TKAStatusNodes{Total: 2, Unsigned: 2}) {
+		t.Errorf("node counts = %+v, want 2 unsigned nodes", status.Nodes)
+	}
+
+	// Enablement: sign one node and turn enforcement on.
+	adminKey, genesis := newTestTKAKey(t)
+	if err := s.tka.initBegin(genesis); err != nil {
+		t.Fatalf("initBegin: %v", err)
+	}
+	signed = storedNode(t, s, signed.NodeKey)
+	signed.KeySignature = signTestNodeKey(t, adminKey, signed.NodeKey)
+	if err := s.store.UpdateNode(signed); err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+	if err := s.tka.enable(nil); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	status = decodeTKAStatus(t, apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/tka", token, nil))
+	if !status.Enabled || !status.EverEnabled || status.Disabled {
+		t.Errorf("status after enablement = %+v, want enabled", status)
+	}
+	if status.Head != genesis.Hash().String() {
+		t.Errorf("head = %q, want %q", status.Head, genesis.Hash().String())
+	}
+	if status.Nodes != (TKAStatusNodes{Total: 2, Signed: 1, Unsigned: 1}) {
+		t.Errorf("node counts = %+v, want one signed and one unsigned node", status.Nodes)
+	}
+
+	// Disablement keeps the chain but stops enforcement; the head is no longer
+	// advertised to clients, so it is not reported either.
+	if err := s.tka.disable(testDisablementSecret); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	status = decodeTKAStatus(t, apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/tka", token, nil))
+	if status.Enabled || !status.Disabled || !status.EverEnabled || status.Head != "" {
+		t.Errorf("status after disablement = %+v, want disabled with the chain kept", status)
+	}
+	if status.Nodes.Signed != 1 {
+		t.Errorf("signed nodes after disablement = %d, want the stored signature kept", status.Nodes.Signed)
+	}
+}
+
+// decodeTKAStatus reads a GET /api/v2/tka response.
+func decodeTKAStatus(t *testing.T, resp *http.Response) TKAStatus {
+	t.Helper()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("tka status = %d, want 200", resp.StatusCode)
+	}
+	var out TKAStatus
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decoding tka status: %v", err)
+	}
+	resp.Body.Close()
+	return out
 }

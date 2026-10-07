@@ -48,6 +48,7 @@ func (s *Server) apiV2Router() http.Handler {
 	r.Use(apiV2QueryGuard)
 
 	r.Get("/meta", s.handleAPIV2Meta)
+	r.Get("/tka", s.handleAPIV2TKA)
 
 	r.Get("/machines", s.handleAPIV2Machines)
 	r.Get("/audit", s.handleAPIV2Audit)
@@ -170,6 +171,19 @@ func (s *Server) derpRegionsServed() int {
 		}
 	}
 	return served
+}
+
+// handleAPIV2TKA implements GET /api/v2/tka: the read-only tailnet-lock
+// status (flags, chain head, signed/unsigned node counts).
+//
+// The AUM chain contents and the sealed support disablement secret stay out of
+// the response; the head hash and per-node signature presence are public, and
+// clients already receive them in the netmap.
+func (s *Server) handleAPIV2TKA(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireScope(w, r, identity.ScopeRead); !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.TKAStatus())
 }
 
 // handleAPIV2Machines implements GET /api/v2/machines.

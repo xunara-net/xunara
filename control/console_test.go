@@ -558,3 +558,53 @@ func TestConsoleAuditNewestFirst(t *testing.T) {
 		t.Error("audit page is not newest-first")
 	}
 }
+
+// TestConsoleOverviewTailnetLock checks that the overview reflects the key
+// authority: untouched by default, enabled with the chain head and signed-node
+// count, and disabled after disablement.
+func TestConsoleOverviewTailnetLock(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/")
+
+	overview := func() string {
+		t.Helper()
+		return bodyString(t, getRequest(t, client, hs.URL+"/console/", cookie))
+	}
+
+	if body := overview(); !strings.Contains(body, "Not enabled. Node keys are not verified by peers") {
+		t.Errorf("overview does not describe an unlocked tailnet:\n%s", body)
+	}
+
+	adminKey, genesis := newTestTKAKey(t)
+	conn, _, nodeKey := registerNode(t, s, hs, "lock-console")
+	defer conn.Close()
+
+	if err := s.tka.initBegin(genesis); err != nil {
+		t.Fatalf("initBegin: %v", err)
+	}
+	node := storedNode(t, s, nodeKey.Public())
+	node.KeySignature = signTestNodeKey(t, adminKey, node.NodeKey)
+	if err := s.store.UpdateNode(node); err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+	if err := s.tka.enable(nil); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	body := overview()
+	if !strings.Contains(body, "chain head <code>"+genesis.Hash().String()+"</code>") {
+		t.Errorf("overview does not show the chain head:\n%s", body)
+	}
+	if !strings.Contains(body, "1 of 1 nodes carry a node-key") {
+		t.Errorf("overview does not show the signed-node count:\n%s", body)
+	}
+
+	if err := s.tka.disable(testDisablementSecret); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if body := overview(); !strings.Contains(body, "disabled</span>") {
+		t.Errorf("overview does not report disablement:\n%s", body)
+	}
+}
