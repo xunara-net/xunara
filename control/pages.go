@@ -80,6 +80,32 @@ below; it does not make the device a human identity.</p>
 <p>This device registration was already {{.State}}. You can close this window and
 return to the device.</p>
 ` + `</main></body></html>`))
+
+	sshCheckPageTemplate = template.Must(template.New("sshcheck").Parse(pageHead + `
+<h1>SSH check</h1>
+<p>A Tailscale SSH connection is waiting for a decision. Approving lets it
+proceed; the decision is recorded in the audit log.</p>
+<dl>
+<dt>From</dt><dd>{{.Source}}</dd>
+<dt>To</dt><dd>{{.Destination}}</dd>
+<dt>Run as</dt><dd><code>{{.LocalUser}}</code></dd>
+<dt>Requested</dt><dd>{{.Created}}</dd>
+<dt>Expires</dt><dd>{{.Expires}}</dd>
+<dt>Deciding as</dt><dd>{{.LoginName}}</dd>
+</dl>
+<form method="post" action="/ssh/check/{{.AuthID}}/approve">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<div class="actions">
+<button class="approve" type="submit">Approve connection</button>
+</div>
+</form>
+<form method="post" action="/ssh/check/{{.AuthID}}/deny">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<div class="actions">
+<button class="deny" type="submit">Deny</button>
+</div>
+</form>
+` + `</main></body></html>`))
 )
 
 // renderLoginPage lists the configured providers.
@@ -107,6 +133,14 @@ func (s *Server) renderApprovePage(w http.ResponseWriter, data map[string]any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := approvePageTemplate.Execute(w, data); err != nil {
 		s.log.Error("rendering approval page", "err", err)
+	}
+}
+
+// renderSSHCheckPage shows the SSH check approval form.
+func (s *Server) renderSSHCheckPage(w http.ResponseWriter, data map[string]any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := sshCheckPageTemplate.Execute(w, data); err != nil {
+		s.log.Error("rendering ssh check page", "err", err)
 	}
 }
 

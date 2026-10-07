@@ -119,6 +119,34 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
 `,
+
+	// v4: SSH check mode (hold and delegate). A held SSH session is its own
+	// object, bound to the exact (source, destination) node pair; the
+	// per-pair approval timestamps are what auto-approval reads. Neither is a
+	// server-local map: any instance can serve the long poll (AGENTS.md 9/10).
+	`
+CREATE TABLE IF NOT EXISTS ssh_check_sessions (
+	id          TEXT    PRIMARY KEY,
+	src_node_id INTEGER NOT NULL,
+	dst_node_id INTEGER NOT NULL,
+	local_user  TEXT    NOT NULL DEFAULT '',
+	verdict     TEXT    NOT NULL,
+	decided_by  INTEGER,
+	decided_at  INTEGER,
+	consumed_at INTEGER,
+	created_at  INTEGER NOT NULL,
+	expires_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ssh_check_sessions_pair ON ssh_check_sessions(src_node_id, dst_node_id);
+CREATE INDEX IF NOT EXISTS idx_ssh_check_sessions_expires ON ssh_check_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS ssh_check_auth (
+	src_node_id INTEGER NOT NULL,
+	dst_node_id INTEGER NOT NULL,
+	authed_at   INTEGER NOT NULL,
+	PRIMARY KEY (src_node_id, dst_node_id)
+);
+`,
 }
 
 // SQLiteStore is a durable [Store] sharing the control plane's database.

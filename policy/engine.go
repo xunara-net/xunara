@@ -23,6 +23,11 @@ type Options struct {
 	// Domain is the tailnet's MagicDNS domain, without a trailing dot. It lets
 	// a user selector written as "login@domain" match the profile's login name.
 	Domain string
+
+	// ServerURL is the externally reachable base URL the control plane uses
+	// to build the HoldAndDelegate URL of "check" ssh rules. Empty produces a
+	// path-relative URL, which keeps the rule fail-closed until a URL is set.
+	ServerURL string
 }
 
 // Engine is a validated policy document ready to compile per-node filters.

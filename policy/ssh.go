@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"slices"
 	"strings"
+	"time"
 
 	"tailscale.com/tailcfg"
 
@@ -15,14 +16,22 @@ import (
 // tailcfg.SSHPolicy a client needs to run its Tailscale SSH server.
 //
 // Semantics follow reference/headscale/hscontrol/policy/v2/filter.go
-// (compileSSHPolicy) and the upstream SSHRule type. Only "accept" is
-// implemented: "check" rules would need a control-plane verdict endpoint, so
-// they are dropped with a warning instead of being silently treated as accept.
+// (compileSSHPolicy) and the upstream SSHRule type. "accept" rules carry an
+// immediate verdict; "check" rules carry a HoldAndDelegate URL the client
+// fetches over its control connection for a per-session verdict.
 
 // SSH action names, as written in the document.
 const (
 	sshActionAccept = "accept"
 	sshActionCheck  = "check"
+)
+
+// Check-period bounds, mirroring reference/headscale/hscontrol/policy/v2:
+// a rule without checkPeriod is remembered for 12h, "always" re-checks every
+// session, and a configured period may not exceed 168h.
+const (
+	sshCheckPeriodDefault = 12 * time.Hour
+	sshCheckPeriodMax     = 7 * 24 * time.Hour
 )
 
 // compiledSSHRule is a validated "ssh" row.
@@ -42,8 +51,10 @@ type compiledSSHRule struct {
 
 	acceptEnv []string
 
-	// check marks an unimplemented "check" rule; it is compiled to nothing.
-	check bool
+	// check marks an "check" rule and checkPeriod is the window an accepted
+	// session is remembered by the control plane (0 = check every session).
+	check       bool
+	checkPeriod time.Duration
 }
 
 // compileSSHRules validates and classifies the document's SSH rows.
@@ -95,6 +106,25 @@ func (e *Engine) compileSSHRule(index int, row SSHRow) (compiledSSHRule, error) 
 			continue
 		}
 		rule.dst = append(rule.dst, sel)
+	}
+
+	if row.CheckPeriod != nil {
+		if row.Action != sshActionCheck {
+			return rule, fmt.Errorf("checkPeriod is only valid with action %q", sshActionCheck)
+		}
+		switch {
+		case row.CheckPeriod.Always:
+			rule.checkPeriod = 0
+		case row.CheckPeriod.Duration < 0:
+			return rule, fmt.Errorf("checkPeriod %s must not be negative", row.CheckPeriod.Duration)
+		case row.CheckPeriod.Duration > sshCheckPeriodMax:
+			return rule, fmt.Errorf("checkPeriod %s is above the max (%s)",
+				row.CheckPeriod.Duration, sshCheckPeriodMax)
+		default:
+			rule.checkPeriod = row.CheckPeriod.Duration
+		}
+	} else if rule.check {
+		rule.checkPeriod = sshCheckPeriodDefault
 	}
 
 	if len(row.Users) == 0 {
@@ -171,6 +201,18 @@ var sshAcceptAction = tailcfg.SSHAction{
 	AllowRemotePortForwarding: true,
 }
 
+// sshCheckAction is the action for a "check" rule: the client holds the
+// connection and fetches the URL (with $SRC_NODE_ID, $DST_NODE_ID and
+// $LOCAL_USER expanded by tailscaled) for a per-session verdict. Forwarding
+// stays off until the verdict arrives.
+func (e *Engine) sshCheckAction() tailcfg.SSHAction {
+	base := strings.TrimRight(e.opts.ServerURL, "/")
+	return tailcfg.SSHAction{
+		HoldAndDelegate: base +
+			"/machine/ssh/action/$SRC_NODE_ID/to/$DST_NODE_ID?local_user=$LOCAL_USER",
+	}
+}
+
 // CompileSSHPolicy builds the SSH policy for self as the destination of an
 // incoming SSH connection, or nil when no rule applies to it.
 //
@@ -191,21 +233,20 @@ func (e *Engine) CompileSSHPolicy(self state.Node, nodes []state.Node) *tailcfg.
 		if len(principals) == 0 {
 			return
 		}
+		action := &sshAcceptAction
+		if rule.check {
+			check := e.sshCheckAction()
+			action = &check
+		}
 		out = append(out, &tailcfg.SSHRule{
 			Principals: principals,
 			SSHUsers:   rule.users,
-			Action:     &sshAcceptAction,
+			Action:     action,
 			AcceptEnv:  rule.acceptEnv,
 		})
 	}
 
 	for _, rule := range e.ssh {
-		if rule.check {
-			e.warnf("policy: ssh[%d] uses action %q, which this build does not implement; the rule grants nothing",
-				rule.index, sshActionCheck)
-			continue
-		}
-
 		// dst: autogroup:self applies between devices of one user.
 		if rule.selfOnly {
 			appendRule(r.sshPrincipals(rule.src, self.UserID), rule)
@@ -219,6 +260,36 @@ func (e *Engine) CompileSSHPolicy(self state.Node, nodes []state.Node) *tailcfg.
 		return nil
 	}
 	return &tailcfg.SSHPolicy{Rules: out}
+}
+
+// SSHCheckPeriod resolves the check period for a source-destination pair from
+// the "check" rules: the first matching rule wins. ok is false when no check
+// rule matches the pair. A zero period ("always") means every session must be
+// approved again.
+func (e *Engine) SSHCheckPeriod(src, dst state.Node, nodes []state.Node) (time.Duration, bool) {
+	if len(e.ssh) == 0 {
+		return 0, false
+	}
+
+	r := &resolution{engine: e, self: dst, nodes: nodes}
+	for _, rule := range e.ssh {
+		if !rule.check {
+			continue
+		}
+		if !r.nodesForSelectors(rule.src)[src.ID] {
+			continue
+		}
+		if rule.selfOnly {
+			if src.UserID == dst.UserID {
+				return rule.checkPeriod, true
+			}
+			continue
+		}
+		if len(rule.dst) > 0 && r.nodesForSelectors(rule.dst)[dst.ID] {
+			return rule.checkPeriod, true
+		}
+	}
+	return 0, false
 }
 
 // SSHDestinations reports which nodes are named as the destination of at least

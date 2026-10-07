@@ -3,6 +3,7 @@ package policy
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"tailscale.com/tailcfg"
 
@@ -98,24 +99,109 @@ func TestCompileSSHPolicyDestinationSelectors(t *testing.T) {
 	}
 }
 
-func TestCompileSSHPolicyCheckModeIsNotEnforced(t *testing.T) {
+func TestCompileSSHPolicyCheckModeHolds(t *testing.T) {
+	engine := mustEngineOpts(t, `{
+		"ssh": [{
+			"action": "check",
+			"src": ["autogroup:member"],
+			"dst": ["autogroup:self"],
+			"users": ["root"],
+			"checkPeriod": "1h",
+		}],
+		"acls": [{"action": "accept", "src": ["*"], "dst": ["*:*"]}],
+	}`, Options{Domain: "xunara.test", ServerURL: "https://control.example/"})
+
+	one := testNode(1, "one", "100.64.0.1")
+	nodes := []state.Node{one}
+
+	pol := engine.CompileSSHPolicy(one, nodes)
+	if pol == nil || len(pol.Rules) != 1 {
+		t.Fatalf("policy = %+v, want one rule", pol)
+	}
+	action := pol.Rules[0].Action
+	if action == nil || action.Accept || action.Reject {
+		t.Fatalf("action = %+v, want a hold", action)
+	}
+	want := "https://control.example/machine/ssh/action/$SRC_NODE_ID/to/$DST_NODE_ID?local_user=$LOCAL_USER"
+	if action.HoldAndDelegate != want {
+		t.Errorf("HoldAndDelegate = %q, want %q", action.HoldAndDelegate, want)
+	}
+	if action.AllowAgentForwarding || action.AllowLocalPortForwarding || action.AllowRemotePortForwarding {
+		t.Errorf("forwarding = %+v, want all off while held", action)
+	}
+
+	period, ok := engine.SSHCheckPeriod(one, one, nodes)
+	if !ok || period != time.Hour {
+		t.Errorf("SSHCheckPeriod = %v (ok=%v), want 1h", period, ok)
+	}
+	if engine.SSHDestinations(nodes)[one.ID] != true {
+		t.Error("a check rule must still mark its destination nodes")
+	}
+}
+
+func TestSSHCheckPeriodValues(t *testing.T) {
+	cases := map[string]struct {
+		rule string
+		want time.Duration
+	}{
+		"default":  {`{"action": "check", "src": ["*"], "dst": ["*"], "users": ["root"]}`, sshCheckPeriodDefault},
+		"always":   {`{"action": "check", "src": ["*"], "dst": ["*"], "users": ["root"], "checkPeriod": "always"}`, 0},
+		"explicit": {`{"action": "check", "src": ["*"], "dst": ["*"], "users": ["root"], "checkPeriod": "30m"}`, 30 * time.Minute},
+		"max":      {`{"action": "check", "src": ["*"], "dst": ["*"], "users": ["root"], "checkPeriod": "168h"}`, sshCheckPeriodMax},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			engine := mustEngine(t, `{"ssh": [`+tc.rule+`], "acls": [{"action": "accept", "src": ["*"], "dst": ["*:*"]}]}`)
+			one := testNode(1, "one", "100.64.0.1")
+			period, ok := engine.SSHCheckPeriod(one, one, []state.Node{one})
+			if !ok || period != tc.want {
+				t.Errorf("SSHCheckPeriod = %v (ok=%v), want %v", period, ok, tc.want)
+			}
+		})
+	}
+}
+
+func TestSSHCheckPeriodRejectsInvalid(t *testing.T) {
+	cases := map[string]string{
+		"negative":       `{"action": "check", "src": ["*"], "dst": ["*"], "users": ["root"], "checkPeriod": "-1h"}`,
+		"above max":      `{"action": "check", "src": ["*"], "dst": ["*"], "users": ["root"], "checkPeriod": "169h"}`,
+		"not a duration": `{"action": "check", "src": ["*"], "dst": ["*"], "users": ["root"], "checkPeriod": "soon"}`,
+		"wrong type":     `{"action": "check", "src": ["*"], "dst": ["*"], "users": ["root"], "checkPeriod": 5}`,
+		"accept rule":    `{"action": "accept", "src": ["*"], "dst": ["*"], "users": ["root"], "checkPeriod": "1h"}`,
+	}
+	for name, rule := range cases {
+		t.Run(name, func(t *testing.T) {
+			parsed, err := ParseString(`{"ssh": [` + rule + `], "acls": [{"action": "accept", "src": ["*"], "dst": ["*:*"]}]}`)
+			if err != nil {
+				// A malformed or non-string checkPeriod is rejected while
+				// parsing; a semantic error (negative, above max, on an
+				// accept rule) surfaces from NewEngine below.
+				return
+			}
+			if _, err := NewEngine(parsed, Options{Domain: "xunara.test"}); err == nil {
+				t.Fatalf("NewEngine(%s) succeeded, want error", name)
+			}
+		})
+	}
+}
+
+func TestSSHCheckPeriodNoMatch(t *testing.T) {
 	engine := mustEngine(t, `{
-		"ssh": [{"action": "check", "src": ["autogroup:member"], "dst": ["autogroup:self"], "users": ["root"]}],
+		"ssh": [{"action": "check", "src": ["100.64.0.2/32"], "dst": ["tag:server"], "users": ["root"]}],
+		"tagOwners": {"tag:server": ["local"]},
 		"acls": [{"action": "accept", "src": ["*"], "dst": ["*:*"]}],
 	}`)
 
-	one := testNode(1, "one", "100.64.0.1")
-	if pol := engine.CompileSSHPolicy(one, []state.Node{one}); pol != nil {
-		t.Errorf("check rules must compile to nothing, got %+v", pol)
+	server := testNode(1, "server", "100.64.0.1")
+	server.Tags = []string{"tag:server"}
+	other := testNode(2, "other", "100.64.0.2")
+	nodes := []state.Node{server, other}
+
+	if _, ok := engine.SSHCheckPeriod(other, server, nodes); !ok {
+		t.Error("the matching (source, destination) pair should resolve a period")
 	}
-	var found bool
-	for _, w := range engine.Warnings() {
-		if strings.Contains(w, "ssh[0]") && strings.Contains(w, "grants nothing") {
-			found = true
-		}
-	}
-	if !found {
-		t.Errorf("warnings = %v, want a note that the check rule is not enforced", engine.Warnings())
+	if _, ok := engine.SSHCheckPeriod(server, other, nodes); ok {
+		t.Error("an unmatched destination must not resolve a period")
 	}
 }
 

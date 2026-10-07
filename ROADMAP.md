@@ -326,8 +326,28 @@ reference/{go-oidc,oauth2,dex,webauthn}
   - 测试：`policy/nodeattrs_test.go`、`control/nodeattrs_test.go`。
   - 说明：`nodeAttrs: ["https"]` 只解锁客户端侧的 `tailscale serve`，控制面
     仍不下发 DNS/ACME；Funnel 需要公网 ingress，保持不支持。
+- M6c 已完成：Tailscale SSH check 模式（hold and delegate）。
+  - `policy`：`ssh` 规则支持 `checkPeriod`（缺省 12h、"always"=0、上限 168h、
+    仅 check 规则可用）；check 规则编译为 `SSHAction.HoldAndDelegate`
+    （`<ServerURL>/machine/ssh/action/$SRC_NODE_ID/to/$DST_NODE_ID?local_user=$LOCAL_USER`，
+    转发能力在裁决前保持关闭）。`Engine.SSHCheckPeriod` 按首个匹配 check 规则
+    解析 (src, dst) 的自动放行窗口。
+  - `identity`：迁移 v4 新增 `ssh_check_sessions`（ID、src/dst 节点、local_user、
+    verdict、decided_by/at、consumed_at、TTL）与 `ssh_check_auth`（每对节点最近
+    一次批准）。审批是原子条件更新；裁决只交给一个跟随请求（consume-once）；
+    TTL 到期由 janitor 回收。全部持久化，无 server-local cache（AGENTS §9/§10）。
+  - `control`：Noise 内 `GET /machine/ssh/action/{src}/to/{dst}`；请求方必须是
+    目的节点（machine key 绑定），auth_id 只能用于其绑定的 (src, dst) 对。
+    初次请求命中窗口内批准则直接 accept，否则创建/复用 pending 会话并返回
+    hold + 审批链接；跟随请求长轮询（500ms 轮询持久层，任何实例都能服务）。
+    浏览器流程 `GET/POST /ssh/check/{id}(/approve|/deny)`：走既有 Session + CSRF，
+    落审计 `ssh.check_approved` / `ssh.check_denied`；策略重载清空已记住的批准。
+  - 测试：`policy/ssh_test.go`（check 编译、checkPeriod 取值/拒绝、pair 解析）、
+    `identity/sshcheck_test.go`（生命周期、过期、consume-once、方向性记忆）、
+    `control/sshcheck_test.go`（端到端 approve/deny、长轮询、自动放行、策略重载
+    失效、machine key 与 auth_id 绑定、always 每次复查、审批页需登录）。
 - `services/` 其余：Serve / Funnel（Funnel 明确不支持；Serve 控制面无 DNS/ACME）、
-  SSH check（需 /machine/ssh/action 长轮询与会话审批）、Discovery。
+  Discovery。
 - `client/`：Xunara Agent（自研客户端，独立协议，不侵入 TS2021）。
 - DERP（`Xunara Veil`）、ACL/Zero Trust（`Xunara Warden`）。
 

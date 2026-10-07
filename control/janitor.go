@@ -19,8 +19,22 @@ func (s *Server) runJanitor(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.ReapEphemeral(time.Now().UTC())
+			now := time.Now().UTC()
+			s.ReapEphemeral(now)
+			s.reapSSHChecks(now)
 		}
+	}
+}
+
+// reapSSHChecks removes SSH check sessions past their TTL.
+func (s *Server) reapSSHChecks(now time.Time) {
+	deleted, err := s.identity.DeleteExpiredSSHCheckSessions(now)
+	if err != nil {
+		s.log.Warn("reaping ssh check sessions", "err", err)
+		return
+	}
+	if deleted > 0 {
+		s.log.Info("reaped expired ssh check sessions", "count", deleted)
 	}
 }
 

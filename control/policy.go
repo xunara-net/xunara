@@ -34,6 +34,7 @@ func (s *Server) loadPolicy() error {
 	engine, err := policy.NewEngine(doc, policy.Options{
 		Domain:    s.cfg.Domain,
 		LoginName: s.userLoginName,
+		ServerURL: s.cfg.ServerURL,
 	})
 	if err != nil {
 		return err
@@ -48,6 +49,12 @@ func (s *Server) loadPolicy() error {
 		"unsupported_fields", doc.Unsupported)
 
 	s.policy.Store(engine)
+
+	// Remembered SSH check approvals belong to the rules that granted them;
+	// a policy swap must not silently keep them alive.
+	if err := s.identity.ClearSSHCheckAuth(); err != nil {
+		s.log.Warn("clearing ssh check approvals", "err", err)
+	}
 	return nil
 }
 

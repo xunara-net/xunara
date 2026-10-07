@@ -14,6 +14,8 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
+	"time"
 
 	"github.com/tailscale/hujson"
 )
@@ -67,7 +69,7 @@ type NodeAttrRow struct {
 // SSHRow is one rule of the document's "ssh" section.
 type SSHRow struct {
 	// Action is "accept" (grant immediately) or "check" (ask the control
-	// plane per session; not implemented by this build).
+	// plane before each session, subject to CheckPeriod).
 	Action string `json:"action"`
 
 	// Src are the source selectors (users, groups, tags, hosts, prefixes).
@@ -82,6 +84,39 @@ type SSHRow struct {
 
 	// AcceptEnv allowlists environment variables the client may forward.
 	AcceptEnv []string `json:"acceptEnv,omitempty"`
+
+	// CheckPeriod is how long an approved "check" session is remembered so
+	// later sessions from the same device skip the prompt. Only valid with
+	// action "check"; absent means the 12h default, "always" means every
+	// session is checked.
+	CheckPeriod *SSHCheckPeriod `json:"checkPeriod,omitempty"`
+}
+
+// SSHCheckPeriod is the value of an ssh rule's "checkPeriod" field.
+type SSHCheckPeriod struct {
+	// Always is set when the document wrote "always".
+	Always bool
+
+	// Duration is the period when Always is false.
+	Duration time.Duration
+}
+
+// UnmarshalJSON parses "always" or a Go duration string such as "12h".
+func (p *SSHCheckPeriod) UnmarshalJSON(raw []byte) error {
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return fmt.Errorf("checkPeriod must be a duration string or %q: %w", "always", err)
+	}
+	if strings.TrimSpace(s) == "always" {
+		p.Always = true
+		return nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return fmt.Errorf("checkPeriod %q: %w", s, err)
+	}
+	p.Duration = d
+	return nil
 }
 
 // ACLRow is one traffic rule.

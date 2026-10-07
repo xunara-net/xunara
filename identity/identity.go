@@ -146,4 +146,6 @@ const (
 	AuditTagRejected       = "device.tag_rejected"
 	AuditAPIKeyCreated     = "apikey.created"
 	AuditAPIKeyRevoked     = "apikey.revoked"
+	AuditSSHCheckApproved  = "ssh.check_approved"
+	AuditSSHCheckDenied    = "ssh.check_denied"
 )
