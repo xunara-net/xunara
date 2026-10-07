@@ -189,4 +189,8 @@ const (
 	// attributes about itself through /machine/set-device-attr. The detail
 	// names the attributes that were set or deleted, never their values.
 	AuditDeviceAttrsUpdated = "node.device_attrs_updated"
+	// AuditNodeExpiryShortened records a node shortening its own key expiry
+	// (upstream LocalBackend.SetExpirySooner). Extensions are rejected, so the
+	// expiry in this record is always sooner than the previous one.
+	AuditNodeExpiryShortened = "node.expiry_shortened"
 )

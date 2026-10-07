@@ -236,6 +236,11 @@ reference/{go-oidc,oauth2,dex,webauthn}
   已过期时置位，官方客户端据此立即生成新 key 重注册（`doLoginOrRegen`），不必等
   一次 netmap；机器仍 `MachineAuthorized`（过期的只是 key）。新 key 走交互审批
   后原地轮换：ID/StableID/machine key 不变、旧 key 注销、有效期刷新。
+- 客户端缩短有效期（M15b）：已知节点重连时携带 `RegisterRequest.Expiry`
+  （客户端 `SetExpirySooner`，GUI 的 "set expiry sooner"）→ 只允许**缩短**，
+  落地后写审计 `node.expiry_shortened` 并唤醒 netmap 流；尝试延长返回 400
+  （不静默忽略）；`Expiry` 为零（永不送期：tagged 节点或无过期策略的部署）
+  时拒绝改为有限值；过去时间仍是 logout，语义不变。
 - Ephemeral 回收：`Server.ReapEphemeral`（跳过在线节点，按 `LastSeen` 否则 `Created` 计龄）
   由 `runJanitor` 每分钟调度，`Config.EphemeralInactivityTimeout`（默认 30 分钟）可调。
 - 测试：`control/janitor_test.go`（过期应用、只可缩短、默认不过期、回收与在线保护）、

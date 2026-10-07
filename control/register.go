@@ -257,6 +257,15 @@ func (s *Server) decideRegistration(ctx context.Context, req tailcfg.RegisterReq
 			return nil, NewHTTPError(http.StatusUnauthorized,
 				"machine key does not match existing node key", nil)
 		}
+		// A non-zero expiry on an existing node is the client asking for its
+		// key to expire sooner (upstream LocalBackend.SetExpirySooner).
+		if !req.Expiry.IsZero() {
+			shortened, err := s.shortenNodeExpiry(node, req.Expiry)
+			if err != nil {
+				return nil, err
+			}
+			node = shortened
+		}
 		return s.nodeToRegisterResponse(node), nil
 	}
 
@@ -274,6 +283,40 @@ func (s *Server) decideRegistration(ctx context.Context, req tailcfg.RegisterReq
 	// 5. Interactive login: create a pending registration and hand the client a
 	//    URL to visit.
 	return s.startInteractiveRegistration(req, machineKey)
+}
+
+// shortenNodeExpiry applies a client-requested key expiry to an existing node.
+//
+// The request may only ever shorten: a node cannot extend its own key expiry
+// (that is an administrator decision), and a value in the past is a logout,
+// which the caller handles before reaching here. Both refusals are explicit so
+// a client never believes an extension took effect.
+func (s *Server) shortenNodeExpiry(node state.Node, requested time.Time) (state.Node, error) {
+	now := time.Now()
+	if !requested.After(now) {
+		return node, NewHTTPError(http.StatusBadRequest, "an expiry in the past is a logout", nil)
+	}
+	if node.Expiry.IsZero() {
+		// Zero means "never expires" (tagged nodes, or a deployment without a
+		// key expiry policy): switching to a finite expiry is not a
+		// shortening, and tag ownership, not the node, decides the lifetime.
+		return node, NewHTTPError(http.StatusBadRequest, "this node key does not expire", nil)
+	}
+	if !requested.Before(node.Expiry) {
+		return node, NewHTTPError(http.StatusBadRequest, "extending the node key expiry is not allowed", nil)
+	}
+
+	updated := node
+	updated.Expiry = requested
+	if err := s.store.UpdateNode(updated); err != nil {
+		return node, fmt.Errorf("updating node expiry: %w", err)
+	}
+
+	s.audit(nodeActor(node), identity.AuditNodeExpiryShortened, nodeTarget(node),
+		"node key expiry shortened to "+requested.UTC().Format(time.RFC3339))
+	// Peers see the new expiry in the netmap, so wake the streaming sessions.
+	s.notifyWatchers()
+	return updated, nil
 }
 
 // registerWithAuthKey authorizes a node from a pre-authentication key.

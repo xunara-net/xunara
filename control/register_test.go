@@ -5,12 +5,14 @@ import (
 	"errors"
 	"net/http"
 	"path"
+	"strings"
 	"testing"
 	"time"
 
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 
+	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/state"
 )
 
@@ -359,5 +361,95 @@ func TestExpiredNodeKeyRegenerationRotatesInPlace(t *testing.T) {
 	}
 	if !follow.MachineAuthorized || follow.NodeKeyExpired {
 		t.Errorf("follow-up = %+v, want authorized with a usable key", follow)
+	}
+}
+
+// TestRegisterShortensNodeKeyExpiry covers the client-requested expiry change
+// (upstream LocalBackend.SetExpirySooner): a node may only ever shorten its own
+// key expiry, never extend it, and a node whose key never expires cannot opt
+// into one.
+func TestRegisterShortensNodeKeyExpiry(t *testing.T) {
+	s := newServerWithConfig(t, Config{NodeKeyExpiry: 30 * 24 * time.Hour})
+	mk := key.NewMachine().Public()
+	nk := key.NewNode().Public()
+
+	secret := seedPreAuthKey(t, s, state.PreAuthKey{})
+	if _, err := s.handleRegister(context.Background(), tailcfg.RegisterRequest{
+		Version:  tailcfg.CurrentCapabilityVersion,
+		NodeKey:  nk,
+		Hostinfo: &tailcfg.Hostinfo{Hostname: "short-lived"},
+		Auth:     &tailcfg.RegisterResponseAuth{AuthKey: secret},
+	}, mk); err != nil {
+		t.Fatalf("handleRegister: %v", err)
+	}
+
+	node, ok := s.store.GetNodeByNodeKey(nk)
+	if !ok {
+		t.Fatal("node was not created")
+	}
+	original := node.Expiry
+	if original.IsZero() {
+		t.Fatal("the test needs a node with a finite expiry")
+	}
+
+	// Shortening is applied and audited.
+	shorter := time.Now().Add(time.Hour).Round(time.Second)
+	resp, err := s.handleRegister(context.Background(), tailcfg.RegisterRequest{
+		Version: tailcfg.CurrentCapabilityVersion,
+		NodeKey: nk,
+		Expiry:  shorter,
+	}, mk)
+	if err != nil {
+		t.Fatalf("shortening register: %v", err)
+	}
+	if !resp.MachineAuthorized {
+		t.Errorf("shortening must not deauthorize the node: %+v", resp)
+	}
+	updated, ok := s.store.GetNodeByNodeKey(nk)
+	if !ok {
+		t.Fatal("node disappeared")
+	}
+	if !updated.Expiry.Equal(shorter) {
+		t.Errorf("expiry = %v, want %v", updated.Expiry, shorter)
+	}
+	event, ok := findAudit(t, s, identity.AuditNodeExpiryShortened)
+	if !ok {
+		t.Fatal("shortening was not audited")
+	}
+	if event.Target != nodeTarget(updated) || !strings.Contains(event.Detail, shorter.UTC().Format(time.RFC3339)) {
+		t.Errorf("audit event = %+v", event)
+	}
+
+	// Extending is refused instead of silently ignored.
+	_, err = s.handleRegister(context.Background(), tailcfg.RegisterRequest{
+		Version: tailcfg.CurrentCapabilityVersion,
+		NodeKey: nk,
+		Expiry:  time.Now().Add(365 * 24 * time.Hour),
+	}, mk)
+	var he HTTPError
+	if !errors.As(err, &he) || he.Code != http.StatusBadRequest {
+		t.Fatalf("extending error = %v, want 400 HTTPError", err)
+	}
+	after, ok := s.store.GetNodeByNodeKey(nk)
+	if !ok {
+		t.Fatal("node disappeared after a refused extension")
+	}
+	if !after.Expiry.Equal(shorter) {
+		t.Errorf("expiry changed to %v after a refused extension, want %v", after.Expiry, shorter)
+	}
+
+	// A node whose key never expires cannot switch to one that does: its
+	// lifetime is decided by tag ownership or by the deployment policy.
+	forever := seedAPIMachine(t, s, "forever", []string{"tag:server"})
+	if !forever.Expiry.IsZero() {
+		t.Fatalf("tagged node expiry = %v, want zero", forever.Expiry)
+	}
+	_, err = s.handleRegister(context.Background(), tailcfg.RegisterRequest{
+		Version: tailcfg.CurrentCapabilityVersion,
+		NodeKey: forever.NodeKey,
+		Expiry:  time.Now().Add(time.Hour),
+	}, forever.MachineKey)
+	if !errors.As(err, &he) || he.Code != http.StatusBadRequest {
+		t.Fatalf("never-expiring node error = %v, want 400 HTTPError", err)
 	}
 }
