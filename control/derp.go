@@ -19,7 +19,8 @@ const maxDERPAdmitRequestBytes = 4 << 10
 // following the protocol of the upstream `derper --verify-client-url`.
 //
 // A client is admitted only when its node key belongs to a registered,
-// unexpired node of this tailnet. The endpoint deliberately fails closed:
+// unexpired node of this tailnet and the organization's DERP policy admits it
+// (control/derp_policy.go). The endpoint deliberately fails closed:
 // malformed requests and internal errors produce responses that
 // [tailscale.com/derp/derpserver] treats as a rejection, never as an allow.
 func (s *Server) handleDERPAdmit(w http.ResponseWriter, r *http.Request) {
@@ -38,7 +39,7 @@ func (s *Server) handleDERPAdmit(w http.ResponseWriter, r *http.Request) {
 	allow := false
 	if !req.NodePublic.IsZero() {
 		if node, ok := s.store.GetNodeByNodeKey(req.NodePublic); ok && !node.Expired(time.Now()) {
-			allow = true
+			allow = s.derpPolicy.admits(node.HomeDERP, s.derpRegionKnown)
 		}
 	}
 

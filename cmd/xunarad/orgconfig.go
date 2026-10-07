@@ -38,6 +38,7 @@ type orgConfig struct {
 	Nameservers         []string            `json:"nameservers"`
 	DNSRoutes           map[string][]string `json:"dns_routes"`
 	DERPMapFile         string              `json:"derp_map"`
+	DERPPolicy          *orgDERPPolicy      `json:"derp_policy"`
 	LatestClientVersion string              `json:"client_version"`
 	ClientVersionURL    string              `json:"client_version_url"`
 	NodeKeyExpiry       string              `json:"node_key_expiry"`
@@ -46,6 +47,14 @@ type orgConfig struct {
 	OIDC                *orgOIDCConfig      `json:"oidc"`
 	Webhooks            []orgWebhookConfig  `json:"webhooks"`
 	AllowLocalLogin     bool                `json:"allow_local_login"`
+}
+
+// orgDERPPolicy restricts the DERP regions this organization serves. Mode is
+// "" (serve derp_map as-is), "none" or "regions"; regions lists the allowed
+// DERP region IDs for mode "regions".
+type orgDERPPolicy struct {
+	Mode    string `json:"mode"`
+	Regions []int  `json:"regions"`
 }
 
 // orgWebhookConfig names one audit-event receiver. SecretEnv defaults to
@@ -152,6 +161,18 @@ func (o orgConfig) controlConfig(logger *slog.Logger) (control.Config, error) {
 		return control.Config{}, err
 	}
 
+	var derpPolicy control.DERPPolicy
+	if o.DERPPolicy != nil {
+		derpPolicy = control.DERPPolicy{
+			Mode:    control.DERPPolicyMode(o.DERPPolicy.Mode),
+			Regions: o.DERPPolicy.Regions,
+		}
+		// Validate against the map now so the error names the organization.
+		if _, err := derpPolicy.Apply(derpMap); err != nil {
+			return control.Config{}, err
+		}
+	}
+
 	nodeKeyExpiry, err := parseNodeKeyExpiry(o.NodeKeyExpiry)
 	if err != nil {
 		return control.Config{}, err
@@ -216,6 +237,7 @@ func (o orgConfig) controlConfig(logger *slog.Logger) (control.Config, error) {
 		DNSRoutes:           o.DNSRoutes,
 		PolicyPath:          o.Policy,
 		DERPMap:             derpMap,
+		DERPPolicy:          derpPolicy,
 		LatestClientVersion: o.LatestClientVersion,
 		ClientVersionURL:    o.ClientVersionURL,
 		NodeKeyExpiry:       nodeKeyExpiry,

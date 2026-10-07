@@ -52,6 +52,9 @@ type Config struct {
 	DNSRoutes map[string][]string
 	// DERPMap is advertised to clients when non-nil.
 	DERPMap *tailcfg.DERPMap
+	// DERPPolicy restricts which DERP regions this organization serves and
+	// admits. The zero value inherits DERPMap unchanged.
+	DERPPolicy DERPPolicy
 	// LatestClientVersion is the newest client version to advertise to clients
 	// through MapResponse.ClientVersion, as a short version like "1.88.3".
 	// Empty disables the advisory.
@@ -156,6 +159,14 @@ type Server struct {
 	// webhookKey seals operator-managed webhook signing secrets at rest. It
 	// is generated on first use next to the server's other state.
 	webhookKey [32]byte
+
+	// derpMap is the DERP map served to this organization's clients after
+	// DERPPolicy is applied; nil when there is no map to advertise.
+	derpMap *tailcfg.DERPMap
+
+	// derpPolicy is the validated configuration policy used by the DERP
+	// admission controller.
+	derpPolicy DERPPolicy
 
 	// startOnce guards the background workers started by [Server.Start].
 	startOnce sync.Once
@@ -298,6 +309,17 @@ func New(cfg Config) (*Server, error) {
 		online:            make(map[state.NodeID]int),
 		watchers:          make(map[uint64]chan struct{}),
 	}
+
+	// The DERP policy decides what clients are served; a policy that names a
+	// region the map does not contain must stop the server rather than
+	// silently serve a different tailnet.
+	derpMap, err := cfg.DERPPolicy.Apply(cfg.DERPMap)
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	srv.derpMap = derpMap
+	srv.derpPolicy = cfg.DERPPolicy
 
 	// A broken policy file must stop the server from starting: falling back to
 	// allow-all would silently open the tailnet.
@@ -498,6 +520,11 @@ func (s *Server) audit(actor, action, target, detail string) {
 
 // NoisePublicKey returns the server's TS2021 Noise public key.
 func (s *Server) NoisePublicKey() key.MachinePublic { return s.noiseKey.Public() }
+
+// DERPMap returns the DERP map served to this organization's clients, after
+// the organization's DERP policy is applied. It is nil when there is nothing
+// to advertise.
+func (s *Server) DERPMap() *tailcfg.DERPMap { return s.derpMap }
 
 // Handler returns the public HTTP router: the endpoints reachable before a
 // Noise session exists.

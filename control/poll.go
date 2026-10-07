@@ -204,7 +204,7 @@ func (s *Server) mapperConfig() mapper.Config {
 		Routes:         s.dnsRoutes,
 		ExtraRecords:   s.extraDNSRecords(),
 		CertDomainsFor: s.certDomainsFor,
-		DERPMap:        s.cfg.DERPMap,
+		DERPMap:        s.derpMap,
 		FilterFor:      s.packetFilterFor,
 		UserProfile:    s.UserProfile,
 		SSHPolicyFor:   s.sshPolicyFor,
@@ -365,6 +365,13 @@ func (s *Server) recordMapRequest(node state.Node, req tailcfg.MapRequest) state
 			changed = true
 		}
 	}
+	// A node homed in a region the organization no longer serves (the policy
+	// changed) is re-homed; leaving it there would advertise a peer DERP
+	// home that no client can reach.
+	if node.HomeDERP != 0 && !s.derpRegionKnown(node.HomeDERP) {
+		node.HomeDERP = 0
+		changed = true
+	}
 	if node.Hostinfo != nil && node.Hostinfo.NetInfo != nil {
 		if region := node.Hostinfo.NetInfo.PreferredDERP; region != 0 && region != node.HomeDERP && s.derpRegionKnown(region) {
 			// Home DERP selection is delegated to the client: it measures DERP
@@ -394,10 +401,10 @@ func (s *Server) recordMapRequest(node state.Node, req tailcfg.MapRequest) state
 	return node
 }
 
-// singleDERPRegion returns the configured DERP region when the tailnet has
-// exactly one, so nodes can be homed without a latency hunt.
+// singleDERPRegion returns the served DERP region when the tailnet has exactly
+// one, so nodes can be homed without a latency hunt.
 func (s *Server) singleDERPRegion() (tailcfg.DERPRegionID, bool) {
-	m := s.cfg.DERPMap
+	m := s.derpMap
 	if m == nil || len(m.Regions) != 1 {
 		return 0, false
 	}
@@ -407,10 +414,11 @@ func (s *Server) singleDERPRegion() (tailcfg.DERPRegionID, bool) {
 	return 0, false
 }
 
-// derpRegionKnown reports whether a DERP region is part of the configured DERP
-// map.
+// derpRegionKnown reports whether a DERP region is part of the DERP map this
+// organization serves. A region the policy filtered out is not known, so it is
+// neither adopted as a home region nor admitted to DERP.
 func (s *Server) derpRegionKnown(region tailcfg.DERPRegionID) bool {
-	m := s.cfg.DERPMap
+	m := s.derpMap
 	if m == nil {
 		return false
 	}

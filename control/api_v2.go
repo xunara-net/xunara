@@ -153,7 +153,23 @@ func (s *Server) handleAPIV2Meta(w http.ResponseWriter, r *http.Request) {
 		"dnsProviderConfigured": s.cfg.DNSProvider != nil,
 		"certDomains":           s.certDomains,
 		"derpMapConfigured":     s.cfg.DERPMap != nil,
+		"derpPolicy":            string(s.cfg.DERPPolicy.Mode),
+		"derpRegionsServed":     s.derpRegionsServed(),
 	})
+}
+
+// derpRegionsServed counts the DERP regions this organization advertises.
+func (s *Server) derpRegionsServed() int {
+	if s.derpMap == nil {
+		return 0
+	}
+	served := 0
+	for _, region := range s.derpMap.Regions {
+		if region != nil {
+			served++
+		}
+	}
+	return served
 }
 
 // handleAPIV2Machines implements GET /api/v2/machines.

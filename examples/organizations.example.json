@@ -18,6 +18,14 @@
           "10.0.0.53"
         ]
       },
+      "derp_policy": {
+        "mode": "regions",
+        "regions": [
+          900,
+          901
+        ]
+      },
+      "derp_map": "/etc/xunara/acme-derp.json",
       "node_key_expiry": "180d",
       "cert_domains": [
         "acme.example.com"

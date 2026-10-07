@@ -27,6 +27,8 @@ func main() {
 		serverURL    = flag.String("server-url", "", "externally reachable base URL (defaults to http://<listen>)")
 		domain       = flag.String("domain", "", "tailnet MagicDNS domain (empty disables MagicDNS)")
 		derpMapPath  = flag.String("derp-map", "", "path to a tailcfg.DERPMap JSON file to advertise to clients")
+		derpPolicy   = flag.String("derp-policy", "", "DERP policy: empty serves -derp-map, none disables DERP, regions serves only -derp-regions")
+		derpRegions  = flag.String("derp-regions", "", "comma-separated DERP region IDs served when -derp-policy=regions")
 		clientVer    = flag.String("client-version", "", "latest client version to advertise to clients (e.g. 1.88.3); empty disables the advisory")
 		clientVerURL = flag.String("client-version-url", "", "URL opened by the client's update notification (optional)")
 		policyPath   = flag.String("policy", "", "path to an ACL policy document (HuJSON); empty allows everything")
@@ -135,6 +137,12 @@ func main() {
 		})
 	}
 
+	derpPolicyValue, err := control.ParseDERPPolicy(*derpPolicy, *derpRegions)
+	if err != nil {
+		logger.Error("parsing the DERP policy", "err", err)
+		os.Exit(1)
+	}
+
 	srv, err := control.New(control.Config{
 		ServerURL:           *serverURL,
 		ListenAddr:          *listen,
@@ -144,6 +152,7 @@ func main() {
 		DNSRoutes:           routes,
 		PolicyPath:          *policyPath,
 		DERPMap:             derpMap,
+		DERPPolicy:          derpPolicyValue,
 		LatestClientVersion: *clientVer,
 		ClientVersionURL:    *clientVerURL,
 		OIDCProviders:       oidcProviders,
@@ -172,7 +181,7 @@ func main() {
 // rejected in -org-config mode, where the config file owns them.
 var orgScopedFlags = []string{
 	"state-dir", "server-url", "domain", "policy", "nameserver", "dns-route",
-	"derp-map", "client-version", "client-version-url",
+	"derp-map", "derp-policy", "derp-regions", "client-version", "client-version-url",
 	"oidc-issuer", "oidc-id", "oidc-client-id", "oidc-redirect-url", "oidc-scopes",
 	"allow-local-login", "cert-domain",
 	"dns-webhook-url", "dns-webhook-token-env",

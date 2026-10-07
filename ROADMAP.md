@@ -606,8 +606,33 @@ reference/{go-oidc,oauth2,dex,webauthn}
     不可见、通配域、未知 Host 404、单组织兜底、校验表、域匹配表、
     平台 API 认证/禁用/统计/组织凭据拒绝）、`cmd/xunarad/orgconfig_test.go`
     （构建、共享 state 目录拒绝、坏配置表、expiry 解析、flag 互斥）。
+- M7b 已完成：组织级 DERP 策略。
+  - `control.DERPPolicy`（`control/derp_policy.go`）：
+    `""`（继承，零值）/ `none`（不提供任何 DERP 区域）/ `regions`（只提供
+    白名单区域，名单外的区域视为配置错误，启动即失败——防止拼写错误悄悄
+    缩小覆盖）。`ParseDERPPolicy` 解析命令行值，`Apply` 校验并生成服务给
+    该组织的 DERP map。
+  - 协议语义（照 upstream `control/controlclient/map.go` 核对）：
+    `tailcfg.DERPMap.Regions` 为 nil 表示"不变"，因此 `none` 必须发送
+    **非 nil 的空 region 表**（JSON 里是显式的 `"Regions":{}`），才能让客户端
+    清空既有区域。
+  - 落地：`Server.derpMap`（策略应用后的 map）替换 mapper / `singleDERPRegion`
+    / `derpRegionKnown` 中的 `cfg.DERPMap`；节点下次 map request 时，若 HomeDERP
+    已不在服务范围内会被清空并按单区域回退重新归属。
+  - 可执行的一侧：`/derp/admit` 按策略放行——`none` 拒绝所有节点；`regions`
+    拒绝 HomeDERP 在白名单外的节点（尚未选择 home 的节点放行，它只能看到被
+    服务的区域）。
+  - `/api/v2/meta` 增加 `derpPolicy` 与 `derpRegionsServed`。
+  - 配置：单组织 `-derp-policy` / `-derp-regions`；组织表
+    `"derp_policy": {"mode","regions"}`（`examples/organizations.example.json`
+    已更新）。
+  - 测试：`control/derp_policy_test.go`（Apply 表、空 map 的 JSON 形状回归、
+    `ParseDERPPolicy` 表、过滤后的 map 与重新归属、`none` 的 admission 拒绝、
+    白名单外 home 的 admission 拒绝、坏策略拒绝启动、真实注册+map 请求的
+    端到端字节校验）、`cmd/xunarad/orgconfig_test.go`（组织表策略解析、
+    未知区域/缺 map/模式不匹配的拒绝）。
 - 待办（M7 剩余）：组织 CRUD（当前 org 表来自进程配置，改配置需重启）、
-  `api/v2` 组织级 API 版本、组织级 DERP 策略、跨组织审计导出。
+  `api/v2` 组织级 API 版本、跨组织审计导出。
 
 ---
 

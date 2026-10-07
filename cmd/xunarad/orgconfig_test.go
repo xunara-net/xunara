@@ -79,6 +79,9 @@ func TestLoadOrgSitesRejectsBrokenTables(t *testing.T) {
 		{"shared state dir", `{"organizations": [` + sprintf(valid, dir("d")) + `, {"id": "b", "server_url": "https://b.example.com", "state_dir": "` + dir("d") + `"}]}`, "already used"},
 		{"bad expiry", `{"organizations": [` + strings.Replace(sprintf(valid, dir("e")), `"id": "acme"`, `"id": "acme", "node_key_expiry": "180x"`, 1) + `]}`, "node_key_expiry"},
 		{"bad derp map", `{"organizations": [` + strings.Replace(sprintf(valid, dir("f")), `"id": "acme"`, `"id": "acme", "derp_map": "`+dir("missing.json")+`"`, 1) + `]}`, "no such file"},
+		{"derp policy without a map", `{"organizations": [` + strings.Replace(sprintf(valid, dir("g")), `"id": "acme"`, `"id": "acme", "derp_policy": {"mode": "regions", "regions": [900]}`, 1) + `]}`, "needs a configured DERP map"},
+		{"derp policy unknown region", `{"organizations": [` + strings.Replace(sprintf(valid, dir("h")), `"id": "acme"`, `"id": "acme", "derp_map": "`+writeDERPMapFile(t, 900)+`", "derp_policy": {"mode": "regions", "regions": [7]}`, 1) + `]}`, "not in the configured DERP map"},
+		{"derp regions without the mode", `{"organizations": [` + strings.Replace(sprintf(valid, dir("i")), `"id": "acme"`, `"id": "acme", "derp_policy": {"mode": "none", "regions": [900]}`, 1) + `]}`, "only meaningful with policy mode"},
 	}
 
 	for _, tc := range cases {
@@ -95,6 +98,63 @@ func TestLoadOrgSitesRejectsBrokenTables(t *testing.T) {
 				t.Fatalf("error = %v, want it to mention %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// writeDERPMapFile writes a minimal tailcfg.DERPMap JSON document holding the
+// given region IDs and returns its path.
+func writeDERPMapFile(t *testing.T, regionIDs ...int) string {
+	t.Helper()
+
+	regions := make([]string, 0, len(regionIDs))
+	for _, id := range regionIDs {
+		regions = append(regions, fmt.Sprintf(
+			`"%d": {"RegionID": %d, "RegionCode": "r%d", "Nodes": [{"Name": "r%da", "RegionID": %d, "HostName": "derp.example.com"}]}`,
+			id, id, id, id, id))
+	}
+	doc := `{"Regions": {` + strings.Join(regions, ",") + `}}`
+
+	path := filepath.Join(t.TempDir(), "derp.json")
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatalf("writing DERP map: %v", err)
+	}
+	return path
+}
+
+// TestLoadOrgSitesDERPPolicy checks the policy travels from the organization
+// table into the per-organization server, filtered against its DERP map.
+func TestLoadOrgSitesDERPPolicy(t *testing.T) {
+	base := t.TempDir()
+	derpMap := writeDERPMapFile(t, 900, 901)
+	path := writeOrgConfig(t, `{
+		"organizations": [
+			{"id": "acme", "name": "Acme", "domains": ["login.acme.example.com"],
+			 "server_url": "https://login.acme.example.com",
+			 "state_dir": "`+base+`/acme", "domain": "acme.example.com",
+			 "derp_map": "`+derpMap+`",
+			 "derp_policy": {"mode": "regions", "regions": [900]}}
+		]
+	}`)
+
+	sites, err := loadOrgSites(path, slog.Default())
+	if err != nil {
+		t.Fatalf("loadOrgSites: %v", err)
+	}
+	defer func() {
+		for _, site := range sites {
+			_ = site.Server.Close()
+		}
+	}()
+
+	served := sites[0].Server.DERPMap()
+	if served == nil || len(served.Regions) != 1 {
+		t.Fatalf("served DERP map = %+v, want only region 900", served)
+	}
+	if served.Regions[900] == nil {
+		t.Error("region 900 is missing from the served map")
+	}
+	if _, ok := served.Regions[901]; ok {
+		t.Error("region 901 was filtered out of the map but is still served")
 	}
 }
 
