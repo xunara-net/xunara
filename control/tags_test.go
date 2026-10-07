@@ -17,6 +17,7 @@ import (
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 
+	"github.com/xunara/xunara/control/mapper"
 	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/state"
 )
@@ -94,6 +95,10 @@ func TestAuthKeyTagsReachClients(t *testing.T) {
 	if !resp.MachineAuthorized {
 		t.Fatalf("registration was not authorized: %+v", resp)
 	}
+	if resp.User.ID != mapper.TaggedDevicesUserID || resp.Login.LoginName != "tagged-devices" {
+		t.Errorf("registration identity = user %d / %q, want the tagged-devices pseudo identity",
+			resp.User.ID, resp.Login.LoginName)
+	}
 
 	mapResp := decodeMapResponse(t, postRaw(t, client, "/machine/map", tailcfg.MapRequest{
 		Version: tailcfg.CurrentCapabilityVersion,
@@ -104,6 +109,18 @@ func TestAuthKeyTagsReachClients(t *testing.T) {
 	}
 	if !slices.Equal(mapResp.Node.Tags, []string{"tag:owned"}) {
 		t.Errorf("node tags = %v, want [tag:owned]", mapResp.Node.Tags)
+	}
+	if mapResp.Node.User != mapper.TaggedDevicesUserID {
+		t.Errorf("node user = %d, want the tagged-devices pseudo user", mapResp.Node.User)
+	}
+	var profile *tailcfg.UserProfile
+	for i := range mapResp.UserProfiles {
+		if mapResp.UserProfiles[i].ID == mapper.TaggedDevicesUserID {
+			profile = &mapResp.UserProfiles[i]
+		}
+	}
+	if profile == nil || profile.LoginName != "tagged-devices" {
+		t.Errorf("tagged-devices profile missing from %+v", mapResp.UserProfiles)
 	}
 	if !mapResp.Node.KeyExpiry.IsZero() {
 		t.Errorf("tagged node key expiry = %v, want zero (tagged nodes never expire)", mapResp.Node.KeyExpiry)

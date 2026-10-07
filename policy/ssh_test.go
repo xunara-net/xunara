@@ -205,6 +205,65 @@ func TestSSHCheckPeriodNoMatch(t *testing.T) {
 	}
 }
 
+func TestSSHAutogroupSelfExcludesTagged(t *testing.T) {
+	engine := mustEngine(t, `{
+		"tagOwners": {"tag:server": ["local"]},
+		"ssh": [{"action": "accept", "src": ["autogroup:member"], "dst": ["autogroup:self"], "users": ["root"]}],
+	}`)
+
+	tagged := testNode(1, "tagged", "100.64.0.1")
+	tagged.Tags = []string{"tag:server"}
+	plain := testNode(2, "plain", "100.64.0.2")
+	nodes := []state.Node{tagged, plain}
+
+	// A tagged node has no user: it can neither be reached through
+	// autogroup:self nor act as a principal for it.
+	if pol := engine.CompileSSHPolicy(tagged, nodes); pol != nil {
+		t.Errorf("policy = %+v, want nil for a tagged autogroup:self destination", pol)
+	}
+	pol := engine.CompileSSHPolicy(plain, nodes)
+	principals := sshPrincipalsOf(pol)
+	if len(principals) != 2 {
+		t.Fatalf("principals = %v, want the untagged device's two addresses", principals)
+	}
+	for _, p := range principals {
+		if strings.HasPrefix(p, "100.64.0.1") || p == "fd7a:115c:a1e0::1/128" {
+			t.Errorf("principal %q belongs to the tagged device", p)
+		}
+	}
+
+	dests := engine.SSHDestinations(nodes)
+	if dests[tagged.ID] {
+		t.Error("a tagged node must not be marked as an autogroup:self destination")
+	}
+	if !dests[plain.ID] {
+		t.Error("the untagged node must be marked as an autogroup:self destination")
+	}
+}
+
+func TestSSHCheckPeriodAutogroupSelfExcludesTagged(t *testing.T) {
+	engine := mustEngine(t, `{
+		"tagOwners": {"tag:server": ["local"]},
+		"ssh": [{"action": "check", "checkPeriod": "always", "src": ["autogroup:self"], "dst": ["autogroup:self"], "users": ["root"]}],
+	}`)
+
+	tagged := testNode(1, "tagged", "100.64.0.1")
+	tagged.Tags = []string{"tag:server"}
+	plain := testNode(2, "plain", "100.64.0.2")
+	other := testNode(3, "other", "100.64.0.3")
+	nodes := []state.Node{tagged, plain, other}
+
+	if _, ok := engine.SSHCheckPeriod(tagged, plain, nodes); ok {
+		t.Error("a tagged source matched autogroup:self")
+	}
+	if _, ok := engine.SSHCheckPeriod(plain, tagged, nodes); ok {
+		t.Error("a tagged destination matched autogroup:self")
+	}
+	if _, ok := engine.SSHCheckPeriod(plain, other, nodes); !ok {
+		t.Error("two untagged devices of the same user must match autogroup:self")
+	}
+}
+
 func TestSSHRuleValidation(t *testing.T) {
 	bad := []struct {
 		name string

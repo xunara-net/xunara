@@ -24,6 +24,22 @@ import (
 // incremental MapResponse.PacketFilters map (2023-11-17).
 const packetFiltersCapVer tailcfg.CapabilityVersion = 81
 
+// TaggedDevicesUserID is the reserved user ID the wire protocol uses for
+// tagged nodes: a tag, not a human, owns them. It mirrors the pseudo user
+// headscale uses to reproduce the Tailscale protocol, so clients render tagged
+// devices as owned by "Tagged Devices".
+const TaggedDevicesUserID tailcfg.UserID = 2147455555
+
+// TaggedDevicesProfile returns the user profile the wire protocol advertises
+// for [TaggedDevicesUserID].
+func TaggedDevicesProfile() tailcfg.UserProfile {
+	return tailcfg.UserProfile{
+		ID:          TaggedDevicesUserID,
+		LoginName:   "tagged-devices",
+		DisplayName: "Tagged Devices",
+	}
+}
+
 // OnlineFunc reports whether a node currently holds a live control session.
 type OnlineFunc func(state.NodeID) bool
 
@@ -182,7 +198,7 @@ func Node(n state.Node, self bool, online OnlineFunc, routes RouteTable, cfg Con
 		ID:            tailcfg.NodeID(n.ID),
 		StableID:      tailcfg.StableNodeID(n.StableID),
 		Name:          n.FQDN(cfg.Domain),
-		User:          n.UserID,
+		User:          nodeUserID(n),
 		Key:           n.NodeKey,
 		KeyExpiry:     n.Expiry,
 		Expired:       n.Expired(time.Now()),
@@ -243,6 +259,13 @@ func userProfiles(self state.Node, nodes []state.Node, cfg Config) []tailcfg.Use
 	}
 
 	add := func(id tailcfg.UserID) {
+		if id == TaggedDevicesUserID {
+			if !seen[id] {
+				seen[id] = true
+				out = append(out, TaggedDevicesProfile())
+			}
+			return
+		}
 		if seen[id] {
 			return
 		}
@@ -250,15 +273,24 @@ func userProfiles(self state.Node, nodes []state.Node, cfg Config) []tailcfg.Use
 		out = append(out, profile(id))
 	}
 
-	add(self.UserID)
+	add(nodeUserID(self))
 	for _, n := range nodes {
-		add(n.UserID)
+		add(nodeUserID(n))
 	}
 
 	slices.SortFunc(out, func(a, b tailcfg.UserProfile) int {
 		return int(a.ID) - int(b.ID)
 	})
 	return out
+}
+
+// nodeUserID maps a stored node to its wire owner: tagged nodes carry the
+// reserved tagged-devices user instead of the user that owns their tags.
+func nodeUserID(n state.Node) tailcfg.UserID {
+	if len(n.Tags) > 0 {
+		return TaggedDevicesUserID
+	}
+	return n.UserID
 }
 
 // DNSConfig builds the MagicDNS configuration, or nil when the tailnet has no

@@ -203,8 +203,9 @@ reference/{go-oidc,oauth2,dex,webauthn}
     console 表单、`POST /api/v1/auth-keys`。
   - 客户端 `--advertise-tags`（`Hostinfo.RequestTags`）：审批时按审批人的 tagOwners
     归属校验，任一 tag 不通过则整个审批失败（不静默降级），记 `device.tag_rejected` 审计。
-  - 已知偏离：tagged 节点仍保留 `UserID`（上游置空）；节点 tag 的“仅 tag 拥有者”语义
-    与角色模型一起在 M5c+ 完善。
+  - 已修正（M4a 追加）：tagged 节点在 wire 上呈现为保留的 tagged-devices 伪用户；
+    内部 `state.Node.UserID` 仍保留（tagOwners 归属校验需要）。节点 tag 的
+    “仅 tag 拥有者”操作语义与角色模型一起在 M5c+ 完善。
 
 ## M3 — 持久化与密钥 —— 进行中
 
@@ -253,9 +254,19 @@ reference/{go-oidc,oauth2,dex,webauthn}
   `control/identity_test.go`（播种、用户资料下发到 netmap）、`control/audit_test.go`
   （注册/审批/登出/回收/set-dns 审计）、`policy` 热重载审计断言。
 
-待办（M4a 剩余）：
+已完成（M4a 追加，节点归属与 tagged 身份）：
 
-- 节点归属多用户（`RegisterRequest` 的 auth 归属与 tagged node）。
+- 归属链路：PAK 注册归属密钥创建者、交互审批归属登录用户、API/Console 归属
+  principal/session；tagged 设备不再伪装成其 tag 所有者的设备。
+- 协议侧 tagged 身份：`tailcfg.Node.User`、`RegisterResponse.User/Login` 与
+  `UserProfiles` 使用保留的 `tagged-devices` 伪用户（ID 2147455555，
+  `mapper.TaggedDevicesUserID`），对齐 headscale 的 `types.TaggedDevices`。
+- ACL/SSH 语义：`user:` 选择器与 `autogroup:self` 双向不匹配 tagged 设备
+  （含 SSH 目的端与 check 时长）；tagged 设备只能通过 `tag:` /
+  `autogroup:tagged` 寻址，与 headscale policy/v2 一致。
+- 测试：`policy` 的 self/user 选择器与 SSH 目的端/checkPeriod 用例、
+  `mapper` 的伪用户与 UserProfiles 用例、`control/tags_test.go` 端到端断言
+  注册响应与 netmap 的 tagged-devices 身份。
 
 ## M4 — Identity & Login（Trust Plane）
 

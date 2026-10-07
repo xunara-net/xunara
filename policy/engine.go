@@ -693,7 +693,7 @@ func (r *resolution) hostIPs(sel selector) []string {
 func (r *resolution) matchingNodes(sel selector) []state.Node {
 	switch sel.kind {
 	case selSelf:
-		return r.nodesForUserID(r.self.UserID)
+		return r.selfNodes()
 	case selMember:
 		return r.memberNodes()
 	case selTagged:
@@ -716,10 +716,25 @@ func (r *resolution) memberNodes() []state.Node {
 	return out
 }
 
+// selfNodes returns the untagged devices owned by the self node's user.
+//
+// Tagged devices are not a user's devices for matching purposes: a tagged
+// node has no user identity, so autogroup:self matches neither a tagged source
+// nor a tagged destination (mirrors headscale policy/v2).
+func (r *resolution) selfNodes() []state.Node {
+	if len(r.self.Tags) > 0 {
+		return nil
+	}
+	return r.nodesForUserID(r.self.UserID)
+}
+
+// nodesForUserID returns the untagged devices owned by a user. Tagged devices
+// are addressed through their tags (tag:... / autogroup:tagged), never through
+// their owner.
 func (r *resolution) nodesForUserID(id tailcfg.UserID) []state.Node {
 	var out []state.Node
 	for _, n := range r.nodes {
-		if n.UserID == id {
+		if n.UserID == id && len(n.Tags) == 0 {
 			out = append(out, n)
 		}
 	}
@@ -729,7 +744,7 @@ func (r *resolution) nodesForUserID(id tailcfg.UserID) []state.Node {
 func (r *resolution) nodesForUser(sel string) []state.Node {
 	var out []state.Node
 	for _, n := range r.nodes {
-		if r.userMatches(n.UserID, sel) {
+		if len(n.Tags) == 0 && r.userMatches(n.UserID, sel) {
 			out = append(out, n)
 		}
 	}

@@ -145,6 +145,41 @@ func TestNodeCarriesTags(t *testing.T) {
 	if len(got.Tags) != 1 || got.Tags[0] != "tag:prod" {
 		t.Errorf("Tags = %v, want [tag:prod]", got.Tags)
 	}
+	if got.User != TaggedDevicesUserID {
+		t.Errorf("User = %d, want the tagged-devices pseudo user", got.User)
+	}
+}
+
+func TestUserProfilesIncludeTaggedDevices(t *testing.T) {
+	tagged := testNode(1, "tagged")
+	tagged.Tags = []string{"tag:prod"}
+	plain := testNode(2, "plain")
+
+	profiles := userProfiles(tagged, []state.Node{tagged, plain}, Config{})
+
+	var haveUser, haveTagged bool
+	for _, p := range profiles {
+		switch p.ID {
+		case state.DefaultUserID:
+			haveUser = true
+		case TaggedDevicesUserID:
+			haveTagged = true
+			if p.LoginName != "tagged-devices" || p.DisplayName != "Tagged Devices" {
+				t.Errorf("tagged-devices profile = %+v", p)
+			}
+		}
+	}
+	if !haveUser {
+		t.Error("the owning user's profile is missing")
+	}
+	if !haveTagged {
+		t.Errorf("profiles = %+v, want the tagged-devices profile", profiles)
+	}
+
+	// An untagged node keeps its real owner.
+	if got := Node(plain, true, neverOnline, nil, Config{}); got.User != state.DefaultUserID {
+		t.Errorf("untagged node User = %d, want %d", got.User, state.DefaultUserID)
+	}
 }
 
 func TestNodeMarksExpiredKeys(t *testing.T) {

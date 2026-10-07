@@ -16,6 +16,7 @@ import (
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 
+	"github.com/xunara/xunara/control/mapper"
 	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/state"
 )
@@ -201,6 +202,25 @@ func nodeTarget(n state.Node) string { return "node:" + n.StableID }
 // The user and login name come from the trust plane, so a client shows the
 // actual human the node belongs to.
 func (s *Server) nodeToRegisterResponse(n state.Node) *tailcfg.RegisterResponse {
+	// Tagged nodes belong to their tags, not to a human: report the reserved
+	// tagged-devices identity, as headscale does via node.Owner().
+	if len(n.Tags) > 0 {
+		profile := mapper.TaggedDevicesProfile()
+		return &tailcfg.RegisterResponse{
+			MachineAuthorized: true,
+			User: tailcfg.User{
+				ID:          profile.ID,
+				DisplayName: profile.DisplayName,
+				Created:     n.Created,
+			},
+			Login: tailcfg.Login{
+				ID:          tailcfg.LoginID(profile.ID),
+				LoginName:   profile.LoginName,
+				DisplayName: profile.DisplayName,
+			},
+		}
+	}
+
 	profile := s.UserProfile(n.UserID)
 
 	provider := state.DefaultProvider

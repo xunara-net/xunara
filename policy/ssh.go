@@ -248,7 +248,8 @@ func (e *Engine) CompileSSHPolicy(self state.Node, nodes []state.Node) *tailcfg.
 
 	for _, rule := range e.ssh {
 		// dst: autogroup:self applies between devices of one user.
-		if rule.selfOnly {
+		// A tagged destination has no user, so it can never match.
+		if rule.selfOnly && len(self.Tags) == 0 {
 			appendRule(r.sshPrincipals(rule.src, self.UserID), rule)
 		}
 		if len(rule.dst) > 0 && r.nodesForSelectors(rule.dst)[self.ID] {
@@ -280,7 +281,7 @@ func (e *Engine) SSHCheckPeriod(src, dst state.Node, nodes []state.Node) (time.D
 			continue
 		}
 		if rule.selfOnly {
-			if src.UserID == dst.UserID {
+			if len(src.Tags) == 0 && len(dst.Tags) == 0 && src.UserID == dst.UserID {
 				return rule.checkPeriod, true
 			}
 			continue
@@ -308,7 +309,9 @@ func (e *Engine) SSHDestinations(nodes []state.Node) map[state.NodeID]bool {
 	for _, rule := range e.ssh {
 		if rule.selfOnly {
 			for _, n := range nodes {
-				out[n.ID] = true
+				if len(n.Tags) == 0 {
+					out[n.ID] = true
+				}
 			}
 			continue
 		}
@@ -345,7 +348,7 @@ func (r *resolution) nodesForSelector(sel selector) []state.Node {
 	case selTagged:
 		return r.taggedNodes()
 	case selSelf:
-		return r.nodesForUserID(r.self.UserID)
+		return r.selfNodes()
 	case selTag:
 		return r.nodesWithTag(sel.raw)
 	case selGroup:
@@ -386,7 +389,7 @@ func (r *resolution) sshPrincipals(sels []selector, onlyUserID tailcfg.UserID) [
 
 	for _, sel := range sels {
 		for _, n := range r.nodesForSelector(sel) {
-			if onlyUserID != 0 && n.UserID != onlyUserID {
+			if onlyUserID != 0 && (n.UserID != onlyUserID || len(n.Tags) > 0) {
 				continue
 			}
 			for _, addr := range []netip.Addr{n.IPv4, n.IPv6} {

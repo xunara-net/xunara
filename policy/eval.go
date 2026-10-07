@@ -128,7 +128,7 @@ func (e *Engine) singleNode(nodes []state.Node, sel string) (state.Node, error) 
 	case selUser:
 		return pickNode(r.nodesForUser(classed.raw))
 	case selSelf:
-		return pickNode(r.nodesForUserID(r.self.UserID))
+		return pickNode(r.selfNodes())
 	case selMember:
 		return pickNode(r.memberNodes())
 	default:

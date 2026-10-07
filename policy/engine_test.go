@@ -192,6 +192,53 @@ func TestAutogroupSelfIsPerNode(t *testing.T) {
 	}
 }
 
+func TestAutogroupSelfExcludesTagged(t *testing.T) {
+	engine := mustEngine(t, `{
+		"tagOwners": {"tag:server": ["local"]},
+		"acls": [{"action": "accept", "src": ["autogroup:self"], "dst": ["*:*"]}],
+	}`)
+
+	tagged := testNode(1, "tagged", "100.64.0.1")
+	tagged.Tags = []string{"tag:server"}
+	plain := testNode(2, "plain", "100.64.0.2")
+	nodes := []state.Node{tagged, plain}
+
+	// The untagged node's autogroup:self resolves to its own untagged devices.
+	filter := engine.FilterFor(plain, nodes)
+	if len(filter) != 1 {
+		t.Fatalf("filter = %+v, want one rule", filter)
+	}
+	if got := strings.Join(filter[0].SrcIPs, ","); got != "100.64.0.2/32,fd7a:115c:a1e0::2/128" {
+		t.Errorf("SrcIPs = %v, want the untagged device only", filter[0].SrcIPs)
+	}
+
+	// A tagged node has no user identity, so autogroup:self matches nothing
+	// for it (either as a source or as a destination).
+	if filter := engine.FilterFor(tagged, nodes); len(filter) != 0 {
+		t.Errorf("filter = %+v, want no rules for a tagged source", filter)
+	}
+}
+
+func TestUserSelectorExcludesTagged(t *testing.T) {
+	engine := mustEngine(t, `{
+		"tagOwners": {"tag:server": ["local"]},
+		"acls": [{"action": "accept", "src": ["local@xunara.test"], "dst": ["*:*"]}],
+	}`)
+
+	tagged := testNode(1, "tagged", "100.64.0.1")
+	tagged.Tags = []string{"tag:server"}
+	plain := testNode(2, "plain", "100.64.0.2")
+	nodes := []state.Node{tagged, plain}
+
+	filter := engine.FilterFor(plain, nodes)
+	if len(filter) != 1 {
+		t.Fatalf("filter = %+v, want one rule", filter)
+	}
+	if got := strings.Join(filter[0].SrcIPs, ","); got != "100.64.0.2/32,fd7a:115c:a1e0::2/128" {
+		t.Errorf("user selector SrcIPs = %v, want the untagged device only", filter[0].SrcIPs)
+	}
+}
+
 func TestHostsAliasesAndPrefixes(t *testing.T) {
 	engine := mustEngine(t, `{
 		"hosts": {"db": "100.64.0.9", "lan": "192.168.0.0/16"},
