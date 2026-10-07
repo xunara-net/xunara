@@ -274,7 +274,19 @@ reference/{go-oidc,oauth2,dex,webauthn}
     用户改名冲突、auth-key 一次性 secret、设备审批归属、key 吊销即时生效）。
 - 待办（M5 剩余）：`api/v2`、`api/platform`（组织/多租户）、gRPC/Webhook。
 
-- Web Console P0（M5b，进行中）：Machines / Users / DNS / ACL-Grants / Routes / Exit Nodes / Auth Keys。
+- M5b 已完成：Web Console（`/console/`，浏览器会话 + 每会话 CSRF）。
+  - 页面：Overview（在线/离线、待审批设备、DNS、auth key、策略摘要）、Machines
+    （地址、方法、announced/approved 路由、approve-all/withdraw、删除）、Devices
+    （approve/deny）、Users（display name/email 编辑）、DNS（删除）、Auth Keys
+    （创建/吊销，secret 仅创建时展示一次，列表永不回显）、Policy（规则数、
+    warnings、unsupported、重读错误）、Audit（最新优先，最多 200 条）。
+  - 无脚本、无外部资源、`Cache-Control: no-store`；所有写操作走 CSRF + 审计；
+    除一次性 `CreatedKey` 外不渲染任何 key 材料。
+  - 测试：`control/console_test.go`（未登录重定向、8 个页面渲染、CSRF 拒绝、
+    路由审批/撤回、机器删除、auth key 生命周期与一次性 secret、设备审批、
+    用户编辑、策略页、审计排序）。
+  - 已知限制（待 M5c+）：尚无角色模型，任何可登录用户都能进入 console；
+    组织/多租户与 `api/v2` 未实现。
 - 审批流接线（已完成）：`/register/{id}` → 登录 → 审批 → 设备授权。
 
 ## M6 — 服务与客户端

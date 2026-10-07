@@ -1,0 +1,364 @@
+package control
+
+import (
+	"html/template"
+	"net/http"
+	"time"
+)
+
+// The console shares the sign-in pages' rules: no external assets, no scripts,
+// a strict referrer policy. Every value is rendered through html/template, so
+// operator-entered text (hostnames, user names, DNS values) is escaped.
+// Secrets are never rendered except where a handler explicitly passes a
+// one-time value such as a freshly created pre-auth key.
+
+const consoleHead = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{{.Title}} — Xunara console</title>
+<style>
+body { font-family: system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #16181d; }
+header { background: #16181d; color: #fff; padding: .8rem 1.5rem; display: flex; flex-wrap: wrap;
+         align-items: center; gap: 1rem; }
+header h1 { font-size: 1rem; margin: 0; font-weight: 600; }
+header h1 span { color: #9aa2b1; font-weight: 400; }
+nav { display: flex; flex-wrap: wrap; gap: .25rem; }
+nav a { color: #c9cfda; text-decoration: none; padding: .35rem .6rem; border-radius: .4rem; font-size: .9rem; }
+nav a:hover { background: #2b2f38; color: #fff; }
+nav a.active { background: #2b2f38; color: #fff; }
+.who { margin-left: auto; font-size: .85rem; color: #c9cfda; display: flex; align-items: center; gap: .6rem; }
+.who form { margin: 0; }
+.who button { background: transparent; border: 1px solid #4b515c; color: #c9cfda; font: inherit;
+              padding: .25rem .6rem; border-radius: .4rem; cursor: pointer; }
+main { max-width: 68rem; margin: 1.5rem auto 3rem; padding: 0 1.5rem; }
+h2 { font-size: 1.25rem; margin-top: 1.75rem; }
+h3 { font-size: 1rem; }
+table { width: 100%; border-collapse: collapse; background: #fff; border-radius: .5rem; overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0,0,0,.12); font-size: .9rem; }
+th, td { text-align: left; padding: .55rem .75rem; border-bottom: 1px solid #eceef1; vertical-align: top; }
+th { background: #fafbfc; color: #5b616e; font-weight: 600; }
+tr:last-child td { border-bottom: 0; }
+.cards { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1rem 0 1.5rem; }
+.card { background: #fff; border-radius: .5rem; padding: .9rem 1.2rem; box-shadow: 0 1px 3px rgba(0,0,0,.12);
+        min-width: 8rem; display: flex; flex-direction: column; gap: .2rem; }
+.card .num { font-size: 1.5rem; font-weight: 600; }
+.card span:last-child { color: #5b616e; font-size: .85rem; }
+.ok { color: #1a7f37; }
+.off { color: #5b616e; }
+.warn { color: #b42318; }
+.tag { background: #eceef1; color: #3c414b; border-radius: .3rem; padding: .05rem .35rem; font-size: .75rem; }
+.notice { background: #e6f4ea; border: 1px solid #b7dcc0; color: #14532d; padding: .6rem .9rem;
+          border-radius: .5rem; }
+input { font: inherit; padding: .35rem .5rem; border: 1px solid #d0d5dd; border-radius: .35rem; }
+button { font: inherit; padding: .35rem .7rem; border-radius: .35rem; border: 0; cursor: pointer;
+         background: #16181d; color: #fff; }
+button.danger { background: #fff; color: #b42318; border: 1px solid #d0d5dd; }
+button + button { margin-left: .35rem; }
+code { background: #f1f2f4; padding: .1rem .3rem; border-radius: .25rem; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: .4rem 1rem; }
+dt { color: #5b616e; }
+.field { display: flex; gap: .75rem; align-items: center; margin: .5rem 0; flex-wrap: wrap; }
+footer { text-align: center; color: #5b616e; font-size: .8rem; }
+</style>
+</head>
+<body>
+<header>
+<h1>Xunara <span>console</span></h1>
+<nav>
+<a href="/console/"{{if eq .Nav "overview"}} class="active"{{end}}>Overview</a>
+<a href="/console/machines"{{if eq .Nav "machines"}} class="active"{{end}}>Machines</a>
+<a href="/console/devices"{{if eq .Nav "devices"}} class="active"{{end}}>Devices</a>
+<a href="/console/users"{{if eq .Nav "users"}} class="active"{{end}}>Users</a>
+<a href="/console/dns"{{if eq .Nav "dns"}} class="active"{{end}}>DNS</a>
+<a href="/console/auth-keys"{{if eq .Nav "auth-keys"}} class="active"{{end}}>Auth keys</a>
+<a href="/console/policy"{{if eq .Nav "policy"}} class="active"{{end}}>Policy</a>
+<a href="/console/audit"{{if eq .Nav "audit"}} class="active"{{end}}>Audit</a>
+</nav>
+<div class="who">{{.User}}
+<form method="post" action="/logout"><button type="submit">Sign out</button></form>
+</div>
+</header>
+<main>
+{{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}
+`
+
+const consoleFoot = `</main>
+<footer>Xunara {{.Version}}</footer>
+</body></html>`
+
+// consoleTitles label each section; the nav identifier doubles as the key so a
+// handler cannot forget to set a page title.
+var consoleTitles = map[string]string{
+	"overview":  "Overview",
+	"machines":  "Machines",
+	"devices":   "Devices",
+	"users":     "Users",
+	"dns":       "DNS",
+	"auth-keys": "Auth keys",
+	"policy":    "Policy",
+	"audit":     "Audit",
+}
+
+// consolePage assembles a console template from the shared shell and a body.
+func consolePage(name, body string) *template.Template {
+	tmpl := template.New(name).Funcs(template.FuncMap{"fmtTime": consoleTime})
+	return template.Must(tmpl.Parse(consoleHead + body + consoleFoot))
+}
+
+// consoleTime formats a timestamp; the zero time reads as "never".
+func consoleTime(t time.Time) string {
+	if t.IsZero() {
+		return "never"
+	}
+	return t.UTC().Format("2006-01-02 15:04 UTC")
+}
+
+var (
+	consoleOverviewTemplate = consolePage("overview", `
+<h2>Overview</h2>
+<div class="cards">
+<div class="card"><span class="num">{{.MachinesOnline}}</span><span>machines online</span></div>
+<div class="card"><span class="num">{{.MachinesTotal}}</span><span>machines total</span></div>
+<div class="card"><span class="num">{{.Users}}</span><span>users</span></div>
+<div class="card"><span class="num">{{.PendingDevices}}</span><span>pending devices</span></div>
+<div class="card"><span class="num">{{.DNSRecords}}</span><span>DNS records</span></div>
+<div class="card"><span class="num">{{.AuthKeys}}</span><span>auth keys</span></div>
+</div>
+<h2>Access control</h2>
+<p>{{.Policy}}</p>
+`)
+
+	consoleMachinesTemplate = consolePage("machines", `
+<h2>Machines</h2>
+<table>
+<thead><tr><th>Machine</th><th>Status</th><th>Owner</th><th>Method</th><th>Addresses</th><th>Routes</th><th>Actions</th></tr></thead>
+<tbody>
+{{range .Machines}}
+<tr>
+<td>{{.Hostname}}
+{{if .Ephemeral}} <span class="tag">ephemeral</span>{{end}}
+{{if .ExitNode}} <span class="tag">exit node</span>{{end}}
+{{if .Expired}} <span class="tag warn">expired</span>{{end}}</td>
+<td>{{if .Online}}<span class="ok">online</span>{{else}}<span class="off">offline</span>{{end}}</td>
+<td>{{.UserLoginName}}</td>
+<td>{{.Method}}</td>
+<td>{{if .IPv4}}<code>{{.IPv4}}</code>{{end}}{{if .IPv6}}<br><code>{{.IPv6}}</code>{{end}}</td>
+<td>
+{{if .ApprovedRoutes}}approved: {{range .ApprovedRoutes}}<code>{{.}}</code> {{end}}<br>{{end}}
+{{if .AnnouncedRoutes}}announced: {{range .AnnouncedRoutes}}<code>{{.}}</code> {{end}}{{else}}announced: none{{end}}
+</td>
+<td>
+<form method="post" action="/console/machines/{{.ID}}/routes">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<button name="action" value="approve-all" type="submit">Approve routes</button>
+<button name="action" value="unapprove-all" type="submit">Withdraw</button>
+</form>
+<form method="post" action="/console/machines/{{.ID}}/delete">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<button class="danger" type="submit">Delete</button>
+</form>
+</td>
+</tr>
+{{else}}
+<tr><td colspan="7">No machines have registered yet.</td></tr>
+{{end}}
+</tbody>
+</table>
+`)
+
+	consoleDevicesTemplate = consolePage("devices", `
+<h2>Pending devices</h2>
+<p>Approving a device authorizes the machine keys below; it does not make the
+device a human identity.</p>
+{{if .Devices}}
+<table>
+<thead><tr><th>Device</th><th>Operating system</th><th>Requested</th><th>Expires</th><th>Actions</th></tr></thead>
+<tbody>
+{{range .Devices}}
+<tr>
+<td>{{.Hostname}}</td>
+<td>{{.OS}}</td>
+<td>{{fmtTime .Created}}</td>
+<td>{{fmtTime .Expires}}</td>
+<td>
+<form method="post" action="/console/devices/{{.ID}}/approve">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<button type="submit">Approve</button>
+</form>
+<form method="post" action="/console/devices/{{.ID}}/deny">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<button class="danger" type="submit">Deny</button>
+</form>
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>No devices are waiting for approval.</p>
+{{end}}
+`)
+
+	consoleUsersTemplate = consolePage("users", `
+<h2>Users</h2>
+<table>
+<thead><tr><th>Login name</th><th>Display name</th><th>Email</th><th>Created</th><th>Identities</th></tr></thead>
+<tbody>
+{{range .Users}}
+<tr>
+<td>{{.LoginName}}</td>
+<td>{{.DisplayName}}</td>
+<td>{{if .Email}}{{.Email}}{{else}}—{{end}}</td>
+<td>{{fmtTime .CreatedAt}}</td>
+<td>{{range .Identities}}<code>{{.ProviderID}}</code> {{.Subject}}<br>{{else}}—{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+<h2>Edit a user</h2>
+<p>Email is an attribute, never an identity key: links follow
+(provider, subject) only.</p>
+{{range .Users}}
+<form method="post" action="/console/users/{{.ID}}">
+<h3>{{.LoginName}}</h3>
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<div class="field">
+<label>Display name <input name="displayName" value="{{.DisplayName}}"></label>
+<label>Email <input name="email" value="{{.Email}}"></label>
+<button type="submit">Save</button>
+</div>
+</form>
+{{end}}
+`)
+
+	consoleDNSTemplate = consolePage("dns", `
+<h2>DNS records</h2>
+<p>Extra records served to clients alongside MagicDNS.</p>
+{{if .Records}}
+<table>
+<thead><tr><th>Name</th><th>Type</th><th>Value</th><th>Created</th><th></th></tr></thead>
+<tbody>
+{{range .Records}}
+<tr>
+<td><code>{{.Name}}</code></td>
+<td>{{.Type}}</td>
+<td>{{.Value}}</td>
+<td>{{fmtTime .Created}}</td>
+<td>
+<form method="post" action="/console/dns/{{.ID}}/delete">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<button class="danger" type="submit">Delete</button>
+</form>
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>No extra DNS records.</p>
+{{end}}
+`)
+
+	consoleAuthKeysTemplate = consolePage("auth-keys", `
+<h2>Auth keys</h2>
+<p>Pre-authentication keys let a machine register without a browser. The secret
+is shown once, at creation time, and never again.</p>
+{{if .CreatedKey}}
+<p class="notice">New key (copy it now): <code>{{.CreatedKey}}</code></p>
+{{end}}
+<form method="post" action="/console/auth-keys">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<div class="field">
+<label>Lifetime <input name="ttl" placeholder="24h (empty: never)"></label>
+<label><input type="checkbox" name="reusable"> Reusable</label>
+<label><input type="checkbox" name="ephemeral"> Ephemeral</label>
+<button type="submit">Create key</button>
+</div>
+</form>
+{{if .AuthKeys}}
+<table>
+<thead><tr><th>ID</th><th>Owner</th><th>Reusable</th><th>Ephemeral</th><th>Used</th><th>Expires</th><th>Created</th><th></th></tr></thead>
+<tbody>
+{{range .AuthKeys}}
+<tr>
+<td>{{.ID}}</td>
+<td>{{.Owner}}</td>
+<td>{{if .Reusable}}yes{{else}}no{{end}}</td>
+<td>{{if .Ephemeral}}yes{{else}}no{{end}}</td>
+<td>{{if .Used}}yes{{else}}no{{end}}</td>
+<td>{{fmtTime .Expiry}}</td>
+<td>{{fmtTime .Created}}</td>
+<td>
+<form method="post" action="/console/auth-keys/{{.ID}}/delete">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<button class="danger" type="submit">Revoke</button>
+</form>
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>No auth keys.</p>
+{{end}}
+`)
+
+	consolePolicyTemplate = consolePage("policy", `
+<h2>Policy</h2>
+{{if .Configured}}
+<dl>
+<dt>Document</dt><dd><code>{{.Path}}</code></dd>
+<dt>ACL rules</dt><dd>{{.Rules}}</dd>
+</dl>
+{{if .Warnings}}
+<h3>Warnings</h3>
+<ul>{{range .Warnings}}<li>{{.}}</li>{{end}}</ul>
+{{end}}
+{{if .Unsupported}}
+<h3>Unsupported fields</h3>
+<p>These top-level fields are understood but not enforced by this build:</p>
+<ul>{{range .Unsupported}}<li><code>{{.}}</code></li>{{end}}</ul>
+{{end}}
+{{if .LoadError}}<p class="warn">The document could not be re-read: {{.LoadError}}</p>{{end}}
+{{else}}
+<p>No policy document is configured: every machine may reach every other
+machine, the same behaviour as an official tailnet without a policy.</p>
+{{end}}
+`)
+
+	consoleAuditTemplate = consolePage("audit", `
+<h2>Audit</h2>
+<p>The most recent events first, at most 200.</p>
+{{if .Events}}
+<table>
+<thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead>
+<tbody>
+{{range .Events}}
+<tr>
+<td>{{fmtTime .Time}}</td>
+<td>{{.Actor}}</td>
+<td><code>{{.Action}}</code></td>
+<td>{{.Target}}</td>
+<td>{{.Detail}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>No audit events yet.</p>
+{{end}}
+`)
+)
+
+// renderConsole writes a console page. Console output is per-session state and
+// must never be cached by shared caches.
+func (s *Server) renderConsole(w http.ResponseWriter, tmpl *template.Template, data map[string]any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	if err := tmpl.Execute(w, data); err != nil {
+		s.log.Error("rendering console page", "template", tmpl.Name(), "err", err)
+	}
+}

@@ -394,6 +394,7 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/register/{authID}/approve", s.handleApproveDevice)
 	r.Post("/register/{authID}/deny", s.handleDenyDevice)
 	r.Mount("/api/v1", s.apiRouter())
+	r.Mount("/console", s.consoleRouter())
 	r.Get("/", s.handleRoot)
 
 	return r
@@ -482,5 +483,6 @@ func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
 		"name":    "Xunara",
 		"version": Version,
 		"message": "Tailscale-compatible control plane. Point clients at this URL with `tailscale up --login-server=<url>`.",
+		"console": "/console/",
 	})
 }
