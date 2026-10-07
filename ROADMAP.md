@@ -465,8 +465,21 @@ reference/{go-oidc,oauth2,dex,webauthn}
     Veil 中继互发、准入放行/拒绝/控制面不可达 fail-closed、probe 端点）、
     `veil/integration_test.go`（Veil ↔ `control` `/derp/admit` 真实联通）、
     `control/derpadmit_test.go`（注册/未知/过期/零 key/坏请求）。
-  - 已知限制：无 DERP mesh key、无带宽限速、DERP 服务自身无自动证书
-    （TLS 证书目前手动 `-cert-file`/`-cert-key-file`）。
+  - M6e 收尾（已完成）：DERP mesh key 与带宽限速。
+    - `veil.Config.MeshKey`（64 hex）：构造时经 `key.ParseDERPMesh` 校验并
+      交给上游 `derpserver.SetMeshKey`，mesh peer 由 derpserver 内部信任；
+      `Server.MeshKeyEnabled()` 只报告开关，永不导出/记录密钥；错误信息不含
+      密钥原文。`cmd/xunara-veil -mesh-key-env <ENV>` 只从环境变量读取，
+      变量名为空但取值失败时拒绝启动（AGENTS §8：secret 不进 argv）。
+    - `veil.Config.BandwidthLimit`（字节/秒）+ `BandwidthBurst`：在 listener
+      层对每条连接双向共享一个 token bucket（覆盖 TLS 与 mesh 链路），
+      burst 缺省为 limit 并夹在 [64 KiB, 4 MiB]；Close 取消等待中的限速，
+      不会把 goroutine 卡在低速率上。语义是每连接公平性上限（不是节点总容量）。
+    - `cmd/xunara-veil -bandwidth-limit/-bandwidth-burst`。
+    - 测试：`veil/ratelimit_test.go`（限速生效、Close 解除等待、mesh key
+      校验与不泄漏、burst 派生表、限速下 DERP 中继端到端）。
+  - 已知限制：DERP 服务自身无自动证书（TLS 证书目前手动
+    `-cert-file`/`-cert-key-file`）。
 - M6f 已完成：证书签发 DNS-01（`services/serve` 的控制面部分）。
   - `control.DNSProvider` 接口（`PutTXT`/`DeleteTXT`，带 context）：控制面在
     ACME DNS-01 校验期间代表节点写入/清理 `_acme-challenge` 记录，

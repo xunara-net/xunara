@@ -27,6 +27,9 @@ func main() {
 		runSTUN     = flag.Bool("stun", true, "run a STUN server for endpoint discovery")
 		stunPort    = flag.Int("stun-port", veil.DefaultSTUNPort, "UDP port for STUN")
 		verifyURL   = flag.String("verify-url", "", "control plane admission URL (e.g. http://127.0.0.1:8080/derp/admit); empty admits any node key")
+		meshKeyEnv  = flag.String("mesh-key-env", "", "environment variable holding the 64-hex DERP mesh key (trusts other Veil nodes); empty disables meshing")
+		bandwidth   = flag.Int64("bandwidth-limit", 0, "per-connection bandwidth limit in bytes per second (0: unlimited)")
+		bandwidthB  = flag.Int("bandwidth-burst", 0, "token bucket size in bytes for -bandwidth-limit (0: derived from the limit)")
 		certFile    = flag.String("cert-file", "", "TLS certificate file (enables TLS with -cert-key-file)")
 		certKeyFile = flag.String("cert-key-file", "", "TLS private key file")
 		insecure    = flag.Bool("insecure-for-tests", false, "mark the node InsecureForTests in generated DERP maps; local plain-HTTP tests only")
@@ -40,6 +43,18 @@ func main() {
 
 	logger := newLogger(*logLevel)
 
+	// The mesh key is a shared secret: it is read from the environment, never
+	// from argv (AGENTS.md section 8). A named-but-empty variable is refused,
+	// so a misconfigured deployment cannot silently run without it.
+	var meshKey string
+	if *meshKeyEnv != "" {
+		meshKey = os.Getenv(*meshKeyEnv)
+		if meshKey == "" {
+			logger.Error("mesh key environment variable is unset or empty", "env", *meshKeyEnv)
+			os.Exit(1)
+		}
+	}
+
 	srv, err := veil.New(veil.Config{
 		ListenAddr:       *listen,
 		HostName:         *hostname,
@@ -48,6 +63,9 @@ func main() {
 		STUN:             *runSTUN,
 		STUNPort:         *stunPort,
 		VerifyURL:        *verifyURL,
+		MeshKey:          meshKey,
+		BandwidthLimit:   *bandwidth,
+		BandwidthBurst:   *bandwidthB,
 		CertFile:         *certFile,
 		CertKeyFile:      *certKeyFile,
 		InsecureForTests: *insecure,

@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/time/rate"
 	"tailscale.com/atomicfile"
 	"tailscale.com/derp/derpserver"
 	"tailscale.com/net/stunserver"
@@ -35,6 +36,14 @@ const DefaultRegionID = 900
 
 // DefaultSTUNPort is the UDP port STUN runs on when [Config.STUNPort] is zero.
 const DefaultSTUNPort = 3478
+
+// MinBandwidthBurst and MaxBandwidthBurst bound the default token bucket for
+// [Config.BandwidthLimit]: small enough that a burst cannot defeat a low
+// limit, large enough that small protocol exchanges are not delayed.
+const (
+	MinBandwidthBurst = 64 << 10
+	MaxBandwidthBurst = 4 << 20
+)
 
 // Config configures a [Server].
 type Config struct {
@@ -61,6 +70,21 @@ type Config struct {
 	// When empty, every client that presents a well-formed node key is
 	// admitted; production deployments should set it.
 	VerifyURL string
+	// MeshKey is the pre-shared key (64 hexadecimal digits) that trusts other
+	// Xunara Veil nodes as DERP mesh peers. Empty disables meshing. It is a
+	// shared secret: read it from the environment or a file, never from argv
+	// or a URL (AGENTS.md section 8), and it is never logged.
+	MeshKey string
+	// BandwidthLimit bounds each accepted connection's throughput in bytes
+	// per second, counting both directions against one bucket, including TLS
+	// and DERP mesh traffic. Zero disables the limit. It is a per-connection
+	// fairness bound, not a total capacity cap: N connections may use N times
+	// the limit.
+	BandwidthLimit int64
+	// BandwidthBurst is the token bucket size in bytes for BandwidthLimit.
+	// Zero derives one second's worth of tokens, clamped to
+	// [MinBandwidthBurst, MaxBandwidthBurst].
+	BandwidthBurst int
 	// CertFile and CertKeyFile enable TLS serving when both are non-empty.
 	// Clients reach DERP over HTTPS by default; plain HTTP is only usable in
 	// test deployments that opt into insecure dialing.
@@ -120,6 +144,15 @@ func New(cfg Config) (*Server, error) {
 	if _, _, err := net.SplitHostPort(cfg.ListenAddr); err != nil {
 		return nil, fmt.Errorf("veil: invalid ListenAddr %q: %w", cfg.ListenAddr, err)
 	}
+	if cfg.BandwidthLimit < 0 {
+		return nil, errors.New("veil: BandwidthLimit must not be negative")
+	}
+	if cfg.BandwidthBurst < 0 {
+		return nil, errors.New("veil: BandwidthBurst must not be negative")
+	}
+	if cfg.BandwidthLimit == 0 && cfg.BandwidthBurst > 0 {
+		return nil, errors.New("veil: BandwidthBurst requires BandwidthLimit")
+	}
 
 	keyFile := cfg.KeyFile
 	if keyFile == "" {
@@ -139,6 +172,14 @@ func New(cfg Config) (*Server, error) {
 	if cfg.VerifyURL != "" {
 		s.derp.SetVerifyClientURL(cfg.VerifyURL)
 	}
+	if cfg.MeshKey != "" {
+		// ParseDERPMesh's error names the expected shape and never echoes the
+		// key, so a bad configuration cannot leak the secret into a log.
+		if err := s.derp.SetMeshKey(cfg.MeshKey); err != nil {
+			return nil, fmt.Errorf("veil: invalid mesh key: %w", err)
+		}
+		s.log.Info("veil DERP mesh key enabled")
+	}
 
 	if cfg.TLS() {
 		s.log.Info("veil TLS enabled", "cert", cfg.CertFile, "host", cfg.HostName)
@@ -152,6 +193,28 @@ func New(cfg Config) (*Server, error) {
 
 	return s, nil
 }
+
+// bandwidthBurst returns the effective token bucket size.
+func (c Config) bandwidthBurst() int {
+	if c.BandwidthLimit <= 0 {
+		return 0
+	}
+	if c.BandwidthBurst > 0 {
+		return c.BandwidthBurst
+	}
+	burst := c.BandwidthLimit
+	if burst < MinBandwidthBurst {
+		burst = MinBandwidthBurst
+	}
+	if burst > MaxBandwidthBurst {
+		burst = MaxBandwidthBurst
+	}
+	return int(burst)
+}
+
+// MeshKeyEnabled reports whether mesh peers are trusted by this node. The key
+// itself is never exposed.
+func (s *Server) MeshKeyEnabled() bool { return s.derp.HasMeshKey() }
 
 // TLS reports whether the server serves TLS.
 func (c Config) TLS() bool { return c.CertFile != "" && c.CertKeyFile != "" }
@@ -249,6 +312,11 @@ func (s *Server) Serve(ctx context.Context) error {
 	ln, err := net.Listen("tcp", s.cfg.ListenAddr)
 	if err != nil {
 		return fmt.Errorf("veil: listening on %s: %w", s.cfg.ListenAddr, err)
+	}
+	if burst := s.cfg.bandwidthBurst(); burst > 0 {
+		ln = newLimitedListener(ln, rate.Limit(s.cfg.BandwidthLimit), burst)
+		s.log.Info("veil per-connection bandwidth limit enabled",
+			"bytes_per_sec", s.cfg.BandwidthLimit, "burst", burst)
 	}
 	s.mu.Lock()
 	s.listener = ln
