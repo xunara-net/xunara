@@ -46,6 +46,62 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 CREATE INDEX IF NOT EXISTS idx_audit_events_ts ON audit_events(ts);
 `,
+
+	// v2: the trust-plane state machine: login transactions, browser
+	// sessions, and device approvals. Three tables, three objects: they share
+	// nothing but identifiers (AGENTS.md section 10).
+	`
+CREATE TABLE IF NOT EXISTS auth_transactions (
+	id                   TEXT    PRIMARY KEY,
+	provider_id          TEXT    NOT NULL,
+	state                TEXT    NOT NULL,
+	nonce                TEXT    NOT NULL,
+	pkce_verifier        TEXT    NOT NULL,
+	pkce_challenge       TEXT    NOT NULL,
+	pkce_method          TEXT    NOT NULL,
+	redirect_uri         TEXT    NOT NULL,
+	return_to            TEXT    NOT NULL DEFAULT '',
+	requested_action     TEXT    NOT NULL DEFAULT '',
+	machine_login_id     TEXT    NOT NULL DEFAULT '',
+	browser_session_hash TEXT    NOT NULL,
+	created_at           INTEGER NOT NULL,
+	expires_at           INTEGER NOT NULL,
+	consumed_at          INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_auth_transactions_expires ON auth_transactions(expires_at);
+
+CREATE TABLE IF NOT EXISTS sessions (
+	id             TEXT    PRIMARY KEY,
+	token_hash     TEXT    NOT NULL UNIQUE,
+	user_id        INTEGER NOT NULL,
+	auth_method    TEXT    NOT NULL DEFAULT '',
+	created_at     INTEGER NOT NULL,
+	expires_at     INTEGER NOT NULL,
+	last_seen_at   INTEGER,
+	revoked_at     INTEGER,
+	revoked_reason TEXT    NOT NULL DEFAULT '',
+	rotated_from   TEXT    NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS device_authorizations (
+	id               TEXT    PRIMARY KEY,
+	machine_key      TEXT    NOT NULL,
+	node_key         TEXT    NOT NULL,
+	user_id          INTEGER,
+	approved_by      INTEGER,
+	state            TEXT    NOT NULL,
+	requested_action TEXT    NOT NULL DEFAULT '',
+	client_metadata  TEXT    NOT NULL DEFAULT '',
+	created_at       INTEGER NOT NULL,
+	expires_at       INTEGER NOT NULL,
+	approved_at      INTEGER,
+	denied_at        INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_device_authorizations_node ON device_authorizations(node_key);
+CREATE INDEX IF NOT EXISTS idx_device_authorizations_expires ON device_authorizations(expires_at);
+`,
 }
 
 // SQLiteStore is a durable [Store] sharing the control plane's database.

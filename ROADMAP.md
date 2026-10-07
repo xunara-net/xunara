@@ -216,7 +216,14 @@ reference/{go-oidc,oauth2,dex,webauthn}
 ## M4 — Identity & Login（Trust Plane）
 
 - M4a 已完成：见 M3 段落的「Identity 基础层」。
-- `IdentityProvider` 接口 + Provider Registry（本地 / Generic OIDC / WebAuthn）。
+- M4b-1 已完成：`IdentityProvider` 接口 + Provider Registry + 内置 LocalLogin；
+  `AuthTransaction` / `Session` / `DeviceAuthorization` 三张表、三个对象，全部走 SQLite（无 server-local map）。
+  - AuthTransaction：state/nonce/PKCE(S256) 生成，浏览器绑定 secret 只存 SHA-256，
+    `ConsumeAuthTransaction` 原子单次消费（code/state replay 防护），过期清扫。
+  - Session：token 只存哈希，支持过期、吊销、并行登出、轮换（旧 token 立即失效）、LastSeen。
+  - DeviceAuthorization：绑定精确 (machine_key, node_key)，审批/拒绝原子条件更新，
+    重复审批幂等、他人重放拒绝、过期拒绝。
+  - 测试：`identity/state_machine_test.go`（生命周期 + 重放/过期/轮换/跨用户）。
 - `AuthTransaction` / `Session` / `DeviceAuthorization` **三者分离**（见 `AGENTS.md` §10）。
 - External Identity 唯一键 `(provider_id, subject)`，Email 仅属性。
 - OIDC 安全清单：state / nonce / PKCE(S256) / issuer / audience / signature / exp / iat / redirect allowlist / JWKS rotation / clock skew / code & state replay。

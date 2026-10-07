@@ -61,4 +61,7 @@ type Store interface {
 	UserStore
 	ExternalIdentityStore
 	AuditStore
+	AuthTransactionStore
+	SessionStore
+	DeviceAuthorizationStore
 }

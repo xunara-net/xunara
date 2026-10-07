@@ -1,0 +1,185 @@
+package identity
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	"tailscale.com/tailcfg"
+)
+
+const deviceAuthorizationColumns = "id, machine_key, node_key, user_id, approved_by, state, requested_action, " +
+	"client_metadata, created_at, expires_at, approved_at, denied_at"
+
+// CreateDeviceAuthorization implements [DeviceAuthorizationStore].
+func (s *SQLiteStore) CreateDeviceAuthorization(opts NewDeviceAuthorizationOptions) (DeviceAuthorization, error) {
+	if opts.MachineKey == "" || opts.NodeKey == "" {
+		return DeviceAuthorization{}, fmt.Errorf("identity: device authorization needs a machine key and a node key")
+	}
+
+	ttl := opts.TTL
+	if ttl <= 0 {
+		ttl = DefaultDeviceAuthorizationTTL
+	}
+
+	id := opts.ID
+	if id == "" {
+		var err error
+		id, err = newSecret()
+		if err != nil {
+			return DeviceAuthorization{}, err
+		}
+	}
+
+	now := time.Now().UTC()
+	da := DeviceAuthorization{
+		ID:              id,
+		MachineKey:      opts.MachineKey,
+		NodeKey:         opts.NodeKey,
+		State:           DevicePending,
+		RequestedAction: opts.RequestedAction,
+		ClientMetadata:  opts.ClientMetadata,
+		CreatedAt:       now,
+		ExpiresAt:       now.Add(ttl),
+	}
+
+	if _, err := s.db.ExecContext(context.Background(),
+		`INSERT INTO device_authorizations (`+deviceAuthorizationColumns+`)
+		 VALUES (?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL, NULL)`,
+		da.ID, da.MachineKey, da.NodeKey, string(da.State), da.RequestedAction, da.ClientMetadata,
+		da.CreatedAt.UnixNano(), da.ExpiresAt.UnixNano()); err != nil {
+		return DeviceAuthorization{}, fmt.Errorf("identity: creating device authorization: %w", err)
+	}
+	return da, nil
+}
+
+// GetDeviceAuthorization implements [DeviceAuthorizationStore].
+func (s *SQLiteStore) GetDeviceAuthorization(id string) (DeviceAuthorization, bool) {
+	row := s.db.QueryRowContext(context.Background(),
+		"SELECT "+deviceAuthorizationColumns+" FROM device_authorizations WHERE id = ?", id)
+	da, err := scanDeviceAuthorization(row)
+	if err != nil {
+		return DeviceAuthorization{}, false
+	}
+	return da, true
+}
+
+// ApproveDeviceAuthorization implements [DeviceAuthorizationStore].
+//
+// The UPDATE is conditional on the row still being pending and unexpired, so
+// two concurrent approvals cannot both write: the second observes the first.
+func (s *SQLiteStore) ApproveDeviceAuthorization(id string, userID tailcfg.UserID) (DeviceAuthorization, error) {
+	now := time.Now().UTC()
+
+	res, err := s.db.ExecContext(context.Background(),
+		`UPDATE device_authorizations
+		 SET state = ?, user_id = ?, approved_by = ?, approved_at = ?
+		 WHERE id = ? AND state = ? AND expires_at > ?`,
+		string(DeviceApproved), int64(userID), int64(userID), now.UnixNano(),
+		id, string(DevicePending), now.UnixNano())
+	if err != nil {
+		return DeviceAuthorization{}, fmt.Errorf("identity: approving device authorization: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return DeviceAuthorization{}, fmt.Errorf("identity: approving device authorization: %w", err)
+	}
+
+	da, ok := s.GetDeviceAuthorization(id)
+	switch {
+	case affected == 1:
+		if !ok {
+			return DeviceAuthorization{}, ErrDeviceNotFound
+		}
+		return da, nil
+	case !ok:
+		return DeviceAuthorization{}, ErrDeviceNotFound
+	case da.Expired(now):
+		return da, ErrDeviceExpired
+	case da.State == DeviceApproved && da.ApprovedBy == userID:
+		// A double-click or a retried request is not a new decision.
+		return da, nil
+	default:
+		return da, ErrDeviceDecided
+	}
+}
+
+// DenyDeviceAuthorization implements [DeviceAuthorizationStore].
+func (s *SQLiteStore) DenyDeviceAuthorization(id string, userID tailcfg.UserID) (DeviceAuthorization, error) {
+	now := time.Now().UTC()
+
+	res, err := s.db.ExecContext(context.Background(),
+		`UPDATE device_authorizations
+		 SET state = ?, denied_at = ?
+		 WHERE id = ? AND state = ? AND expires_at > ?`,
+		string(DeviceDenied), now.UnixNano(), id, string(DevicePending), now.UnixNano())
+	if err != nil {
+		return DeviceAuthorization{}, fmt.Errorf("identity: denying device authorization: %w", err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return DeviceAuthorization{}, fmt.Errorf("identity: denying device authorization: %w", err)
+	}
+
+	da, ok := s.GetDeviceAuthorization(id)
+	switch {
+	case affected == 1:
+		if !ok {
+			return DeviceAuthorization{}, ErrDeviceNotFound
+		}
+		return da, nil
+	case !ok:
+		return DeviceAuthorization{}, ErrDeviceNotFound
+	case da.Expired(now):
+		return da, ErrDeviceExpired
+	case da.State == DeviceDenied:
+		return da, nil
+	default:
+		return da, ErrDeviceDecided
+	}
+}
+
+// DeleteExpiredDeviceAuthorizations implements [DeviceAuthorizationStore].
+func (s *SQLiteStore) DeleteExpiredDeviceAuthorizations(now time.Time) (int64, error) {
+	res, err := s.db.ExecContext(context.Background(),
+		"DELETE FROM device_authorizations WHERE expires_at <= ? AND state = ?",
+		now.UnixNano(), string(DevicePending))
+	if err != nil {
+		return 0, fmt.Errorf("identity: deleting expired device authorizations: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+func scanDeviceAuthorization(sc rowScanner) (DeviceAuthorization, error) {
+	var (
+		da         DeviceAuthorization
+		state      string
+		userID     sql.NullInt64
+		approvedBy sql.NullInt64
+		createdAt  int64
+		expiresAt  int64
+		approvedAt sql.NullInt64
+		deniedAt   sql.NullInt64
+	)
+	if err := sc.Scan(&da.ID, &da.MachineKey, &da.NodeKey, &userID, &approvedBy, &state,
+		&da.RequestedAction, &da.ClientMetadata, &createdAt, &expiresAt, &approvedAt, &deniedAt); err != nil {
+		return DeviceAuthorization{}, err
+	}
+	da.State = DeviceAuthorizationState(state)
+	if userID.Valid {
+		da.UserID = tailcfg.UserID(userID.Int64)
+	}
+	if approvedBy.Valid {
+		da.ApprovedBy = tailcfg.UserID(approvedBy.Int64)
+	}
+	da.CreatedAt = time.Unix(0, createdAt).UTC()
+	da.ExpiresAt = time.Unix(0, expiresAt).UTC()
+	if approvedAt.Valid {
+		da.ApprovedAt = time.Unix(0, approvedAt.Int64).UTC()
+	}
+	if deniedAt.Valid {
+		da.DeniedAt = time.Unix(0, deniedAt.Int64).UTC()
+	}
+	return da, nil
+}
