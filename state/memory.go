@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/netip"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"tailscale.com/types/key"
@@ -35,6 +36,9 @@ type MemoryStore struct {
 	byMach map[key.MachinePublic][]NodeID
 
 	preauth map[string]PreAuthKey
+
+	// configRevision counts out-of-band configuration changes.
+	configRevision atomic.Uint64
 
 	ip4 *ipAllocator
 	ip6 *ipAllocator
@@ -191,6 +195,29 @@ func (s *MemoryStore) DeleteNode(id NodeID) error {
 	delete(s.byNode, n.NodeKey)
 	delete(s.byStab, n.StableID)
 	s.byMach[n.MachineKey] = removeID(s.byMach[n.MachineKey], id)
+	return nil
+}
+
+func (s *MemoryStore) SetNodeApprovedRoutes(id NodeID, routes []netip.Prefix) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	n, ok := s.byID[id]
+	if !ok {
+		return fmt.Errorf("state: node %d not found", id)
+	}
+
+	n.ApprovedRoutes = normalizeRoutes(routes)
+	s.byID[id] = n
+	return nil
+}
+
+// ConfigRevision returns the in-process configuration revision.
+func (s *MemoryStore) ConfigRevision() uint64 { return s.configRevision.Load() }
+
+// BumpConfigRevision advances the configuration revision.
+func (s *MemoryStore) BumpConfigRevision() error {
+	s.configRevision.Add(1)
 	return nil
 }
 

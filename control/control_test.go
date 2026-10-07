@@ -54,6 +54,13 @@ func newServerWithConfig(t *testing.T, cfg Config) *Server {
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
+
+	// Tests serve Handler directly instead of calling Serve, so the background
+	// workers (janitor, config watcher) have to be started explicitly.
+	ctx, cancel := context.WithCancel(context.Background())
+	s.Start(ctx)
+	t.Cleanup(cancel)
+
 	return s
 }
 

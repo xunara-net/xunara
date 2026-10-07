@@ -184,12 +184,22 @@ func (s *Server) recordMapRequest(node state.Node, req tailcfg.MapRequest) state
 		node.Endpoints = slices.Clone(req.Endpoints)
 		changed = true
 	}
-	if req.Hostinfo != nil && node.Hostinfo != req.Hostinfo {
-		node.Hostinfo = req.Hostinfo
-		if req.Hostinfo.Hostname != "" {
-			node.Hostname = req.Hostinfo.Hostname
+	if req.Hostinfo != nil {
+		hi := *req.Hostinfo
+		// Clients only send NetInfo when it changed. Carrying the stored value
+		// over keeps PreferredDERP (hence the node's HomeDERP input) from being
+		// clobbered by a routine update. Mirrors
+		// reference/headscale/hscontrol/state/maprequest.go:netInfoFromMapRequest.
+		if hi.NetInfo == nil && node.Hostinfo != nil {
+			hi.NetInfo = node.Hostinfo.NetInfo
 		}
-		changed = true
+		if !node.Hostinfo.Equal(&hi) {
+			node.Hostinfo = &hi
+			if hi.Hostname != "" {
+				node.Hostname = hi.Hostname
+			}
+			changed = true
+		}
 	}
 	if node.HomeDERP == 0 {
 		if region, ok := s.singleDERPRegion(); ok {

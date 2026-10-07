@@ -29,6 +29,8 @@ func main() {
 	switch os.Args[1] {
 	case "preauthkey", "pak":
 		runPreAuthKey(os.Args[2:])
+	case "routes":
+		runRoutes(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -42,9 +44,12 @@ func usage() {
 	fmt.Fprint(os.Stderr, `Usage: xunara <command> [options]
 
 Commands:
-  preauthkey create   Create a pre-authentication key
-  preauthkey list     List pre-authentication keys
-  preauthkey delete   Delete a pre-authentication key
+  preauthkey create    Create a pre-authentication key
+  preauthkey list      List pre-authentication keys
+  preauthkey delete    Delete a pre-authentication key
+  routes list          List subnet routes and their approval state
+  routes approve       Approve subnet routes (or exit-node routes) for a node
+  routes unapprove     Withdraw approval for subnet routes
 
 Run "xunara <command> -h" for command options.
 `)

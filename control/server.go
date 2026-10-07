@@ -70,6 +70,9 @@ type Server struct {
 	pending       map[string]*pendingRegistration
 	pendingByNode map[key.NodePublic]string
 
+	// startOnce guards the background workers started by [Server.Start].
+	startOnce sync.Once
+
 	// sessMu guards control-session bookkeeping and netmap change watchers.
 	sessMu        sync.Mutex
 	online        map[state.NodeID]int
@@ -229,6 +232,18 @@ func (s *Server) Handler() http.Handler {
 	return r
 }
 
+// Start launches the server's background workers: the ephemeral-node janitor
+// and the out-of-band configuration watcher. They run until ctx is cancelled.
+//
+// Serve calls Start itself; call it directly when the HTTP handler is served by
+// something else (tests, or an embedding process).
+func (s *Server) Start(ctx context.Context) {
+	s.startOnce.Do(func() {
+		go s.runJanitor(ctx)
+		go s.runConfigWatcher(ctx)
+	})
+}
+
 // Serve runs the HTTP server until ctx is cancelled.
 func (s *Server) Serve(ctx context.Context) error {
 	srv := &http.Server{
@@ -237,7 +252,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
-	go s.runJanitor(ctx)
+	s.Start(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

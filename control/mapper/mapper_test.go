@@ -3,6 +3,7 @@ package mapper
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -137,19 +138,116 @@ func TestNodeMarksExpiredKeys(t *testing.T) {
 	expired := testNode(1, "expired")
 	expired.Expiry = time.Now().Add(-time.Hour)
 
-	if got := Node(expired, true, neverOnline); !got.Expired {
+	if got := Node(expired, true, neverOnline, nil); !got.Expired {
 		t.Error("Expired = false for a node whose key expiry has passed")
 	}
 
 	future := testNode(2, "future")
 	future.Expiry = time.Now().Add(time.Hour)
 
-	if got := Node(future, true, neverOnline); got.Expired {
+	if got := Node(future, true, neverOnline, nil); got.Expired {
 		t.Error("Expired = true for a node whose key expiry is in the future")
 	}
 
 	never := testNode(3, "never")
-	if got := Node(never, true, neverOnline); got.Expired {
+	if got := Node(never, true, neverOnline, nil); got.Expired {
 		t.Error("Expired = true for a node that never expires")
+	}
+}
+
+// withRoutes marks a node as advertising and being approved for routes.
+func withRoutes(n state.Node, announced, approved []netip.Prefix) state.Node {
+	n.Hostinfo = &tailcfg.Hostinfo{RoutableIPs: announced}
+	n.ApprovedRoutes = approved
+	return n
+}
+
+func prefixList(t *testing.T, in []netip.Prefix) []string {
+	t.Helper()
+	out := make([]string, 0, len(in))
+	for _, p := range in {
+		out = append(out, p.String())
+	}
+	return out
+}
+
+func TestSelfAddressesAreAlwaysAllowed(t *testing.T) {
+	self := testNode(1, "self")
+
+	got := Node(self, true, neverOnline, NewRouteTable([]state.Node{self}))
+	if len(got.AllowedIPs) != 2 {
+		t.Fatalf("AllowedIPs = %v, want the two self addresses", got.AllowedIPs)
+	}
+	if len(got.PrimaryRoutes) != 0 {
+		t.Errorf("PrimaryRoutes = %v, want empty", got.PrimaryRoutes)
+	}
+}
+
+func TestAllowedIPsUseApprovedAnnouncedRoutesOnly(t *testing.T) {
+	subnet := netip.MustParsePrefix("192.168.1.0/24")
+	notApproved := netip.MustParsePrefix("10.0.0.0/8")
+	approvedNotAnnounced := netip.MustParsePrefix("172.16.0.0/12")
+
+	self := withRoutes(testNode(1, "router"),
+		[]netip.Prefix{subnet, notApproved},
+		[]netip.Prefix{subnet, approvedNotAnnounced})
+
+	got := Node(self, true, neverOnline, NewRouteTable([]state.Node{self}))
+
+	want := []string{"100.64.0.1/32", "192.168.1.0/24", "fd7a:115c:a1e0::1/128"}
+	if diff := prefixList(t, got.AllowedIPs); !slices.Equal(diff, want) {
+		t.Errorf("AllowedIPs = %v, want %v", diff, want)
+	}
+	if diff := prefixList(t, got.PrimaryRoutes); !slices.Equal(diff, []string{"192.168.1.0/24"}) {
+		t.Errorf("PrimaryRoutes = %v, want [192.168.1.0/24]", diff)
+	}
+}
+
+func TestExitRoutesAreAllowedButNotPrimary(t *testing.T) {
+	self := withRoutes(testNode(1, "exit"),
+		[]netip.Prefix{state.ExitRouteV4, state.ExitRouteV6},
+		[]netip.Prefix{state.ExitRouteV4, state.ExitRouteV6})
+
+	got := Node(self, true, neverOnline, NewRouteTable([]state.Node{self}))
+
+	want := []string{"0.0.0.0/0", "100.64.0.1/32", "::/0", "fd7a:115c:a1e0::1/128"}
+	if diff := prefixList(t, got.AllowedIPs); !slices.Equal(diff, want) {
+		t.Errorf("AllowedIPs = %v, want %v", diff, want)
+	}
+	if len(got.PrimaryRoutes) != 0 {
+		t.Errorf("PrimaryRoutes = %v, want empty for an exit-only node", got.PrimaryRoutes)
+	}
+}
+
+func TestRouteElectionPicksLowestNodeID(t *testing.T) {
+	route := netip.MustParsePrefix("10.10.0.0/16")
+
+	first := withRoutes(testNode(3, "three"), []netip.Prefix{route}, []netip.Prefix{route})
+	second := withRoutes(testNode(7, "seven"), []netip.Prefix{route}, []netip.Prefix{route})
+
+	nodes := []state.Node{first, second}
+	routes := NewRouteTable(nodes)
+
+	if got := routes[route]; got != first.ID {
+		t.Fatalf("elected primary = %d, want %d", got, first.ID)
+	}
+
+	// Both nodes still carry the prefix in PrimaryRoutes? No: only the elected
+	// router serves it, the other must not claim the prefix to peers.
+	primary := Node(first, true, neverOnline, routes)
+	backup := Node(second, true, neverOnline, routes)
+
+	if diff := prefixList(t, primary.PrimaryRoutes); !slices.Equal(diff, []string{"10.10.0.0/16"}) {
+		t.Errorf("primary PrimaryRoutes = %v", diff)
+	}
+	if len(backup.PrimaryRoutes) != 0 {
+		t.Errorf("backup PrimaryRoutes = %v, want empty", backup.PrimaryRoutes)
+	}
+
+	// The backup keeps its own addresses in AllowedIPs.
+	for _, a := range backup.AllowedIPs {
+		if a == route {
+			t.Errorf("backup AllowedIPs still contains the elected route: %v", backup.AllowedIPs)
+		}
 	}
 }

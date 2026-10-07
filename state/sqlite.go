@@ -64,6 +64,11 @@ CREATE TABLE IF NOT EXISTS preauthkeys (
 	used_at   INTEGER
 );
 `,
+
+	// v3: approved subnet routes.
+	`
+ALTER TABLE nodes ADD COLUMN approved_routes TEXT NOT NULL DEFAULT '[]';
+`,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.
@@ -144,7 +149,8 @@ var _ Store = (*SQLiteStore)(nil)
 
 // nodeColumns is the column list every node SELECT and INSERT agrees on.
 const nodeColumns = `id, stable_id, machine_key, node_key, disco_key, user_id, hostname,
-	ipv4, ipv6, endpoints, home_derp, cap_ver, hostinfo, last_seen, expiry, created, method, ephemeral`
+	ipv4, ipv6, endpoints, home_derp, cap_ver, hostinfo, last_seen, expiry, created, method, ephemeral,
+	approved_routes`
 
 func (s *SQLiteStore) GetNodeByID(id NodeID) (Node, bool) {
 	return s.queryNode(context.Background(), "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", int64(id))
@@ -235,11 +241,12 @@ func scanNode(sc scanner) (Node, error) {
 		created   int64
 		method    string
 		ephemeral int64
+		approved  string
 	)
 
 	err := sc.Scan(&id, &stableID, &machineS, &nodeS, &discoS, &userID, &hostname,
 		&ipv4, &ipv6, &endpoints, &homeDERP, &capVer, &hostinfo, &lastSeen, &expiry,
-		&created, &method, &ephemeral)
+		&created, &method, &ephemeral, &approved)
 	if err != nil {
 		return Node{}, err
 	}
@@ -294,8 +301,53 @@ func scanNode(sc scanner) (Node, error) {
 	if err := decodeEndpoints(endpoints, &n); err != nil {
 		return Node{}, err
 	}
+	if n.ApprovedRoutes, err = decodeRoutes(approved); err != nil {
+		return Node{}, err
+	}
 
 	return n, nil
+}
+
+// decodeRoutes parses the JSON encoding of a route list.
+func decodeRoutes(encoded string) ([]netip.Prefix, error) {
+	if encoded == "" || encoded == "[]" {
+		return nil, nil
+	}
+
+	var raw []string
+	if err := json.Unmarshal([]byte(encoded), &raw); err != nil {
+		return nil, fmt.Errorf("state: parsing routes: %w", err)
+	}
+
+	routes := make([]netip.Prefix, 0, len(raw))
+	for _, s := range raw {
+		p, err := netip.ParsePrefix(s)
+		if err != nil {
+			return nil, fmt.Errorf("state: parsing route %q: %w", s, err)
+		}
+		routes = append(routes, p)
+	}
+	return normalizeRoutes(routes), nil
+}
+
+// encodeRoutes renders a route list as JSON. It always returns valid JSON so
+// that the NOT NULL column stays readable.
+func encodeRoutes(routes []netip.Prefix) (string, error) {
+	normalized := normalizeRoutes(routes)
+	if len(normalized) == 0 {
+		return "[]", nil
+	}
+
+	raw := make([]string, 0, len(normalized))
+	for _, r := range normalized {
+		raw = append(raw, r.String())
+	}
+
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return "", fmt.Errorf("state: encoding routes: %w", err)
+	}
+	return string(b), nil
 }
 
 func decodeEndpoints(encoded string, n *Node) error {
@@ -394,9 +446,13 @@ func (s *SQLiteStore) CreateNode(n *Node) error {
 	if err != nil {
 		return err
 	}
+	approved, err := encodeRoutes(n.ApprovedRoutes)
+	if err != nil {
+		return err
+	}
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO nodes (`+nodeColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		int64(n.ID),
 		n.StableID,
 		textOf(n.MachineKey, ""),
@@ -415,6 +471,7 @@ func (s *SQLiteStore) CreateNode(n *Node) error {
 		n.Created.UnixNano(),
 		string(n.Method),
 		boolToInt(n.Ephemeral),
+		approved,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -431,12 +488,16 @@ func (s *SQLiteStore) UpdateNode(n Node) error {
 	if err != nil {
 		return err
 	}
+	approved, err := encodeRoutes(n.ApprovedRoutes)
+	if err != nil {
+		return err
+	}
 
 	res, err := s.db.ExecContext(context.Background(), `UPDATE nodes SET
 			stable_id = ?, machine_key = ?, node_key = ?, disco_key = ?, user_id = ?,
 			hostname = ?, ipv4 = ?, ipv6 = ?, endpoints = ?, home_derp = ?,
 			cap_ver = ?, hostinfo = ?, last_seen = ?, expiry = ?, created = ?,
-			method = ?, ephemeral = ?
+			method = ?, ephemeral = ?, approved_routes = ?
 		WHERE id = ?`,
 		n.StableID,
 		textOf(n.MachineKey, ""),
@@ -455,6 +516,7 @@ func (s *SQLiteStore) UpdateNode(n Node) error {
 		n.Created.UnixNano(),
 		string(n.Method),
 		boolToInt(n.Ephemeral),
+		approved,
 		int64(n.ID),
 	)
 	if err != nil {
@@ -482,11 +544,57 @@ func (s *SQLiteStore) DeleteNode(id NodeID) error {
 	return nil
 }
 
+func (s *SQLiteStore) SetNodeApprovedRoutes(id NodeID, routes []netip.Prefix) error {
+	encoded, err := encodeRoutes(routes)
+	if err != nil {
+		return err
+	}
+
+	res, err := s.db.ExecContext(context.Background(),
+		"UPDATE nodes SET approved_routes = ? WHERE id = ?", encoded, int64(id))
+	if err != nil {
+		return fmt.Errorf("state: setting approved routes for node %d: %w", id, err)
+	}
+	if affected, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("state: setting approved routes for node %d: %w", id, err)
+	} else if affected == 0 {
+		return fmt.Errorf("state: node %d not found", id)
+	}
+	return nil
+}
+
+// ConfigRevision returns the durable configuration revision.
+func (s *SQLiteStore) ConfigRevision() uint64 {
+	var value int64
+	err := s.db.QueryRowContext(context.Background(),
+		"SELECT value FROM counters WHERE name = ?", counterConfigRevision).Scan(&value)
+	if err != nil || value < 0 {
+		return 0
+	}
+	return uint64(value)
+}
+
+// BumpConfigRevision advances the configuration revision.
+func (s *SQLiteStore) BumpConfigRevision() error {
+	_, err := s.db.ExecContext(context.Background(),
+		`INSERT INTO counters (name, value) VALUES (?, 1)
+		 ON CONFLICT(name) DO UPDATE SET value = value + 1`, counterConfigRevision)
+	if err != nil {
+		return fmt.Errorf("state: bumping configuration revision: %w", err)
+	}
+	return nil
+}
+
 // Counter names backing ID and address allocation.
 const (
 	counterNextNodeID     = "next_node_id"
 	counterNextIPv4Offset = "next_ipv4_offset"
 	counterNextIPv6Offset = "next_ipv6_offset"
+
+	// counterConfigRevision counts out-of-band configuration changes. It is
+	// durable so that a running server notices changes made by another process
+	// (the administration CLI, or a second server instance).
+	counterConfigRevision = "config_revision"
 )
 
 // nextCounter returns the current value of a counter and advances it.

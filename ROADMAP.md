@@ -84,10 +84,22 @@ reference/{go-oidc,oauth2,dex,webauthn}
 - 测试：`control/mapper/mapper_test.go`（自/对等节点、排序、capver 分支、在线状态、Update 语义）；
   `control/noise_test.go` 新增 `TestNetmapPushesPeerChanges`（审批新节点后，已连接节点收到含该 peer 的推送）。
 
-待办（M2b）：
+已完成（M2b-1，路由与 Exit Node）：
+
+- `state.Node` 增加 `ApprovedRoutes`；`AnnouncedRoutes()` 从 `Hostinfo.RoutableIPs` 派生，
+  `EffectiveRoutes()` = 已通告 ∩ 已批准，`IsExitNode()`。
+- `Store.SetNodeApprovedRoutes` + `Store.ConfigRevision` / `BumpConfigRevision`：
+  运行中的服务通过 revision 轮询感知 CLI 等带外改动（多实例同样成立）。
+- mapper：`AllowedIPs` = 自身地址 + 生效路由；`PrimaryRoutes` 仅含非 exit 子网路由；
+  `RouteTable` 做 primary 选举（同一前缀多播报者时取最小 node ID），与上游一致。
+- `recordMapRequest` 不再是"每次请求都写库"：Hostinfo 变更用 `Hostinfo.Equal` 判定，
+  并在缺省 `NetInfo` 时沿用旧值（避免 PreferredDERP 被清空）。
+- `Server.Start(ctx)` 显式启动后台任务（janitor + config watcher）；`Serve` 内部调用。
+- CLI：`xunara routes list|approve|unapprove`（`-node <id|stable-id>`，`-all` 或显式前缀）。
+
+待办（M2b 剩余）：
 
 - 差分编码：`PeersChanged` / `PeersRemoved` / `PeersChangedPatch` 替代全量重发。
-- 路由与 Exit Node：`PrimaryRoutes`、`AllowedIPs` 来自已批准路由（需 route 审批）。
 - ACL → `PacketFilter` 真实策略引擎（替换 allow-all）。
 - MagicDNS 记录与 `/machine/set-dns`。
 - `MapSessionHandle` / `Seq` 会话续传；`ControlTime` 之外的 `ClientVersion` 下发。

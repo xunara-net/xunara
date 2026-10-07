@@ -81,3 +81,31 @@ func (s *Server) applyRegistrationDefaults(n *state.Node, now time.Time) {
 		}
 	}
 }
+
+// configWatchInterval is how often the server checks for configuration changes
+// made outside a control session (the administration CLI, or a second server
+// instance writing to the same database).
+const configWatchInterval = 2 * time.Second
+
+// runConfigWatcher re-pushes the netmap to every connected client whenever the
+// store's configuration revision advances.
+//
+// Node facts learned from a live session wake watchers directly; this covers
+// everything that happens out of band. See [state.Store.ConfigRevision].
+func (s *Server) runConfigWatcher(ctx context.Context) {
+	ticker := time.NewTicker(configWatchInterval)
+	defer ticker.Stop()
+
+	last := s.store.ConfigRevision()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if rev := s.store.ConfigRevision(); rev != last {
+				last = rev
+				s.notifyWatchers()
+			}
+		}
+	}
+}

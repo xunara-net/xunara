@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/netip"
 	"regexp"
+	"slices"
 	"testing"
 	"time"
 
@@ -312,6 +313,91 @@ func runStoreConformance(t *testing.T, newStore storeFactory) {
 		}
 		if got := s.GetNodesByMachineKey(mk); len(got) != 1 {
 			t.Errorf("after delete len = %d, want 1", len(got))
+		}
+	})
+	t.Run("approved routes round trip", func(t *testing.T) {
+		s := newStore(t)
+
+		n := Node{NodeKey: key.NewNode().Public()}
+		if err := s.CreateNode(&n); err != nil {
+			t.Fatalf("CreateNode: %v", err)
+		}
+		if got := n.ApprovedRoutes; len(got) != 0 {
+			t.Errorf("new node ApprovedRoutes = %v, want empty", got)
+		}
+
+		routes := []netip.Prefix{
+			netip.MustParsePrefix("192.168.1.0/24"),
+			netip.MustParsePrefix("10.0.0.0/8"),
+			netip.MustParsePrefix("192.168.1.0/24"), // duplicate
+		}
+		if err := s.SetNodeApprovedRoutes(n.ID, routes); err != nil {
+			t.Fatalf("SetNodeApprovedRoutes: %v", err)
+		}
+
+		got, ok := s.GetNodeByID(n.ID)
+		if !ok {
+			t.Fatal("node disappeared")
+		}
+		want := []netip.Prefix{
+			netip.MustParsePrefix("10.0.0.0/8"),
+			netip.MustParsePrefix("192.168.1.0/24"),
+		}
+		if !slices.Equal(got.ApprovedRoutes, want) {
+			t.Errorf("ApprovedRoutes = %v, want %v", got.ApprovedRoutes, want)
+		}
+
+		if err := s.SetNodeApprovedRoutes(n.ID, nil); err != nil {
+			t.Fatalf("clearing routes: %v", err)
+		}
+		if got, _ := s.GetNodeByID(n.ID); len(got.ApprovedRoutes) != 0 {
+			t.Errorf("ApprovedRoutes after clear = %v, want empty", got.ApprovedRoutes)
+		}
+
+		if err := s.SetNodeApprovedRoutes(n.ID+999, want); err == nil {
+			t.Error("expected an error for an unknown node")
+		}
+	})
+
+	t.Run("approved routes survive node updates", func(t *testing.T) {
+		s := newStore(t)
+
+		n := Node{NodeKey: key.NewNode().Public()}
+		if err := s.CreateNode(&n); err != nil {
+			t.Fatalf("CreateNode: %v", err)
+		}
+		route := netip.MustParsePrefix("10.1.0.0/16")
+		if err := s.SetNodeApprovedRoutes(n.ID, []netip.Prefix{route}); err != nil {
+			t.Fatalf("SetNodeApprovedRoutes: %v", err)
+		}
+
+		stored, _ := s.GetNodeByID(n.ID)
+		stored.Hostname = "renamed"
+		if err := s.UpdateNode(stored); err != nil {
+			t.Fatalf("UpdateNode: %v", err)
+		}
+
+		again, _ := s.GetNodeByID(n.ID)
+		if !slices.Equal(again.ApprovedRoutes, []netip.Prefix{route}) {
+			t.Errorf("ApprovedRoutes = %v, want %v", again.ApprovedRoutes, []netip.Prefix{route})
+		}
+	})
+
+	t.Run("configuration revision advances", func(t *testing.T) {
+		s := newStore(t)
+
+		start := s.ConfigRevision()
+		if err := s.BumpConfigRevision(); err != nil {
+			t.Fatalf("BumpConfigRevision: %v", err)
+		}
+		if got := s.ConfigRevision(); got != start+1 {
+			t.Errorf("ConfigRevision = %d, want %d", got, start+1)
+		}
+		if err := s.BumpConfigRevision(); err != nil {
+			t.Fatalf("BumpConfigRevision: %v", err)
+		}
+		if got := s.ConfigRevision(); got != start+2 {
+			t.Errorf("ConfigRevision = %d, want %d", got, start+2)
 		}
 	})
 }

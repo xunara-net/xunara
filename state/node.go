@@ -10,6 +10,7 @@ package state
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 	"time"
 
 	"tailscale.com/tailcfg"
@@ -94,6 +95,11 @@ type Node struct {
 	// Method records how the node was authorized.
 	Method RegisterMethod
 
+	// ApprovedRoutes are the subnet routes an administrator has approved for
+	// this node. Approval is independent of announcement: a route takes effect
+	// only while the node announces it, and stays approved across restarts.
+	ApprovedRoutes []netip.Prefix
+
 	// Ephemeral marks nodes that should be reaped once inactive.
 	Ephemeral bool
 }
@@ -136,6 +142,85 @@ func DefaultUser(id tailcfg.UserID, created time.Time) tailcfg.User {
 // never expired.
 func (n Node) Expired(now time.Time) bool {
 	return !n.Expiry.IsZero() && n.Expiry.Before(now)
+}
+
+// The two prefixes that make a node an exit node when it advertises and gets
+// approved for them. Mirror of the upstream helper of the same name
+// (tsaddr.IsExitRoute) without pulling in another module.
+var (
+	// ExitRouteV4 is the IPv4 default route.
+	ExitRouteV4 = netip.MustParsePrefix("0.0.0.0/0")
+	// ExitRouteV6 is the IPv6 default route.
+	ExitRouteV6 = netip.MustParsePrefix("::/0")
+)
+
+// IsExitRoute reports whether p is one of the default routes, which turn a
+// subnet router into an exit node.
+func IsExitRoute(p netip.Prefix) bool {
+	return p == ExitRouteV4 || p == ExitRouteV6
+}
+
+// AnnouncedRoutes returns the subnet routes the node currently advertises, as
+// reported in its Hostinfo.RoutableIPs and persisted with the Hostinfo.
+//
+// Announcing a route is only a request: the node serves it once an
+// administrator approves it. Announcements disappear when the client stops
+// advertising them, so they are not stored separately.
+func (n Node) AnnouncedRoutes() []netip.Prefix {
+	if n.Hostinfo == nil {
+		return nil
+	}
+	return slices.Clone(n.Hostinfo.RoutableIPs)
+}
+
+// EffectiveRoutes returns the advertised routes that are also approved, sorted
+// by prefix. These are the routes the node actually serves to the tailnet.
+func (n Node) EffectiveRoutes() []netip.Prefix {
+	if n.Hostinfo == nil || len(n.ApprovedRoutes) == 0 {
+		return nil
+	}
+
+	approved := make(map[netip.Prefix]bool, len(n.ApprovedRoutes))
+	for _, r := range n.ApprovedRoutes {
+		approved[r] = true
+	}
+
+	out := make([]netip.Prefix, 0, len(n.Hostinfo.RoutableIPs))
+	for _, r := range n.Hostinfo.RoutableIPs {
+		if approved[r] {
+			out = append(out, r)
+		}
+	}
+	slices.SortFunc(out, netip.Prefix.Compare)
+	return out
+}
+
+// IsExitNode reports whether the node serves an approved default route.
+func (n Node) IsExitNode() bool {
+	for _, r := range n.EffectiveRoutes() {
+		if IsExitRoute(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// normalizeRoutes returns a sorted, de-duplicated copy of routes with invalid
+// prefixes dropped. It returns nil for an empty result so that stored and
+// in-memory values compare equal.
+func normalizeRoutes(routes []netip.Prefix) []netip.Prefix {
+	out := make([]netip.Prefix, 0, len(routes))
+	for _, r := range routes {
+		if r.IsValid() {
+			out = append(out, r)
+		}
+	}
+	slices.SortFunc(out, netip.Prefix.Compare)
+	out = slices.Compact(out)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // FQDN returns the node's fully-qualified MagicDNS name, always with a

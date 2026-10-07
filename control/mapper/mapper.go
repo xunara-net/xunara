@@ -40,9 +40,10 @@ type Config struct {
 //
 // nodes must include the requesting node; it is filtered out of Peers.
 func Full(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc, capVer tailcfg.CapabilityVersion) *tailcfg.MapResponse {
+	routes := NewRouteTable(nodes)
 	resp := &tailcfg.MapResponse{
-		Node:         Node(self, true, online),
-		Peers:        peerNodes(self, nodes, online),
+		Node:         Node(self, true, online, routes),
+		Peers:        peerNodes(self, nodes, online, routes),
 		Domain:       cfg.Domain,
 		DNSConfig:    dnsConfig(cfg),
 		DERPMap:      cfg.DERPMap,
@@ -57,15 +58,45 @@ func Full(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc, ca
 // Only fields that can change are set: nil means "unchanged" on the client, so
 // DNSConfig, DERPMap, Domain and the packet filter are left alone.
 func Update(self state.Node, nodes []state.Node, online OnlineFunc) *tailcfg.MapResponse {
+	routes := NewRouteTable(nodes)
 	return &tailcfg.MapResponse{
-		Node:         Node(self, true, online),
-		Peers:        peerNodes(self, nodes, online),
+		Node:         Node(self, true, online, routes),
+		Peers:        peerNodes(self, nodes, online, routes),
 		UserProfiles: userProfiles(self, nodes),
 	}
 }
 
+// RouteTable maps a served route prefix to the node elected to serve it.
+//
+// A route can be advertised by more than one node. The tailnet serves it
+// through exactly one of them ("primary"), chosen deterministically as the
+// lowest node ID so that every mapper instance in a cluster agrees. This is
+// what upstream calls the primary route election; without it two routers would
+// both claim the prefix and traffic would flap.
+type RouteTable map[netip.Prefix]state.NodeID
+
+// NewRouteTable elects a primary node for every effectively served route among
+// nodes.
+func NewRouteTable(nodes []state.Node) RouteTable {
+	table := make(RouteTable)
+	for _, n := range nodes {
+		for _, r := range n.EffectiveRoutes() {
+			if id, ok := table[r]; !ok || n.ID < id {
+				table[r] = n.ID
+			}
+		}
+	}
+	return table
+}
+
 // Node converts a stored node into its wire representation.
-func Node(n state.Node, self bool, online OnlineFunc) *tailcfg.Node {
+//
+// AllowedIPs carries the node's own addresses plus the routes it serves (the
+// approved subset of what it advertises, minus prefixes another node is the
+// elected primary for). PrimaryRoutes carries the served subnet routes only:
+// exit routes reach the client through AllowedIPs and must not appear there,
+// matching upstream.
+func Node(n state.Node, self bool, online OnlineFunc, routes RouteTable) *tailcfg.Node {
 	addresses := make([]netip.Prefix, 0, 2)
 	if n.IPv4.IsValid() {
 		addresses = append(addresses, netip.PrefixFrom(n.IPv4, n.IPv4.BitLen()))
@@ -74,23 +105,37 @@ func Node(n state.Node, self bool, online OnlineFunc) *tailcfg.Node {
 		addresses = append(addresses, netip.PrefixFrom(n.IPv6, n.IPv6.BitLen()))
 	}
 
+	allowed := slices.Clone(addresses)
+	var primary []netip.Prefix
+	for _, r := range n.EffectiveRoutes() {
+		if id, ok := routes[r]; ok && id != n.ID {
+			continue
+		}
+		allowed = append(allowed, r)
+		if !state.IsExitRoute(r) {
+			primary = append(primary, r)
+		}
+	}
+	slices.SortFunc(allowed, netip.Prefix.Compare)
+
 	out := &tailcfg.Node{
-		ID:         tailcfg.NodeID(n.ID),
-		StableID:   tailcfg.StableNodeID(n.StableID),
-		Name:       n.FQDN(),
-		User:       n.UserID,
-		Key:        n.NodeKey,
-		KeyExpiry:  n.Expiry,
-		Expired:    n.Expired(time.Now()),
-		Machine:    n.MachineKey,
-		DiscoKey:   n.DiscoKey,
-		Addresses:  addresses,
-		AllowedIPs: addresses,
-		Endpoints:  slices.Clone(n.Endpoints),
-		HomeDERP:   n.HomeDERP,
-		Created:    n.Created,
-		Cap:        n.CapVer,
-		LastSeen:   n.LastSeen,
+		ID:            tailcfg.NodeID(n.ID),
+		StableID:      tailcfg.StableNodeID(n.StableID),
+		Name:          n.FQDN(),
+		User:          n.UserID,
+		Key:           n.NodeKey,
+		KeyExpiry:     n.Expiry,
+		Expired:       n.Expired(time.Now()),
+		Machine:       n.MachineKey,
+		DiscoKey:      n.DiscoKey,
+		Addresses:     addresses,
+		AllowedIPs:    allowed,
+		PrimaryRoutes: primary,
+		Endpoints:     slices.Clone(n.Endpoints),
+		HomeDERP:      n.HomeDERP,
+		Created:       n.Created,
+		Cap:           n.CapVer,
+		LastSeen:      n.LastSeen,
 	}
 
 	if n.Hostinfo != nil {
@@ -105,13 +150,13 @@ func Node(n state.Node, self bool, online OnlineFunc) *tailcfg.Node {
 }
 
 // peerNodes converts every node except self, sorted by ID as the wire requires.
-func peerNodes(self state.Node, nodes []state.Node, online OnlineFunc) []*tailcfg.Node {
+func peerNodes(self state.Node, nodes []state.Node, online OnlineFunc, routes RouteTable) []*tailcfg.Node {
 	out := make([]*tailcfg.Node, 0, len(nodes))
 	for _, n := range nodes {
 		if n.ID == self.ID {
 			continue
 		}
-		out = append(out, Node(n, false, online))
+		out = append(out, Node(n, false, online, routes))
 	}
 	slices.SortFunc(out, func(a, b *tailcfg.Node) int {
 		return int(a.ID) - int(b.ID)

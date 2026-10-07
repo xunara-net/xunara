@@ -2,6 +2,7 @@ package state
 
 import (
 	"errors"
+	"net/netip"
 
 	"tailscale.com/types/key"
 )
@@ -37,4 +38,18 @@ type Store interface {
 	UpdateNode(n Node) error
 	// DeleteNode removes a node. It is a no-op if the node is unknown.
 	DeleteNode(id NodeID) error
+
+	// SetNodeApprovedRoutes replaces the set of subnet routes approved for a
+	// node. It fails if the node is unknown. Approval is stored independently
+	// of announcement; see [Node.EffectiveRoutes].
+	SetNodeApprovedRoutes(id NodeID, routes []netip.Prefix) error
+
+	// ConfigRevision returns a counter that increases whenever tailnet
+	// configuration changes outside a control session's request path, such as
+	// when the administration CLI approves a route or edits a user. Servers
+	// poll it to learn that a netmap re-push is due. Implementations must make
+	// the counter durable so that it works across processes.
+	ConfigRevision() uint64
+	// BumpConfigRevision advances the configuration revision.
+	BumpConfigRevision() error
 }
