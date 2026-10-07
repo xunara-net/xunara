@@ -40,6 +40,8 @@ type MemoryStore struct {
 	dns       map[uint64]DNSRecord
 	nextDNSID uint64
 
+	deviceAttrs map[NodeID]map[string]any
+
 	tka TKAMeta
 
 	// configRevision counts out-of-band configuration changes.
@@ -52,17 +54,18 @@ type MemoryStore struct {
 // NewMemoryStore returns an empty in-memory store.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		nextID:    1,
-		nextKeyID: 1,
-		nextDNSID: 1,
-		byID:      make(map[NodeID]Node),
-		preauth:   make(map[string]PreAuthKey),
-		dns:       make(map[uint64]DNSRecord),
-		byNode:    make(map[key.NodePublic]NodeID),
-		byStab:    make(map[string]NodeID),
-		byMach:    make(map[key.MachinePublic][]NodeID),
-		ip4:       newIPAllocator(defaultIPv4Prefix),
-		ip6:       newIPAllocator(defaultIPv6Prefix),
+		nextID:      1,
+		nextKeyID:   1,
+		nextDNSID:   1,
+		byID:        make(map[NodeID]Node),
+		preauth:     make(map[string]PreAuthKey),
+		dns:         make(map[uint64]DNSRecord),
+		deviceAttrs: make(map[NodeID]map[string]any),
+		byNode:      make(map[key.NodePublic]NodeID),
+		byStab:      make(map[string]NodeID),
+		byMach:      make(map[key.MachinePublic][]NodeID),
+		ip4:         newIPAllocator(defaultIPv4Prefix),
+		ip6:         newIPAllocator(defaultIPv6Prefix),
 	}
 }
 
@@ -201,8 +204,68 @@ func (s *MemoryStore) DeleteNode(id NodeID) error {
 	delete(s.byID, id)
 	delete(s.byNode, n.NodeKey)
 	delete(s.byStab, n.StableID)
+	delete(s.deviceAttrs, id)
 	s.byMach[n.MachineKey] = removeID(s.byMach[n.MachineKey], id)
 	return nil
+}
+
+// SetNodeDeviceAttrs implements [DeviceAttrStore].
+func (s *MemoryStore) SetNodeDeviceAttrs(id NodeID, update map[string]any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.byID[id]; !ok {
+		return fmt.Errorf("state: node %d is unknown", id)
+	}
+	if len(update) == 0 {
+		return nil
+	}
+
+	attrs := s.deviceAttrs[id]
+	if attrs == nil {
+		attrs = make(map[string]any)
+	}
+	for name, value := range update {
+		if value == nil {
+			delete(attrs, name)
+			continue
+		}
+		attrs[name] = value
+	}
+	if len(attrs) == 0 {
+		delete(s.deviceAttrs, id)
+		return nil
+	}
+	s.deviceAttrs[id] = attrs
+	return nil
+}
+
+// NodeDeviceAttrs implements [DeviceAttrStore].
+func (s *MemoryStore) NodeDeviceAttrs(id NodeID) (map[string]any, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	attrs := s.deviceAttrs[id]
+	if len(attrs) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]any, len(attrs))
+	for name, value := range attrs {
+		out[name] = value
+	}
+	return out, nil
+}
+
+// NodeDeviceAttrCounts implements [DeviceAttrStore].
+func (s *MemoryStore) NodeDeviceAttrCounts() (map[NodeID]int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	counts := make(map[NodeID]int, len(s.deviceAttrs))
+	for id, attrs := range s.deviceAttrs {
+		counts[id] = len(attrs)
+	}
+	return counts, nil
 }
 
 func (s *MemoryStore) SetNodeApprovedRoutes(id NodeID, routes []netip.Prefix) error {

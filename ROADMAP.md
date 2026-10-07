@@ -60,7 +60,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
 已知限制（M2 起补齐）：
 
 - Store 无持久化；无预认证密钥（PAK）；`/register/{id}` 页面不自动审批（审批仅经 `ApproveRegistration` 接缝）。
-- 内层端点：`/machine/{register,map,set-dns,feature/query,audit-log,update-health,whoami,id-token}` 与 SSH check 已实现；`set-device-attr` 显式 501；TKA 见 M11、ID token 见 M13（均已完成）；Funnel 未处理。
+- 内层端点：`/machine/{register,map,set-dns,feature/query,audit-log,update-health,whoami,id-token,set-device-attr}` 与 SSH check 已实现，不再有 501；TKA 见 M11、ID token 见 M13、姿态属性见 M14（均已完成）；Funnel 未处理。
 
 ---
 
@@ -518,8 +518,9 @@ reference/{go-oidc,oauth2,dex,webauthn}
   - `GET /machine/whoami`：`tailscale debug ts2021` 的握手探针；按 Noise 会话
     machine key 找节点（多节点取最旧），返回 node id/stable id/FQDN/地址/
     短公钥；未注册 machine key 404。
-  - `PATCH /machine/set-device-attr` 显式 501（设备姿态属性未实现；不假装
-    接受再丢弃）。`POST /machine/id-token` 当时也是 501，M13 已实现。
+  - `PATCH /machine/set-device-attr` 与 `POST /machine/id-token` 当时都是
+    501（不假装接受再丢弃）；id-token 见 M13，姿态属性见 M14，两个端点均已
+    实现。
   - 测试：`control/machine_misc_test.go`（审计落库与净化、未知 action 400、
     跨节点 404、health 204/绑定、whoami 成功与未注册 404、set-device-attr 501）。
 - M6g 已完成：`/machine/feature/query`（serve / funnel 的启用指引）。
@@ -994,6 +995,49 @@ in-place re-registration 与 `HandleNodeFromAuthPath` 的 reauth/convert 语义�
     issuer/active kid、密钥不可用告警、无 issuer 文案）。
 - 明确不做：`userinfo`/`authorize`/`token`（不是登录 OP）、按 audience 的授权
   策略与限流、token 撤销列表（短 TTL + 一次性签发；依赖方自行缓存 JWKS）。
+
+---
+
+## M14 — 设备姿态属性（`/machine/set-device-attr`，进行中）
+
+目标：补上最后一个 501 内层端点。客户端（`tailscale set --report-posture` 的采集
+链路，corp 构建）经 Noise 发 `tailcfg.SetDeviceAttributesRequest{Version,NodeKey,
+Update}`（`AttrUpdate` = `map[string]any`，值可为 string / float64 / bool，
+`null` 表示删除）到 `PATCH /machine/set-device-attr`；响应 200 即成功。
+
+上游把该特性标为 experimental（tailscale/corp#24690），OSS 客户端里只有形状
+（`control/controlclient/direct.go:SetDeviceAttrs` + localapi
+`alpha-set-device-attrs`），没有消费方；属性值的语义（ACL `srcPosture` 条件）
+在上游控制面里，不在开源代码中。因此本构建的实现边界是：
+
+- 接受并**持久化**属性（不再"接受后丢弃"），审计"哪些属性被设置/删除"；
+- 不发明姿态语义：ACL `srcPosture` 条件仍未实现，属性目前是信息性的，
+  不参与任何允许/拒绝判断（这一点写进代码注释与本节，避免被误当成强制）；
+- 属性值不写审计：姿态数据可能含设备标识（AGENTS §8）。
+
+- `state`（迁移 v9）：
+  - 新表 `node_device_attrs(node_id, attr, value, updated_at)`，主键
+    `(node_id, attr)`，`FOREIGN KEY ... ON DELETE CASCADE`：删节点即删属性。
+    `value` 存 JSON 标量文本，string/number/bool 的类型在往返后保持不变。
+  - `DeviceAttrStore`（内嵌进 `Store`）：`SetNodeDeviceAttrs`（nil 值=删除，
+    其余=覆盖；未知节点报错）、`NodeDeviceAttrs`（返回副本）、
+    `NodeDeviceAttrCounts`（列表视图用计数，不携值）。内存与 SQLite 同步实现。
+  - 旧库（v8）可直接升级，有测试。
+- `control/deviceattrs.go`：
+  - `PATCH /machine/set-device-attr`（Noise 内层）：版本门 →
+    `getAndValidateNode`（只能写自己的属性，跨节点/未注册 404）→ 校验 →
+    落库 → 审计 `node.device_attrs_updated`（detail 只列设置/删除的属性名，
+    有序、截断）。空 update 是幂等 no-op。
+  - 校验 fail-closed：名字非空、≤128 字节、可打印 ASCII 无空格；字符串值
+    ≤256 字节且不含控制字符；number 必须有限；object/array 拒绝；一个节点的
+    属性 ≤64 个、编码后 ≤4096 字节；一次 update ≤256 项。**整批原子**：任一
+    项非法则整批 400，不部分应用。
+  - 400 的错误文本只回显属性名（经净化），绝不回显值。
+- 测试：`control/deviceattrs_test.go`（往返/合并/删除/幂等、审计只含属性名、
+  跨节点与未注册 404、版本门、8 种非法输入、64 上限与删除回退、4096 字节上限、
+  update 项数上限、审计 detail 格式、节点删除级联、未知节点边界，内存与 SQLite
+  两种实现）、`state/sqlite_test.go`（v8→v9 迁移）。
+- 管理面（只读）：见下一节增量（v2 HTTP / gRPC / Console / CLI）。
 
 ---
 

@@ -185,4 +185,8 @@ const (
 	// bearer credential and is never written: the record names the node and
 	// the audience, which is what an incident review needs to correlate.
 	AuditIDTokenIssued = "identity_token.issued"
+	// AuditDeviceAttrsUpdated records a node reporting device posture
+	// attributes about itself through /machine/set-device-attr. The detail
+	// names the attributes that were set or deleted, never their values.
+	AuditDeviceAttrsUpdated = "node.device_attrs_updated"
 )

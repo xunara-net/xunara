@@ -142,7 +142,7 @@ func (ns *noiseServer) router() http.Handler {
 		r.Post("/audit-log", ns.handleAuditLog)
 		r.Post("/update-health", ns.handleUpdateHealth)
 		r.Get("/whoami", ns.handleWhoami)
-		r.Patch("/set-device-attr", ns.handleNotImplemented("device posture attributes"))
+		r.Patch("/set-device-attr", ns.handleSetDeviceAttrs)
 		r.Post("/id-token", ns.handleIDToken)
 		r.Get("/ssh/action/{srcNodeID}/to/{dstNodeID}", ns.handleSSHAction)
 

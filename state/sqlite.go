@@ -112,6 +112,20 @@ INSERT OR IGNORE INTO tka_meta (id) VALUES (1);
 	`
 ALTER TABLE nodes ADD COLUMN nl_key TEXT NOT NULL DEFAULT '';
 `,
+
+	// v9: device posture attributes a node reports about itself through
+	// /machine/set-device-attr. Values are JSON scalars stored as JSON text so
+	// the type (string, number, bool) survives a round trip. The foreign key
+	// cascades: deleting a node drops its attributes.
+	`
+CREATE TABLE IF NOT EXISTS node_device_attrs (
+	node_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+	attr       TEXT    NOT NULL,
+	value      TEXT    NOT NULL,
+	updated_at INTEGER NOT NULL,
+	PRIMARY KEY (node_id, attr)
+);
+`,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.

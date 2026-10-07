@@ -12,10 +12,7 @@ import (
 )
 
 // This file implements the remaining inner (Noise) endpoints official clients
-// call: health reports, client audit logs, and the debug whoami probe. The one
-// endpoint this build cannot honour truthfully (device posture attributes) is
-// registered as an explicit 501 rather than being left to 404, so a client
-// sees "not supported" instead of "routing bug".
+// call: health reports, client audit logs, and the debug whoami probe.
 
 // maxAuditDetailsLen bounds the client-supplied detail string before it is
 // persisted; the audit log is durable, so unbounded input is a storage risk.
@@ -118,18 +115,6 @@ func (ns *noiseServer) handleWhoami(w http.ResponseWriter, req *http.Request) {
 		"node_key":     node.NodeKey.ShortString(),
 		"capabilities": int(tailcfg.CurrentCapabilityVersion),
 	})
-}
-
-// handleNotImplemented answers endpoints this build does not implement. A 501
-// is deliberate: it tells the client the feature is absent instead of letting
-// a 404 look like a server error.
-func (ns *noiseServer) handleNotImplemented(feature string) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
-		ns.server.log.Debug("unimplemented machine endpoint requested",
-			"endpoint", req.URL.Path, "feature", feature,
-			"machine_key", ns.machineKey.ShortString())
-		httpError(w, NewHTTPError(http.StatusNotImplemented, feature+" is not supported by this server", nil))
-	}
 }
 
 // cleanAuditDetails bounds and sanitises a client-supplied detail string: the

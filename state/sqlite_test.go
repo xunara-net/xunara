@@ -211,6 +211,45 @@ func TestSQLiteMigratesV7ToV8(t *testing.T) {
 	}
 }
 
+// TestSQLiteMigratesV8ToV9 simulates a database written before device posture
+// attributes existed: reopening it must create the table (v9) and keep the
+// node rows readable.
+func TestSQLiteMigratesV8ToV9(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	ctx := context.Background()
+	first := openTestSQLite(t, path)
+	n := Node{Hostname: "old", NodeKey: key.NewNode().Public()}
+	if err := first.CreateNode(&n); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "DROP TABLE node_device_attrs"); err != nil {
+		t.Fatalf("dropping node_device_attrs: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "PRAGMA user_version = 8"); err != nil {
+		t.Fatalf("downgrading schema version: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second := openTestSQLite(t, path)
+	got, ok := second.GetNodeByNodeKey(n.NodeKey)
+	if !ok {
+		t.Fatal("node did not survive the v8 -> v9 migration")
+	}
+	if err := second.SetNodeDeviceAttrs(got.ID, map[string]any{"os_version": "15.2"}); err != nil {
+		t.Fatalf("SetNodeDeviceAttrs after migration: %v", err)
+	}
+	attrs, err := second.NodeDeviceAttrs(got.ID)
+	if err != nil {
+		t.Fatalf("NodeDeviceAttrs after migration: %v", err)
+	}
+	if attrs["os_version"] != "15.2" {
+		t.Errorf("attributes after migration = %#v", attrs)
+	}
+}
+
 func TestSQLiteStoreConcurrentAccess(t *testing.T) {
 	s := openTestSQLite(t, filepath.Join(t.TempDir(), "state.db"))
 

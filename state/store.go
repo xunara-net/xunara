@@ -20,6 +20,7 @@ type Store interface {
 	PreAuthKeyStore
 	DNSRecordStore
 	TKAStore
+	DeviceAttrStore
 
 	// GetNodeByID returns the node with the given server-local ID.
 	GetNodeByID(id NodeID) (Node, bool)
