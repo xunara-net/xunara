@@ -976,6 +976,22 @@ in-place re-registration 与 `HandleNodeFromAuthPath` 的 reauth/convert 语义�
   tagged 节点无 user/uid、跨节点与未注册会话 404、audience 校验与版本门、
   无 issuer 时 501/404、JWKS 只有公有字段、discovery 内容）、
   `cmd/xunara/idtoken_test.go`（无密钥/有密钥/轮换三种 show 输出）。
+- 管理面（与 M12 同一模式：只读、无密钥材料）：
+  - HTTP `GET /api/v2/id-token`（read scope）；`GET /api/v2/meta` 增加
+    `identityTokensEnabled`。
+  - gRPC `PlatformService.GetIDTokenIssuer`（相同的 scope 规则与相同的值；
+    `Meta.identity_tokens_enabled` 同步；`platform.proto` 与 `api/gen` 已重新
+    生成）。
+  - Console Overview 增加 "Workload identity" 段落：未启用（无 issuer URL）/
+    已启用（issuer、jwks_uri、密钥数、active kid、TTL）/ 密钥不可用告警
+    （权限或文件损坏时只降级该段落，不影响整页）。
+  - 状态读取会让密钥环就位（与 JWKS 首次拉取一致）——否则"配置了 issuer 但
+    JWKS 为空"会让依赖方接入流程因为一个不真实的原因失败。
+  - 测试：`control/api_v2_test.go`（未认证 401、write-only 403、字段与 active
+    kid、无私钥字段、meta 标志、无 issuer 时 disabled 空数组）、
+    `control/grpc_platform_test.go`（未认证/缺 scope、与 `Server.IDTokenStatus()`
+    同值、无 issuer 时 disabled）、`control/console_test.go`（已启用渲染
+    issuer/active kid、密钥不可用告警、无 issuer 文案）。
 - 明确不做：`userinfo`/`authorize`/`token`（不是登录 OP）、按 audience 的授权
   策略与限流、token 撤销列表（短 TTL + 一次性签发；依赖方自行缓存 JWKS）。
 

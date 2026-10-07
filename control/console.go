@@ -191,6 +191,14 @@ func (s *Server) handleConsoleOverview(w http.ResponseWriter, r *http.Request) {
 	data["Agents"] = liveAgents
 	data["Policy"] = policyState
 	data["TailnetLock"] = s.TKAStatus()
+	// The issuer view is best-effort: a keyring an operator must fix (bad
+	// permissions, corrupt file) should not blank the whole overview.
+	if status, err := s.IDTokenStatus(); err == nil {
+		data["IDToken"] = status
+	} else {
+		data["IDTokenError"] = err.Error()
+		s.log.Warn("reading the identity-token issuer state for the console", "err", err)
+	}
 
 	s.renderConsole(w, consoleOverviewTemplate, data)
 }

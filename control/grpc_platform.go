@@ -195,7 +195,46 @@ func (g *grpcPlatformServer) GetMeta(ctx context.Context, _ *xunarav2.GetMetaReq
 		DerpMapConfigured:     s.cfg.DERPMap != nil,
 		DerpPolicy:            string(s.cfg.DERPPolicy.Mode),
 		DerpRegionsServed:     uint32(s.derpRegionsServed()),
+		IdentityTokensEnabled: s.tokens != nil,
 	}, nil
+}
+
+// GetIDTokenIssuer implements PlatformService.GetIDTokenIssuer: the same
+// read-only issuer state as GET /api/v2/id-token. Only public key material
+// (the JWKS content) and bookkeeping are reported; the private keys never
+// leave the server.
+func (g *grpcPlatformServer) GetIDTokenIssuer(ctx context.Context, _ *xunarav2.GetIDTokenIssuerRequest) (*xunarav2.IDTokenIssuerStatus, error) {
+	s, _, err := g.authorize(ctx, identity.ScopeRead)
+	if err != nil {
+		return nil, err
+	}
+
+	view, err := s.IDTokenStatus()
+	if err != nil {
+		s.log.Error("reading the identity-token issuer state", "err", err)
+		return nil, status.Error(codes.Internal, "identity-token issuer state is unavailable")
+	}
+
+	out := &xunarav2.IDTokenIssuerStatus{
+		Enabled:         view.Enabled,
+		Issuer:          view.Issuer,
+		JwksUrl:         view.JWKSURL,
+		Algorithm:       view.Algorithm,
+		TokenTtlSeconds: int64(view.TokenTTLSeconds),
+		ActiveKeyId:     view.ActiveKeyID,
+		Keys:            make([]*xunarav2.IDTokenSigningKey, 0, len(view.Keys)),
+	}
+	for _, key := range view.Keys {
+		entry := &xunarav2.IDTokenSigningKey{
+			Kid:     key.KID,
+			Created: timestamppb.New(key.Created),
+		}
+		if !key.Retired.IsZero() {
+			entry.Retired = timestamppb.New(key.Retired)
+		}
+		out.Keys = append(out.Keys, entry)
+	}
+	return out, nil
 }
 
 // GetTailnetLock implements PlatformService.GetTailnetLock: the same

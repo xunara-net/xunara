@@ -44,6 +44,12 @@ service PlatformService {
   // trusted key material, or the sealed disablement secret.
   rpc GetTailnetLock(GetTailnetLockRequest) returns (TailnetLockStatus);
 
+  // GetIDTokenIssuer reports the OIDC identity-token issuer this control
+  // plane exposes to nodes (POST /machine/id-token) and the public signing
+  // keys a relying party verifies tokens with. It never returns private key
+  // material.
+  rpc GetIDTokenIssuer(GetIDTokenIssuerRequest) returns (IDTokenIssuerStatus);
+
   // ListMachines returns machines ordered by id, resumable with page_token.
   rpc ListMachines(ListMachinesRequest) returns (ListMachinesResponse);
 
@@ -76,6 +82,7 @@ message Meta {
   bool derp_map_configured = 12;
   string derp_policy = 13;
   uint32 derp_regions_served = 14;
+  bool identity_tokens_enabled = 15;
 }
 
 message GetTailnetLockRequest {}
@@ -96,6 +103,35 @@ message TailnetLockNodeCounts {
   uint32 total = 1;
   uint32 signed = 2;
   uint32 unsigned = 3;
+}
+
+message GetIDTokenIssuerRequest {}
+
+// IDTokenIssuerStatus mirrors GET /api/v2/id-token.
+message IDTokenIssuerStatus {
+  // Enabled is false when the deployment has no issuer URL, in which case
+  // /machine/id-token answers 501 and the keys are empty.
+  bool enabled = 1;
+  // Issuer is the value of a token's iss claim, and the base of jwks_url.
+  string issuer = 2;
+  string jwks_url = 3;
+  // Algorithm is the JWS algorithm of every issued token.
+  string algorithm = 4;
+  // TokenTTLSeconds is how long an issued token is valid.
+  int64 token_ttl_seconds = 5;
+  // ActiveKeyID is the kid signing new tokens; empty when no key exists yet.
+  string active_key_id = 6;
+  // Keys are the keys published in the JWKS, newest last. Retired keys stay
+  // published until the tokens they signed have expired.
+  repeated IDTokenSigningKey keys = 7;
+}
+
+message IDTokenSigningKey {
+  string kid = 1;
+  google.protobuf.Timestamp created = 2;
+  // Retired is set once the key stopped signing; an absent value means the
+  // key is active.
+  google.protobuf.Timestamp retired = 3;
 }
 
 message Machine {

@@ -337,14 +337,7 @@ func TestIDTokenRejectsBadAudience(t *testing.T) {
 // reachable URL says so explicitly rather than signing a token with an empty
 // issuer.
 func TestIDTokenDisabledWithoutIssuer(t *testing.T) {
-	s, err := New(Config{StateDir: t.TempDir()})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	t.Cleanup(func() { s.Close() })
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	s.Start(ctx)
+	s := newServerWithoutIssuer(t)
 
 	hs := newTestHTTPServer(t, s)
 	conn, client, nodeKey := registerNode(t, s, hs, "no-issuer")
@@ -370,6 +363,23 @@ func TestIDTokenDisabledWithoutIssuer(t *testing.T) {
 			t.Errorf("GET %s status = %d, want 404", path, resp.StatusCode)
 		}
 	}
+}
+
+// newServerWithoutIssuer builds a server with no externally reachable URL,
+// hence no identity-token issuer. newServerWithConfig always fills in a URL,
+// so this is the one shape tests cannot reach through it.
+func newServerWithoutIssuer(t *testing.T) *Server {
+	t.Helper()
+
+	s, err := New(Config{StateDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	s.Start(ctx)
+	return s
 }
 
 // TestIDTokenJWKSPublishesPublicMaterialOnly checks the JWKS document shape:

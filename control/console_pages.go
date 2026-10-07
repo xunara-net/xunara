@@ -148,6 +148,22 @@ state. Node keys are no longer verified by peers.</p>
 <p>Not enabled. Node keys are not verified by peers; an administrator turns it on
 with <code>tailscale lock init</code> from a trusted machine.</p>
 {{end}}
+<h2>Workload identity</h2>
+{{if .IDTokenError}}
+<p><span class="warn">unavailable</span> — {{.IDTokenError}}</p>
+{{else if .IDToken.Enabled}}
+<p><span class="ok">issuer enabled</span> — nodes fetch identity tokens at
+<code>{{.IDToken.Issuer}}</code>/machine/id-token; relying parties verify them with the
+public keys at <code>{{.IDToken.JWKSURL}}</code>.</p>
+<p>{{len .IDToken.Keys}} signing key(s) published; the active key is
+<code>{{.IDToken.ActiveKeyID}}</code>. Issued tokens are valid for
+{{.IDToken.TokenTTLSeconds}} seconds and name the requesting node, never another one.
+Rotate the key with <code>xunara id-token rotate</code>.</p>
+{{else}}
+<p>Not enabled: this deployment has no externally reachable <code>-server-url</code>,
+so it has no issuer URL to be a trust anchor for, and nodes receive 501 from
+<code>/machine/id-token</code>.</p>
+{{end}}
 `)
 
 	consoleMachinesTemplate = consolePage("machines", `

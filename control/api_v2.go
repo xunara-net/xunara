@@ -49,6 +49,7 @@ func (s *Server) apiV2Router() http.Handler {
 
 	r.Get("/meta", s.handleAPIV2Meta)
 	r.Get("/tka", s.handleAPIV2TKA)
+	r.Get("/id-token", s.handleAPIV2IDToken)
 
 	r.Get("/machines", s.handleAPIV2Machines)
 	r.Get("/audit", s.handleAPIV2Audit)
@@ -156,6 +157,7 @@ func (s *Server) handleAPIV2Meta(w http.ResponseWriter, r *http.Request) {
 		"derpMapConfigured":     s.cfg.DERPMap != nil,
 		"derpPolicy":            string(s.cfg.DERPPolicy.Mode),
 		"derpRegionsServed":     s.derpRegionsServed(),
+		"identityTokensEnabled": s.tokens != nil,
 	})
 }
 
@@ -184,6 +186,25 @@ func (s *Server) handleAPIV2TKA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.TKAStatus())
+}
+
+// handleAPIV2IDToken implements GET /api/v2/id-token: the read-only state of
+// the OIDC identity-token issuer (issuer URL, JWKS location, signing keys and
+// which one is active). Only public key material is reported.
+func (s *Server) handleAPIV2IDToken(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireScope(w, r, identity.ScopeRead); !ok {
+		return
+	}
+
+	status, err := s.IDTokenStatus()
+	if err != nil {
+		// The error names the state-directory file that needs attention; it is
+		// for the operator reading the log, not for the API client.
+		s.log.Error("reading the identity-token issuer state", "err", err)
+		writeAPIError(w, http.StatusInternalServerError, "identity-token issuer state is unavailable")
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
 }
 
 // handleAPIV2Machines implements GET /api/v2/machines.

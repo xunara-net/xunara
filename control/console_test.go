@@ -14,6 +14,7 @@ import (
 	"tailscale.com/types/key"
 
 	"github.com/xunara/xunara/identity"
+	"github.com/xunara/xunara/idtoken"
 	"github.com/xunara/xunara/state"
 	"github.com/xunara/xunara/webhook"
 )
@@ -607,4 +608,70 @@ func TestConsoleOverviewTailnetLock(t *testing.T) {
 	if body := overview(); !strings.Contains(body, "disabled</span>") {
 		t.Errorf("overview does not report disablement:\n%s", body)
 	}
+}
+
+// TestConsoleOverviewWorkloadIdentity checks the overview's issuer section:
+// an enabled issuer with its public keys, a deployment without one, and the
+// warning an operator gets when the keyring needs attention.
+func TestConsoleOverviewWorkloadIdentity(t *testing.T) {
+	s := newServerWithConfig(t, Config{ServerURL: "https://login.example.com", Domain: "example.com"})
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/")
+
+	overview := func() string {
+		t.Helper()
+		return bodyString(t, getRequest(t, client, hs.URL+"/console/", cookie))
+	}
+
+	body := overview()
+	if !strings.Contains(body, "issuer enabled") {
+		t.Fatalf("overview does not report the issuer:\n%s", body)
+	}
+	if !strings.Contains(body, "https://login.example.com") ||
+		!strings.Contains(body, "https://login.example.com/.well-known/jwks.json") {
+		t.Errorf("overview does not show the issuer and JWKS URL:\n%s", body)
+	}
+	active := ""
+	for _, key := range mustIDTokenStatus(t, s).Keys {
+		if key.Active() {
+			active = key.KID
+		}
+	}
+	if active == "" || !strings.Contains(body, active) {
+		t.Errorf("overview does not show the active key %q:\n%s", active, body)
+	}
+
+	// A keyring an operator must fix is reported instead of blanking the page.
+	if err := os.Chmod(filepath.Join(s.cfg.StateDir, idtoken.KeyFileName), 0o640); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if body := overview(); !strings.Contains(body, "unavailable") {
+		t.Errorf("overview does not report a broken keyring:\n%s", body)
+	}
+}
+
+// TestConsoleOverviewWorkloadIdentityWithoutIssuer checks the disabled state.
+func TestConsoleOverviewWorkloadIdentityWithoutIssuer(t *testing.T) {
+	s := newServerWithoutIssuer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/")
+
+	body := bodyString(t, getRequest(t, client, hs.URL+"/console/", cookie))
+	if !strings.Contains(body, "no externally reachable") {
+		t.Errorf("overview does not explain the missing issuer:\n%s", body)
+	}
+}
+
+// mustIDTokenStatus reads the issuer status outside the HTTP surface, for
+// tests that need to know what the console rendered.
+func mustIDTokenStatus(t *testing.T, s *Server) IDTokenStatus {
+	t.Helper()
+
+	status, err := s.IDTokenStatus()
+	if err != nil {
+		t.Fatalf("IDTokenStatus: %v", err)
+	}
+	return status
 }

@@ -47,6 +47,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	PlatformService_GetMeta_FullMethodName          = "/xunara.v2.PlatformService/GetMeta"
 	PlatformService_GetTailnetLock_FullMethodName   = "/xunara.v2.PlatformService/GetTailnetLock"
+	PlatformService_GetIDTokenIssuer_FullMethodName = "/xunara.v2.PlatformService/GetIDTokenIssuer"
 	PlatformService_ListMachines_FullMethodName     = "/xunara.v2.PlatformService/ListMachines"
 	PlatformService_ListAudit_FullMethodName        = "/xunara.v2.PlatformService/ListAudit"
 	PlatformService_ListWebhooks_FullMethodName     = "/xunara.v2.PlatformService/ListWebhooks"
@@ -67,6 +68,11 @@ type PlatformServiceClient interface {
 	// carry a node-key signature. It never returns the AUM chain contents, the
 	// trusted key material, or the sealed disablement secret.
 	GetTailnetLock(ctx context.Context, in *GetTailnetLockRequest, opts ...grpc.CallOption) (*TailnetLockStatus, error)
+	// GetIDTokenIssuer reports the OIDC identity-token issuer this control
+	// plane exposes to nodes (POST /machine/id-token) and the public signing
+	// keys a relying party verifies tokens with. It never returns private key
+	// material.
+	GetIDTokenIssuer(ctx context.Context, in *GetIDTokenIssuerRequest, opts ...grpc.CallOption) (*IDTokenIssuerStatus, error)
 	// ListMachines returns machines ordered by id, resumable with page_token.
 	ListMachines(ctx context.Context, in *ListMachinesRequest, opts ...grpc.CallOption) (*ListMachinesResponse, error)
 	// ListAudit returns audit events ordered by id, resumable with page_token.
@@ -101,6 +107,16 @@ func (c *platformServiceClient) GetTailnetLock(ctx context.Context, in *GetTailn
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(TailnetLockStatus)
 	err := c.cc.Invoke(ctx, PlatformService_GetTailnetLock_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) GetIDTokenIssuer(ctx context.Context, in *GetIDTokenIssuerRequest, opts ...grpc.CallOption) (*IDTokenIssuerStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IDTokenIssuerStatus)
+	err := c.cc.Invoke(ctx, PlatformService_GetIDTokenIssuer_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -161,6 +177,11 @@ type PlatformServiceServer interface {
 	// carry a node-key signature. It never returns the AUM chain contents, the
 	// trusted key material, or the sealed disablement secret.
 	GetTailnetLock(context.Context, *GetTailnetLockRequest) (*TailnetLockStatus, error)
+	// GetIDTokenIssuer reports the OIDC identity-token issuer this control
+	// plane exposes to nodes (POST /machine/id-token) and the public signing
+	// keys a relying party verifies tokens with. It never returns private key
+	// material.
+	GetIDTokenIssuer(context.Context, *GetIDTokenIssuerRequest) (*IDTokenIssuerStatus, error)
 	// ListMachines returns machines ordered by id, resumable with page_token.
 	ListMachines(context.Context, *ListMachinesRequest) (*ListMachinesResponse, error)
 	// ListAudit returns audit events ordered by id, resumable with page_token.
@@ -186,6 +207,9 @@ func (UnimplementedPlatformServiceServer) GetMeta(context.Context, *GetMetaReque
 }
 func (UnimplementedPlatformServiceServer) GetTailnetLock(context.Context, *GetTailnetLockRequest) (*TailnetLockStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTailnetLock not implemented")
+}
+func (UnimplementedPlatformServiceServer) GetIDTokenIssuer(context.Context, *GetIDTokenIssuerRequest) (*IDTokenIssuerStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetIDTokenIssuer not implemented")
 }
 func (UnimplementedPlatformServiceServer) ListMachines(context.Context, *ListMachinesRequest) (*ListMachinesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListMachines not implemented")
@@ -252,6 +276,24 @@ func _PlatformService_GetTailnetLock_Handler(srv interface{}, ctx context.Contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).GetTailnetLock(ctx, req.(*GetTailnetLockRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_GetIDTokenIssuer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetIDTokenIssuerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).GetIDTokenIssuer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_GetIDTokenIssuer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).GetIDTokenIssuer(ctx, req.(*GetIDTokenIssuerRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -342,6 +384,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetTailnetLock",
 			Handler:    _PlatformService_GetTailnetLock_Handler,
+		},
+		{
+			MethodName: "GetIDTokenIssuer",
+			Handler:    _PlatformService_GetIDTokenIssuer_Handler,
 		},
 		{
 			MethodName: "ListMachines",

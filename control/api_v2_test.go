@@ -6,10 +6,12 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"tailscale.com/types/key"
 
 	"github.com/xunara/xunara/identity"
+	"github.com/xunara/xunara/idtoken"
 	"github.com/xunara/xunara/state"
 )
 
@@ -361,4 +363,96 @@ func decodeTKAStatus(t *testing.T, resp *http.Response) TKAStatus {
 	}
 	resp.Body.Close()
 	return out
+}
+
+// TestAPIV2IDTokenStatus drives GET /api/v2/id-token: read scope only, the
+// issuer's public state, and the signing-key bookkeeping a relying party's
+// setup needs. Private key material must never appear.
+func TestAPIV2IDTokenStatus(t *testing.T) {
+	s := newServerWithConfig(t, Config{ServerURL: "https://login.example.com", Domain: "example.com"})
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+
+	if resp := apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/id-token", "", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous status = %d, want 401", resp.StatusCode)
+	}
+
+	_, readToken := seedAPIKey(t, s, identity.ScopeRead)
+	_, writeToken := seedAPIKey(t, s, identity.ScopeWrite)
+	if resp := apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/id-token", writeToken, nil); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("write-only status = %d, want 403", resp.StatusCode)
+	}
+
+	raw := bodyString(t, apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/id-token", readToken, nil))
+	var status IDTokenStatus
+	if err := json.Unmarshal([]byte(raw), &status); err != nil {
+		t.Fatalf("decoding status: %v\n%s", err, raw)
+	}
+	if !status.Enabled {
+		t.Error("status reports the issuer as disabled")
+	}
+	if status.Issuer != "https://login.example.com" {
+		t.Errorf("issuer = %q", status.Issuer)
+	}
+	if status.JWKSURL != "https://login.example.com/.well-known/jwks.json" {
+		t.Errorf("jwksUrl = %q", status.JWKSURL)
+	}
+	if status.Algorithm != idtoken.Algorithm {
+		t.Errorf("algorithm = %q, want %s", status.Algorithm, idtoken.Algorithm)
+	}
+	if want := int(idtoken.TTL / time.Second); status.TokenTTLSeconds != want {
+		t.Errorf("tokenTtlSeconds = %d, want %d", status.TokenTTLSeconds, want)
+	}
+	if len(status.Keys) != 1 {
+		t.Fatalf("keys = %+v, want one active key", status.Keys)
+	}
+	if !status.Keys[0].Active() || status.ActiveKeyID != status.Keys[0].KID {
+		t.Errorf("active key = %q, keys = %+v", status.ActiveKeyID, status.Keys)
+	}
+	if status.Keys[0].Created.IsZero() {
+		t.Errorf("key has no creation time: %+v", status.Keys[0])
+	}
+
+	// The response is public metadata plus bookkeeping: no private key
+	// material, no PEM, no JWK private parameters.
+	for _, forbidden := range []string{"PRIVATE KEY", "privateKey", `"d"`, `"p"`, `"q"`} {
+		if strings.Contains(raw, forbidden) {
+			t.Errorf("status response contains %q:\n%s", forbidden, raw)
+		}
+	}
+
+	// Discovery advertises the feature so automation can branch on it.
+	meta := decodeAPI(t, apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/meta", readToken, nil))
+	if meta["identityTokensEnabled"] != true {
+		t.Errorf("meta identityTokensEnabled = %v, want true", meta["identityTokensEnabled"])
+	}
+}
+
+// TestAPIV2IDTokenStatusWithoutIssuer checks the disabled shape: no issuer
+// URL, no keys, and nothing that could be mistaken for a usable trust anchor.
+func TestAPIV2IDTokenStatusWithoutIssuer(t *testing.T) {
+	s := newServerWithoutIssuer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+
+	_, token := seedAPIKey(t, s, identity.ScopeRead)
+	raw := bodyString(t, apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/id-token", token, nil))
+	var status IDTokenStatus
+	if err := json.Unmarshal([]byte(raw), &status); err != nil {
+		t.Fatalf("decoding status: %v\n%s", err, raw)
+	}
+	if status.Enabled || status.Issuer != "" || status.JWKSURL != "" || status.ActiveKeyID != "" {
+		t.Errorf("status without an issuer = %+v, want disabled and empty", status)
+	}
+	if len(status.Keys) != 0 {
+		t.Errorf("keys = %+v, want none", status.Keys)
+	}
+	if strings.Contains(raw, `"keys":null`) {
+		t.Errorf("keys must be an array, not null:\n%s", raw)
+	}
+
+	meta := decodeAPI(t, apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/meta", token, nil))
+	if meta["identityTokensEnabled"] != false {
+		t.Errorf("meta identityTokensEnabled = %v, want false", meta["identityTokensEnabled"])
+	}
 }

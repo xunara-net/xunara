@@ -509,3 +509,76 @@ func TestPlatformGRPCTailnetLock(t *testing.T) {
 		t.Errorf("node counts = %+v, want one of two nodes signed", status.GetNodes())
 	}
 }
+
+// TestPlatformGRPCIDTokenIssuer checks the gRPC identity-token issuer status:
+// read scope only, and the same public state as GET /api/v2/id-token.
+func TestPlatformGRPCIDTokenIssuer(t *testing.T) {
+	s := newServerWithConfig(t, Config{ServerURL: "https://login.example.com", Domain: "example.com"})
+	client := startGRPCTestServer(t, s.RegisterPlatformGRPC)
+
+	_, readToken := seedAPIKey(t, s, identity.ScopeRead)
+	_, writeToken := seedAPIKey(t, s, identity.ScopeWrite)
+
+	if _, err := client.GetIDTokenIssuer(grpcCtx(""), &xunarav2.GetIDTokenIssuerRequest{}); status.Code(err) != codes.Unauthenticated {
+		t.Errorf("anonymous GetIDTokenIssuer error = %v, want Unauthenticated", err)
+	}
+	if _, err := client.GetIDTokenIssuer(grpcCtx(writeToken), &xunarav2.GetIDTokenIssuerRequest{}); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("write-only GetIDTokenIssuer error = %v, want PermissionDenied", err)
+	}
+
+	issuer, err := client.GetIDTokenIssuer(grpcCtx(readToken), &xunarav2.GetIDTokenIssuerRequest{})
+	if err != nil {
+		t.Fatalf("GetIDTokenIssuer: %v", err)
+	}
+
+	want, err := s.IDTokenStatus()
+	if err != nil {
+		t.Fatalf("IDTokenStatus: %v", err)
+	}
+	if !issuer.GetEnabled() || issuer.GetIssuer() != want.Issuer || issuer.GetJwksUrl() != want.JWKSURL {
+		t.Errorf("issuer = %+v, want enabled with issuer %q and jwks %q", issuer, want.Issuer, want.JWKSURL)
+	}
+	if issuer.GetAlgorithm() != want.Algorithm || issuer.GetTokenTtlSeconds() != int64(want.TokenTTLSeconds) {
+		t.Errorf("algorithm/ttl = %q/%d, want %q/%d", issuer.GetAlgorithm(), issuer.GetTokenTtlSeconds(), want.Algorithm, want.TokenTTLSeconds)
+	}
+	if len(issuer.GetKeys()) != len(want.Keys) || issuer.GetActiveKeyId() != want.ActiveKeyID {
+		t.Fatalf("keys = %+v (active %q), want %+v (active %q)", issuer.GetKeys(), issuer.GetActiveKeyId(), want.Keys, want.ActiveKeyID)
+	}
+	key := issuer.GetKeys()[0]
+	if key.GetKid() != want.ActiveKeyID || key.GetRetired() != nil || key.GetCreated() == nil {
+		t.Errorf("key = %+v, want the active key %q with a creation time", key, want.ActiveKeyID)
+	}
+
+	// The feature is advertised through Meta as well.
+	meta, err := client.GetMeta(grpcCtx(readToken), &xunarav2.GetMetaRequest{})
+	if err != nil {
+		t.Fatalf("GetMeta: %v", err)
+	}
+	if !meta.GetIdentityTokensEnabled() {
+		t.Error("meta does not advertise identity tokens")
+	}
+}
+
+// TestPlatformGRPCIDTokenIssuerWithoutIssuer checks the disabled shape over
+// gRPC: enabled=false and no keys, matching HTTP.
+func TestPlatformGRPCIDTokenIssuerWithoutIssuer(t *testing.T) {
+	s := newServerWithoutIssuer(t)
+	client := startGRPCTestServer(t, s.RegisterPlatformGRPC)
+	_, token := seedAPIKey(t, s, identity.ScopeRead)
+
+	issuer, err := client.GetIDTokenIssuer(grpcCtx(token), &xunarav2.GetIDTokenIssuerRequest{})
+	if err != nil {
+		t.Fatalf("GetIDTokenIssuer: %v", err)
+	}
+	if issuer.GetEnabled() || issuer.GetIssuer() != "" || issuer.GetActiveKeyId() != "" || len(issuer.GetKeys()) != 0 {
+		t.Errorf("issuer without an issuer URL = %+v, want disabled and empty", issuer)
+	}
+
+	meta, err := client.GetMeta(grpcCtx(token), &xunarav2.GetMetaRequest{})
+	if err != nil {
+		t.Fatalf("GetMeta: %v", err)
+	}
+	if meta.GetIdentityTokensEnabled() {
+		t.Error("meta advertises identity tokens without an issuer URL")
+	}
+}
