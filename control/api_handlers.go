@@ -36,6 +36,10 @@ type apiMachine struct {
 	AnnouncedRoutes []string   `json:"announcedRoutes"`
 	EffectiveRoutes []string   `json:"effectiveRoutes"`
 	ExitNode        bool       `json:"exitNode"`
+	// DeviceAttrCount is how many device posture attributes the machine has
+	// reported; the values themselves come from the per-machine endpoint. It
+	// is omitted when the machine has none.
+	DeviceAttrCount int `json:"deviceAttrCount,omitempty"`
 }
 
 // apiMachineView builds the JSON shape of a node.
@@ -75,6 +79,19 @@ func prefixStrings(prefixes []netip.Prefix) []string {
 		out = append(out, p.String())
 	}
 	return out
+}
+
+// deviceAttrCounts returns how many device posture attributes each node has
+// reported. List views call it once per request so a page reports counts
+// without a query per machine. A store error is not fatal: the count is
+// informational, and the values have their own endpoint that does fail closed.
+func (s *Server) deviceAttrCounts() map[state.NodeID]int {
+	counts, err := s.store.NodeDeviceAttrCounts()
+	if err != nil {
+		s.log.Warn("counting device posture attributes", "err", err)
+		return nil
+	}
+	return counts
 }
 
 // handleAPIOverview implements GET /api/v1/overview.

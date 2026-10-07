@@ -52,6 +52,7 @@ func (s *Server) apiV2Router() http.Handler {
 	r.Get("/id-token", s.handleAPIV2IDToken)
 
 	r.Get("/machines", s.handleAPIV2Machines)
+	r.Get("/machines/{id}/device-attrs", s.handleAPIV2MachineDeviceAttrs)
 	r.Get("/audit", s.handleAPIV2Audit)
 
 	r.Get("/agent-tokens", s.handleAPIV2AgentTokens)
@@ -252,6 +253,7 @@ func (s *Server) handleAPIV2Machines(w http.ResponseWriter, r *http.Request) {
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
 
 	items := make([]apiMachine, 0, limit)
+	counts := s.deviceAttrCounts()
 	var last uint64
 	next := ""
 	for _, n := range nodes {
@@ -276,7 +278,9 @@ func (s *Server) handleAPIV2Machines(w http.ResponseWriter, r *http.Request) {
 			next = apiV2EncodeCursor("machines", strconv.FormatUint(last, 10))
 			break
 		}
-		items = append(items, s.apiMachineView(n))
+		view := s.apiMachineView(n)
+		view.DeviceAttrCount = counts[n.ID]
+		items = append(items, view)
 		last = id
 	}
 

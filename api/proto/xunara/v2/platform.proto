@@ -29,6 +29,7 @@ syntax = "proto3";
 package xunara.v2;
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/struct.proto";
 
 option go_package = "github.com/xunara/xunara/api/gen/xunara/v2;xunarav2";
 
@@ -49,6 +50,11 @@ service PlatformService {
   // keys a relying party verifies tokens with. It never returns private key
   // material.
   rpc GetIDTokenIssuer(GetIDTokenIssuerRequest) returns (IDTokenIssuerStatus);
+
+  // GetMachineDeviceAttrs returns the device posture attributes a machine
+  // reported about itself (PATCH /machine/set-device-attr). Values are the
+  // JSON scalars the node sent. Another organization's machine is NOT_FOUND.
+  rpc GetMachineDeviceAttrs(GetMachineDeviceAttrsRequest) returns (MachineDeviceAttrs);
 
   // ListMachines returns machines ordered by id, resumable with page_token.
   rpc ListMachines(ListMachinesRequest) returns (ListMachinesResponse);
@@ -152,6 +158,21 @@ message Machine {
   repeated string approved_routes = 15;
   repeated string announced_routes = 16;
   bool exit_node = 17;
+  // device_attr_count is how many device posture attributes the machine has
+  // reported; the values themselves come from GetMachineDeviceAttrs.
+  uint32 device_attr_count = 18;
+}
+
+message GetMachineDeviceAttrsRequest {
+  uint64 machine_id = 1;
+}
+
+// MachineDeviceAttrs mirrors GET /api/v2/machines/{id}/device-attrs. The map
+// is empty (not absent) for a machine that never reported an attribute.
+message MachineDeviceAttrs {
+  uint64 machine_id = 1;
+  string stable_id = 2;
+  map<string, google.protobuf.Value> attrs = 3;
 }
 
 message ListMachinesRequest {

@@ -582,3 +582,83 @@ func TestPlatformGRPCIDTokenIssuerWithoutIssuer(t *testing.T) {
 		t.Error("meta advertises identity tokens without an issuer URL")
 	}
 }
+
+// TestPlatformGRPCDeviceAttrs checks the read-only posture view over gRPC: read
+// scope only, the JSON scalars the node reported, and the per-machine count in
+// ListMachines.
+func TestPlatformGRPCDeviceAttrs(t *testing.T) {
+	s := newTestServer(t)
+	client := startGRPCTestServer(t, s.RegisterPlatformGRPC)
+
+	reporter := seedAPIMachine(t, s, "reporter", nil)
+	quiet := seedAPIMachine(t, s, "quiet", nil)
+	if err := s.store.SetNodeDeviceAttrs(reporter.ID, map[string]any{
+		"os_version": "15.2",
+		"encrypted":  true,
+		"score":      float64(7.5),
+	}); err != nil {
+		t.Fatalf("SetNodeDeviceAttrs: %v", err)
+	}
+
+	_, readToken := seedAPIKey(t, s, identity.ScopeRead)
+	_, writeToken := seedAPIKey(t, s, identity.ScopeWrite)
+
+	if _, err := client.GetMachineDeviceAttrs(grpcCtx(""), &xunarav2.GetMachineDeviceAttrsRequest{MachineId: uint64(reporter.ID)}); status.Code(err) != codes.Unauthenticated {
+		t.Errorf("anonymous error = %v, want Unauthenticated", err)
+	}
+	if _, err := client.GetMachineDeviceAttrs(grpcCtx(writeToken), &xunarav2.GetMachineDeviceAttrsRequest{MachineId: uint64(reporter.ID)}); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("write-only error = %v, want PermissionDenied", err)
+	}
+	if _, err := client.GetMachineDeviceAttrs(grpcCtx(readToken), &xunarav2.GetMachineDeviceAttrsRequest{MachineId: 9999}); status.Code(err) != codes.NotFound {
+		t.Errorf("unknown machine error = %v, want NotFound", err)
+	}
+
+	got, err := client.GetMachineDeviceAttrs(grpcCtx(readToken), &xunarav2.GetMachineDeviceAttrsRequest{MachineId: uint64(reporter.ID)})
+	if err != nil {
+		t.Fatalf("GetMachineDeviceAttrs: %v", err)
+	}
+	if got.GetMachineId() != uint64(reporter.ID) || got.GetStableId() != reporter.StableID {
+		t.Errorf("identity = %d/%q, want %d/%q", got.GetMachineId(), got.GetStableId(), reporter.ID, reporter.StableID)
+	}
+	attrs := got.GetAttrs()
+	if len(attrs) != 3 {
+		t.Fatalf("attrs = %v, want 3", attrs)
+	}
+	if attrs["os_version"].GetStringValue() != "15.2" || !attrs["encrypted"].GetBoolValue() || attrs["score"].GetNumberValue() != 7.5 {
+		t.Errorf("attrs = %v", attrs)
+	}
+
+	// A machine without attributes answers without any entries. An empty map
+	// and a nil map are indistinguishable on the wire, so only the length is
+	// meaningful here.
+	empty, err := client.GetMachineDeviceAttrs(grpcCtx(readToken), &xunarav2.GetMachineDeviceAttrsRequest{MachineId: uint64(quiet.ID)})
+	if err != nil {
+		t.Fatalf("GetMachineDeviceAttrs quiet: %v", err)
+	}
+	if len(empty.GetAttrs()) != 0 {
+		t.Errorf("attrs without any = %v, want no entries", empty.GetAttrs())
+	}
+
+	list, err := client.ListMachines(grpcCtx(readToken), &xunarav2.ListMachinesRequest{})
+	if err != nil {
+		t.Fatalf("ListMachines: %v", err)
+	}
+	seen := 0
+	for _, m := range list.GetMachines() {
+		switch m.GetStableId() {
+		case reporter.StableID:
+			seen++
+			if m.GetDeviceAttrCount() != 3 {
+				t.Errorf("reporter deviceAttrCount = %d, want 3", m.GetDeviceAttrCount())
+			}
+		case quiet.StableID:
+			seen++
+			if m.GetDeviceAttrCount() != 0 {
+				t.Errorf("quiet deviceAttrCount = %d, want 0", m.GetDeviceAttrCount())
+			}
+		}
+	}
+	if seen != 2 {
+		t.Errorf("ListMachines covered %d machines, want 2", seen)
+	}
+}

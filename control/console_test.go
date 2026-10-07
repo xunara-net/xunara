@@ -675,3 +675,46 @@ func mustIDTokenStatus(t *testing.T, s *Server) IDTokenStatus {
 	}
 	return status
 }
+
+// TestConsoleMachinePostureColumn checks the read-only posture column on the
+// machines page: a count with correct pluralisation, and a dash for machines
+// that never reported anything.
+func TestConsoleMachinePostureColumn(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/machines")
+
+	one := seedAPIMachine(t, s, "postured-one", nil)
+	three := seedAPIMachine(t, s, "postured-three", nil)
+	seedAPIMachine(t, s, "postured-quiet", nil)
+	if err := s.store.SetNodeDeviceAttrs(one.ID, map[string]any{"os_version": "15.2"}); err != nil {
+		t.Fatalf("SetNodeDeviceAttrs: %v", err)
+	}
+	if err := s.store.SetNodeDeviceAttrs(three.ID, map[string]any{"os_version": "15.2", "encrypted": true, "score": float64(1)}); err != nil {
+		t.Fatalf("SetNodeDeviceAttrs: %v", err)
+	}
+
+	page := bodyString(t, getRequest(t, client, hs.URL+"/console/machines", cookie))
+	rows := strings.Split(page, "<tr>")
+	find := func(hostname string) string {
+		t.Helper()
+		for _, row := range rows {
+			if strings.Contains(row, hostname) {
+				return row
+			}
+		}
+		t.Fatalf("machines page has no row for %s", hostname)
+		return ""
+	}
+
+	if row := find("postured-one"); !strings.Contains(row, ">1 attr<") {
+		t.Errorf("single attribute row lacks a singular count:\n%s", row)
+	}
+	if row := find("postured-three"); !strings.Contains(row, ">3 attrs<") {
+		t.Errorf("three attribute row lacks a plural count:\n%s", row)
+	}
+	if row := find("postured-quiet"); !strings.Contains(row, ">—<") {
+		t.Errorf("machine without attributes lacks a dash:\n%s", row)
+	}
+}

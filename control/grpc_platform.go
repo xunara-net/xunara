@@ -14,6 +14,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"tailscale.com/tailcfg"
 
@@ -237,6 +238,45 @@ func (g *grpcPlatformServer) GetIDTokenIssuer(ctx context.Context, _ *xunarav2.G
 	return out, nil
 }
 
+// GetMachineDeviceAttrs implements PlatformService.GetMachineDeviceAttrs: the
+// same read-only device posture view as
+// GET /api/v2/machines/{id}/device-attrs. Values are the JSON scalars the node
+// reported; the machine must belong to the organization this call authorized
+// against.
+func (g *grpcPlatformServer) GetMachineDeviceAttrs(ctx context.Context, req *xunarav2.GetMachineDeviceAttrsRequest) (*xunarav2.MachineDeviceAttrs, error) {
+	s, _, err := g.authorize(ctx, identity.ScopeRead)
+	if err != nil {
+		return nil, err
+	}
+
+	node, ok := s.store.GetNodeByID(state.NodeID(req.GetMachineId()))
+	if !ok {
+		return nil, status.Error(codes.NotFound, "machine not found")
+	}
+
+	attrs, err := s.store.NodeDeviceAttrs(node.ID)
+	if err != nil {
+		s.log.Error("reading device attributes", "node", node.StableID, "err", err)
+		return nil, status.Error(codes.Internal, "device attributes are unavailable")
+	}
+
+	out := &xunarav2.MachineDeviceAttrs{
+		MachineId: uint64(node.ID),
+		StableId:  node.StableID,
+		Attrs:     make(map[string]*structpb.Value, len(attrs)),
+	}
+	for name, value := range attrs {
+		converted, err := structpb.NewValue(value)
+		if err != nil {
+			// A value the store cannot represent in a protobuf Value is a
+			// server-side bug (ingestion only stores JSON scalars).
+			return nil, status.Error(codes.Internal, "device attribute cannot be encoded")
+		}
+		out.Attrs[name] = converted
+	}
+	return out, nil
+}
+
 // GetTailnetLock implements PlatformService.GetTailnetLock: the same
 // read-only tailnet-lock status as GET /api/v2/tka. The AUM chain contents,
 // the trusted key material and the sealed disablement secret stay on the
@@ -297,6 +337,7 @@ func (g *grpcPlatformServer) ListMachines(ctx context.Context, req *xunarav2.Lis
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
 
 	out := make([]*xunarav2.Machine, 0, limit)
+	counts := s.deviceAttrCounts()
 	var last uint64
 	next := ""
 	for _, n := range nodes {
@@ -321,7 +362,9 @@ func (g *grpcPlatformServer) ListMachines(ctx context.Context, req *xunarav2.Lis
 			next = apiV2EncodeCursor("machines", strconv.FormatUint(last, 10))
 			break
 		}
-		out = append(out, grpcMachineView(n, s))
+		view := grpcMachineView(n, s)
+		view.DeviceAttrCount = uint32(counts[n.ID])
+		out = append(out, view)
 		last = id
 	}
 

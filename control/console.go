@@ -211,9 +211,12 @@ func (s *Server) handleConsoleMachines(w http.ResponseWriter, r *http.Request) {
 	}
 
 	nodes := s.store.ListNodes()
+	counts := s.deviceAttrCounts()
 	machines := make([]apiMachine, 0, len(nodes))
 	for _, n := range nodes {
-		machines = append(machines, s.apiMachineView(n))
+		view := s.apiMachineView(n)
+		view.DeviceAttrCount = counts[n.ID]
+		machines = append(machines, view)
 	}
 	data["Machines"] = machines
 	s.renderConsole(w, consoleMachinesTemplate, data)

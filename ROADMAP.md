@@ -522,7 +522,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
     501（不假装接受再丢弃）；id-token 见 M13，姿态属性见 M14，两个端点均已
     实现。
   - 测试：`control/machine_misc_test.go`（审计落库与净化、未知 action 400、
-    跨节点 404、health 204/绑定、whoami 成功与未注册 404、set-device-attr 501）。
+    跨节点 404、health 204/绑定、whoami 成功与未注册 404）。
 - M6g 已完成：`/machine/feature/query`（serve / funnel 的启用指引）。
   - `control/featurequery.go`：解析 `tailcfg.QueryFeatureRequest`，Noise 会话
     machine key 必须匹配请求中的 node key（跨节点探测 404）；节点已持有全部
@@ -998,7 +998,7 @@ in-place re-registration 与 `HandleNodeFromAuthPath` 的 reauth/convert 语义�
 
 ---
 
-## M14 — 设备姿态属性（`/machine/set-device-attr`，进行中）
+## M14 — 设备姿态属性（`/machine/set-device-attr`，已完成）
 
 目标：补上最后一个 501 内层端点。客户端（`tailscale set --report-posture` 的采集
 链路，corp 构建）经 Noise 发 `tailcfg.SetDeviceAttributesRequest{Version,NodeKey,
@@ -1037,7 +1037,25 @@ Update}`（`AttrUpdate` = `map[string]any`，值可为 string / float64 / bool�
   跨节点与未注册 404、版本门、8 种非法输入、64 上限与删除回退、4096 字节上限、
   update 项数上限、审计 detail 格式、节点删除级联、未知节点边界，内存与 SQLite
   两种实现）、`state/sqlite_test.go`（v8→v9 迁移）。
-- 管理面（只读）：见下一节增量（v2 HTTP / gRPC / Console / CLI）。
+- 管理面（只读，节点才能写、管理员只能读）：
+  - HTTP `GET /api/v2/machines/{id}/device-attrs`（read scope；坏 id 400、
+    未知机器 404；无属性时 `attrs` 是 `{}` 而非 null，客户端不必特判状态）；
+    `GET /api/v2/machines` 的每个条目增加 `deviceAttrCount`（0 时省略字段），
+    让自动化不必逐台拉取就能定位有姿态数据的机器。
+  - gRPC `PlatformService.GetMachineDeviceAttrs`（`state.NodeID` 解析、
+    NotFound/Internal 语义与 HTTP 一致；值经 `structpb.Value` 转换）。
+    `ListMachines` 的 `Machine.device_attr_count` 同 HTTP 计数。
+  - Console Machines 表格增加 "Posture" 列（`N attr(s)` 或 `—`）。
+  - CLI：`xunara posture list`（只列有属性的机器与数量）、
+    `xunara posture show <id|stable-id>`（打印属性名与值；找不到节点报错）。
+    无写入口：姿态只有节点自己能上报，管理面永远只读。
+  - 测试：`control/api_v2_test.go`（401/403/404/400、字段、空 `{}`、列表计数与
+    0 省略）、`control/grpc_platform_test.go`（未认证/缺 scope、NotFound、值与
+    HTTP 同、ListMachines 计数、无属性空集）、`control/console_test.go`
+    （单复数计数与 `—`）、`cmd/xunara/posture_test.go`（只列有属性的机器、
+    不泄漏值、空库提示、stable-id 查找、未找到错误）。
+- 明确不做：ACL `srcPosture` 条件（需要上游控制面的策略语义，开源代码里没有
+  可以照抄的判定规则）；属性的过期/回收策略（节点可覆盖或删除，删节点级联）。
 
 ---
 

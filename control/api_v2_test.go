@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -454,5 +455,101 @@ func TestAPIV2IDTokenStatusWithoutIssuer(t *testing.T) {
 	meta := decodeAPI(t, apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/meta", token, nil))
 	if meta["identityTokensEnabled"] != false {
 		t.Errorf("meta identityTokensEnabled = %v, want false", meta["identityTokensEnabled"])
+	}
+}
+
+// TestAPIV2MachineDeviceAttrs checks the read-only posture view: read scope
+// only, the values a node reported, an empty object for a machine without any,
+// and a count in the machine list so automation can find them.
+func TestAPIV2MachineDeviceAttrs(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+
+	reporter := seedAPIMachine(t, s, "reporter", nil)
+	quiet := seedAPIMachine(t, s, "quiet", nil)
+	if err := s.store.SetNodeDeviceAttrs(reporter.ID, map[string]any{
+		"os_version": "15.2",
+		"encrypted":  true,
+		"score":      float64(7.5),
+	}); err != nil {
+		t.Fatalf("SetNodeDeviceAttrs: %v", err)
+	}
+
+	path := func(id state.NodeID) string {
+		return hs.URL + "/api/v2/machines/" + strconv.FormatUint(uint64(id), 10) + "/device-attrs"
+	}
+
+	if resp := apiRequest(t, client, http.MethodGet, path(reporter.ID), "", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous status = %d, want 401", resp.StatusCode)
+	}
+
+	_, readToken := seedAPIKey(t, s, identity.ScopeRead)
+	_, writeToken := seedAPIKey(t, s, identity.ScopeWrite)
+	if resp := apiRequest(t, client, http.MethodGet, path(reporter.ID), writeToken, nil); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("write-only status = %d, want 403", resp.StatusCode)
+	}
+
+	if resp := apiRequest(t, client, http.MethodGet, path(state.NodeID(9999)), readToken, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown machine status = %d, want 404", resp.StatusCode)
+	}
+	if resp := apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/machines/not-a-number/device-attrs", readToken, nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("bad machine id status = %d, want 400", resp.StatusCode)
+	}
+
+	resp := apiRequest(t, client, http.MethodGet, path(reporter.ID), readToken, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body := decodeAPI(t, resp)
+	if body["machineId"] != float64(reporter.ID) || body["stableId"] != reporter.StableID {
+		t.Errorf("identity fields = %v / %v", body["machineId"], body["stableId"])
+	}
+	attrs, ok := body["attrs"].(map[string]any)
+	if !ok {
+		t.Fatalf("attrs = %v, want an object", body["attrs"])
+	}
+	if len(attrs) != 3 || attrs["os_version"] != "15.2" || attrs["encrypted"] != true || attrs["score"] != float64(7.5) {
+		t.Errorf("attrs = %#v", attrs)
+	}
+
+	// A machine that never reported an attribute answers with an empty object,
+	// not null: clients should not have to special-case the state.
+	resp = apiRequest(t, client, http.MethodGet, path(quiet.ID), readToken, nil)
+	raw := bodyString(t, resp)
+	if !strings.Contains(raw, `"attrs":{}`) {
+		t.Errorf("empty attrs response = %s", raw)
+	}
+
+	// The machine list reports how many attributes each machine has, and omits
+	// the field entirely for machines that have none.
+	list := decodeAPI(t, apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/machines", readToken, nil))
+	items, ok := list["items"].([]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("machine list items = %v, want 2", list["items"])
+	}
+	seen := 0
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("machine list item = %v, want an object", raw)
+		}
+		switch item["stableId"] {
+		case reporter.StableID:
+			seen++
+			if item["deviceAttrCount"] != float64(3) {
+				t.Errorf("reporter deviceAttrCount = %v, want 3", item["deviceAttrCount"])
+			}
+		case quiet.StableID:
+			seen++
+			if _, present := item["deviceAttrCount"]; present {
+				t.Errorf("a machine without attributes carries a count: %v", item)
+			}
+		default:
+			t.Errorf("unexpected machine in list: %v", item)
+		}
+	}
+	if seen != 2 {
+		t.Errorf("machine list covered %d machines, want 2", seen)
 	}
 }

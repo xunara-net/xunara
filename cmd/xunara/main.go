@@ -48,6 +48,8 @@ func main() {
 		runTKA(os.Args[2:])
 	case "id-token":
 		runIDToken(os.Args[2:])
+	case "posture":
+		runPosture(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -80,6 +82,8 @@ Commands:
   tka status           Show the tailnet-lock (key authority) state
   id-token show        Show the OIDC identity-token signing keys
   id-token rotate      Rotate the identity-token signing key
+  posture list         List machines with device posture attributes
+  posture show         Show one machine's device posture attributes
 
 Run "xunara <command> -h" for command options.
 `)

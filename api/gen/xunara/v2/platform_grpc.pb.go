@@ -45,13 +45,14 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PlatformService_GetMeta_FullMethodName          = "/xunara.v2.PlatformService/GetMeta"
-	PlatformService_GetTailnetLock_FullMethodName   = "/xunara.v2.PlatformService/GetTailnetLock"
-	PlatformService_GetIDTokenIssuer_FullMethodName = "/xunara.v2.PlatformService/GetIDTokenIssuer"
-	PlatformService_ListMachines_FullMethodName     = "/xunara.v2.PlatformService/ListMachines"
-	PlatformService_ListAudit_FullMethodName        = "/xunara.v2.PlatformService/ListAudit"
-	PlatformService_ListWebhooks_FullMethodName     = "/xunara.v2.PlatformService/ListWebhooks"
-	PlatformService_RevokeAgentToken_FullMethodName = "/xunara.v2.PlatformService/RevokeAgentToken"
+	PlatformService_GetMeta_FullMethodName               = "/xunara.v2.PlatformService/GetMeta"
+	PlatformService_GetTailnetLock_FullMethodName        = "/xunara.v2.PlatformService/GetTailnetLock"
+	PlatformService_GetIDTokenIssuer_FullMethodName      = "/xunara.v2.PlatformService/GetIDTokenIssuer"
+	PlatformService_GetMachineDeviceAttrs_FullMethodName = "/xunara.v2.PlatformService/GetMachineDeviceAttrs"
+	PlatformService_ListMachines_FullMethodName          = "/xunara.v2.PlatformService/ListMachines"
+	PlatformService_ListAudit_FullMethodName             = "/xunara.v2.PlatformService/ListAudit"
+	PlatformService_ListWebhooks_FullMethodName          = "/xunara.v2.PlatformService/ListWebhooks"
+	PlatformService_RevokeAgentToken_FullMethodName      = "/xunara.v2.PlatformService/RevokeAgentToken"
 )
 
 // PlatformServiceClient is the client API for PlatformService service.
@@ -73,6 +74,10 @@ type PlatformServiceClient interface {
 	// keys a relying party verifies tokens with. It never returns private key
 	// material.
 	GetIDTokenIssuer(ctx context.Context, in *GetIDTokenIssuerRequest, opts ...grpc.CallOption) (*IDTokenIssuerStatus, error)
+	// GetMachineDeviceAttrs returns the device posture attributes a machine
+	// reported about itself (PATCH /machine/set-device-attr). Values are the
+	// JSON scalars the node sent. Another organization's machine is NOT_FOUND.
+	GetMachineDeviceAttrs(ctx context.Context, in *GetMachineDeviceAttrsRequest, opts ...grpc.CallOption) (*MachineDeviceAttrs, error)
 	// ListMachines returns machines ordered by id, resumable with page_token.
 	ListMachines(ctx context.Context, in *ListMachinesRequest, opts ...grpc.CallOption) (*ListMachinesResponse, error)
 	// ListAudit returns audit events ordered by id, resumable with page_token.
@@ -117,6 +122,16 @@ func (c *platformServiceClient) GetIDTokenIssuer(ctx context.Context, in *GetIDT
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(IDTokenIssuerStatus)
 	err := c.cc.Invoke(ctx, PlatformService_GetIDTokenIssuer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) GetMachineDeviceAttrs(ctx context.Context, in *GetMachineDeviceAttrsRequest, opts ...grpc.CallOption) (*MachineDeviceAttrs, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MachineDeviceAttrs)
+	err := c.cc.Invoke(ctx, PlatformService_GetMachineDeviceAttrs_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -182,6 +197,10 @@ type PlatformServiceServer interface {
 	// keys a relying party verifies tokens with. It never returns private key
 	// material.
 	GetIDTokenIssuer(context.Context, *GetIDTokenIssuerRequest) (*IDTokenIssuerStatus, error)
+	// GetMachineDeviceAttrs returns the device posture attributes a machine
+	// reported about itself (PATCH /machine/set-device-attr). Values are the
+	// JSON scalars the node sent. Another organization's machine is NOT_FOUND.
+	GetMachineDeviceAttrs(context.Context, *GetMachineDeviceAttrsRequest) (*MachineDeviceAttrs, error)
 	// ListMachines returns machines ordered by id, resumable with page_token.
 	ListMachines(context.Context, *ListMachinesRequest) (*ListMachinesResponse, error)
 	// ListAudit returns audit events ordered by id, resumable with page_token.
@@ -210,6 +229,9 @@ func (UnimplementedPlatformServiceServer) GetTailnetLock(context.Context, *GetTa
 }
 func (UnimplementedPlatformServiceServer) GetIDTokenIssuer(context.Context, *GetIDTokenIssuerRequest) (*IDTokenIssuerStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetIDTokenIssuer not implemented")
+}
+func (UnimplementedPlatformServiceServer) GetMachineDeviceAttrs(context.Context, *GetMachineDeviceAttrsRequest) (*MachineDeviceAttrs, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetMachineDeviceAttrs not implemented")
 }
 func (UnimplementedPlatformServiceServer) ListMachines(context.Context, *ListMachinesRequest) (*ListMachinesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListMachines not implemented")
@@ -294,6 +316,24 @@ func _PlatformService_GetIDTokenIssuer_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).GetIDTokenIssuer(ctx, req.(*GetIDTokenIssuerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_GetMachineDeviceAttrs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetMachineDeviceAttrsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).GetMachineDeviceAttrs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_GetMachineDeviceAttrs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).GetMachineDeviceAttrs(ctx, req.(*GetMachineDeviceAttrsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -388,6 +428,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetIDTokenIssuer",
 			Handler:    _PlatformService_GetIDTokenIssuer_Handler,
+		},
+		{
+			MethodName: "GetMachineDeviceAttrs",
+			Handler:    _PlatformService_GetMachineDeviceAttrs_Handler,
 		},
 		{
 			MethodName: "ListMachines",

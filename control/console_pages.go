@@ -169,7 +169,7 @@ so it has no issuer URL to be a trust anchor for, and nodes receive 501 from
 	consoleMachinesTemplate = consolePage("machines", `
 <h2>Machines</h2>
 <table>
-<thead><tr><th>Machine</th><th>Status</th><th>Owner</th><th>Method</th><th>Addresses</th><th>Routes</th><th>Actions</th></tr></thead>
+<thead><tr><th>Machine</th><th>Status</th><th>Owner</th><th>Method</th><th>Addresses</th><th>Routes</th><th>Posture</th><th>Actions</th></tr></thead>
 <tbody>
 {{range .Machines}}
 <tr>
@@ -185,6 +185,7 @@ so it has no issuer URL to be a trust anchor for, and nodes receive 501 from
 {{if .ApprovedRoutes}}approved: {{range .ApprovedRoutes}}<code>{{.}}</code> {{end}}<br>{{end}}
 {{if .AnnouncedRoutes}}announced: {{range .AnnouncedRoutes}}<code>{{.}}</code> {{end}}{{else}}announced: none{{end}}
 </td>
+<td>{{if .DeviceAttrCount}}{{.DeviceAttrCount}} attr{{if ne .DeviceAttrCount 1}}s{{end}}{{else}}—{{end}}</td>
 <td>
 {{if $.CanWrite}}
 <form method="post" action="/console/machines/{{.ID}}/routes">
@@ -200,7 +201,7 @@ so it has no issuer URL to be a trust anchor for, and nodes receive 501 from
 </td>
 </tr>
 {{else}}
-<tr><td colspan="7">No machines have registered yet.</td></tr>
+<tr><td colspan="8">No machines have registered yet.</td></tr>
 {{end}}
 </tbody>
 </table>
