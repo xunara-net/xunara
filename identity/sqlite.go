@@ -167,6 +167,24 @@ CREATE TABLE IF NOT EXISTS webhook_cursors (
 	updated_at    INTEGER NOT NULL
 );
 `,
+
+	// v7: native-client (Xunara Agent) credentials. An agent token is bound
+	// to one node's machine and node keys: it is machine identity, never a
+	// human or service identity (AGENTS.md section 5).
+	`
+CREATE TABLE IF NOT EXISTS agent_tokens (
+	id           TEXT    PRIMARY KEY,
+	node_id      INTEGER NOT NULL,
+	machine_key  TEXT    NOT NULL,
+	node_key     TEXT    NOT NULL,
+	token_hash   TEXT    NOT NULL UNIQUE,
+	created_at   INTEGER NOT NULL,
+	expires_at   INTEGER NOT NULL DEFAULT 0,
+	last_used_at INTEGER NOT NULL DEFAULT 0,
+	revoked_at   INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_agent_tokens_node ON agent_tokens(node_id);
+`,
 }
 
 // SQLiteStore is a durable [Store] sharing the control plane's database.

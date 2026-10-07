@@ -87,4 +87,5 @@ type Store interface {
 	DeviceAuthorizationStore
 	SSHCheckStore
 	APIKeyStore
+	AgentTokenStore
 }

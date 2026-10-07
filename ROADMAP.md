@@ -504,7 +504,28 @@ reference/{go-oidc,oauth2,dex,webauthn}
     Funnel 不支持、跨节点/未知 node key 404、未知 feature 有界、
     截断 JSON 拒绝）。
 - `services/` 其余：Funnel（明确不支持）；Discovery。
-- `client/`：Xunara Agent（自研客户端，独立协议，不侵入 TS2021）。
+- M9 已完成：Xunara Agent（自研客户端，独立协议）。
+  - 服务端 `/api/agent/v1`（`control/agent.go`，独立于 TS2021）：
+    `POST /enroll`（pre-auth key 同步授权，或复用设备审批流的交互式授权；返回
+    machine/node 绑定的 agent token，重新 enroll 轮换旧 token）、
+    `POST /netmap`（返回与官方客户端同构的 `tailcfg.MapResponse` JSON）、
+    `POST /heartbeat`（复用 MapRequest 持久化路径：hostinfo/endpoints 变更检测、
+    PreferredDERP 采纳、watcher 唤醒；2 分钟 TTL 内计入"在线"）。
+  - 身份：`identity.AgentToken`（迁移 v7）绑定 node ID + machine key + node key，
+    只存哈希；每个请求必须复述两把公钥并与存储节点核对（AGENTS §11）；节点
+    删除或 node key 过期即失效；`agent.enrolled` 审计。
+  - 客户端：`client/protocol`（类型化 HTTP 客户端，Bearer 头、超时、错误分类）、
+    `client/daemon`（`agent.json` 0600 原子写、enroll、心跳+netmap 循环、401 停止
+    并提示重新 enroll、指数退避）、`cmd/xunara-agent`（`enroll|run|status|version`；
+    授权密钥只从环境变量或 `-auth-key-file` 读取，绝不进 argv）。
+  - 测试：`control/agent_test.go`（pre-auth/交互式授权、netmap 自节点、心跳写入
+    hostinfo/endpoints、凭证轮换与旧 token 失效、跨节点 403、节点删除 401、
+    输入校验）、`client/protocol/protocol_test.go`（请求形状、Bearer 头、token
+    不入 body/URL、错误映射）、`client/daemon/daemon_test.go`（状态 0600、
+    pending/rejected、循环与停止、401 终止）、`client/daemon/e2e_test.go`
+    （真实控制面端到端：授权、netmap 状态、心跳在线、删除后失效、交互审批）。
+  - 已知限制（M9 剩余）：agent token 的列出/吊销 API 与控制台页面；netmap 为
+    轮询而非 SSE；Remote/File Transfer 尚未构建。
 - ACL/Zero Trust（`Xunara Warden`）。
 
 ---

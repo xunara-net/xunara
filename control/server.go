@@ -159,6 +159,7 @@ type Server struct {
 	// sessMu guards control-session bookkeeping and netmap change watchers.
 	sessMu        sync.Mutex
 	online        map[state.NodeID]int
+	agentSeen     map[state.NodeID]time.Time
 	watchers      map[uint64]chan struct{}
 	nextWatcherID uint64
 }
@@ -358,7 +359,32 @@ func (s *Server) markOffline(id state.NodeID) {
 func (s *Server) isOnline(id state.NodeID) bool {
 	s.sessMu.Lock()
 	defer s.sessMu.Unlock()
-	return s.online[id] > 0
+	if s.online[id] > 0 {
+		return true
+	}
+	// Native clients (Xunara Agent) do not hold a Noise session; a recent
+	// heartbeat is the equivalent liveness signal.
+	return s.agentHeartbeatFreshLocked(id, time.Now())
+}
+
+// IsNodeOnline reports whether a node currently holds a control session or a
+// recent native-client heartbeat. It is the liveness view the platform API and
+// console present.
+func (s *Server) IsNodeOnline(id state.NodeID) bool { return s.isOnline(id) }
+
+// agentHeartbeatFreshLocked reports whether the node heartbeat recently. The
+// caller must hold sessMu. Stale entries are pruned here, which bounds the map
+// by the number of nodes the netmap is built for.
+func (s *Server) agentHeartbeatFreshLocked(id state.NodeID, now time.Time) bool {
+	seen, ok := s.agentSeen[id]
+	if !ok {
+		return false
+	}
+	if now.Sub(seen) > agentHeartbeatTTL {
+		delete(s.agentSeen, id)
+		return false
+	}
+	return true
 }
 
 // watch registers a netmap change listener. The returned cancel function must
@@ -451,6 +477,7 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/ssh/check/{authID}/approve", s.handleSSHCheckApprove)
 	r.Post("/ssh/check/{authID}/deny", s.handleSSHCheckDeny)
 	r.Post("/derp/admit", s.handleDERPAdmit)
+	r.Mount("/api/agent/v1", s.agentRouter())
 	r.Mount("/api/v1", s.apiRouter())
 	r.Mount("/console", s.consoleRouter())
 	r.Get("/", s.handleRoot)
