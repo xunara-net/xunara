@@ -403,6 +403,7 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/ssh/check/{authID}", s.handleSSHCheckPage)
 	r.Post("/ssh/check/{authID}/approve", s.handleSSHCheckApprove)
 	r.Post("/ssh/check/{authID}/deny", s.handleSSHCheckDeny)
+	r.Post("/derp/admit", s.handleDERPAdmit)
 	r.Mount("/api/v1", s.apiRouter())
 	r.Mount("/console", s.consoleRouter())
 	r.Get("/", s.handleRoot)

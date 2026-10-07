@@ -6,6 +6,7 @@
 /bin/
 /xunara
 /xunarad
+/xunara-veil
 
 # Local server state (holds the Noise private key)
 /data/

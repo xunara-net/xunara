@@ -403,10 +403,31 @@ reference/{go-oidc,oauth2,dex,webauthn}
     self 目的、wildcard 网段、校验表、裸端口、计数）、
     `control/grants_test.go`（CapGrant 到达 netmap）、
     `policy TestAutogroupMemberExcludesTagged`。
+- M6e 已完成：`Xunara Veil`（DERP 中继）。
+  - 新增 `veil/`：基于上游 `tailscale.com/derp/derpserver` 的独立 DERP 服务，
+    与官方客户端协议一致（`/derp` HTTP upgrade、WebSocket-DERP、`/derp/probe`、
+    `/derp/latency-check`、`/generate_204`）；支持 STUN（`net/stunserver`）与
+    手动 TLS（`CertFile`/`CertKeyFile`）。
+  - DERP node key 持久化到 `<state-dir>/derp.key`（0600、原子写、与 derper
+    的 config JSON 格式兼容）；重启后 public key 不变，客户端 pin 不失效。
+  - `Config.VerifyURL` 指向控制面的准入端点；未配置时启动即 warn。
+    `DERPMap()`/`-derp-map-out` 生成单节点 `tailcfg.DERPMap`（`OmitDefaultRegions`），
+    直接交给 `xunarad -derp-map`。
+  - 新增 `cmd/xunara-veil`（`-listen`、`-hostname`、`-state-dir`、`-key-file`、
+    `-stun`/`-stun-port`、`-verify-url`、`-cert-file`/`-cert-key-file`、
+    `-region-*`、`-derp-map-out`、`-insecure-for-tests`、`-log-level`）。
+  - `control`：新增 `POST /derp/admit`（上游 `derper --verify-client-url` 协议，
+    `tailcfg.DERPAdmitClientRequest/Response`），仅放行已注册且未过期的 node key；
+    请求体限长、未知节点返回 200 + `allow:false`、fail-closed（错误绝不放行）。
+  - 测试：`veil/veil_test.go`（key 持久化与 0600、DERP map 字段、两客户端经
+    Veil 中继互发、准入放行/拒绝/控制面不可达 fail-closed、probe 端点）、
+    `veil/integration_test.go`（Veil ↔ `control` `/derp/admit` 真实联通）、
+    `control/derpadmit_test.go`（注册/未知/过期/零 key/坏请求）。
+  - 已知限制：无 DERP mesh key、无自动证书（ACME）、无带宽限速。
 - `services/` 其余：Serve / Funnel（Funnel 明确不支持；Serve 控制面无 DNS/ACME）、
   Discovery。
 - `client/`：Xunara Agent（自研客户端，独立协议，不侵入 TS2021）。
-- DERP（`Xunara Veil`）、ACL/Zero Trust（`Xunara Warden`）。
+- ACL/Zero Trust（`Xunara Warden`）。
 
 ---
 
