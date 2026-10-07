@@ -632,8 +632,21 @@ reference/{go-oidc,oauth2,dex,webauthn}
     成功、400 丢弃且不阻塞、配置校验表、glob 表）、
     `control/webhook_test.go`（真实注册审计事件端到端经签名投递）、
     `identity/sqlite_webhook_test.go`（游标往返/回退、ListAuditAfter 顺序与限长）。
-- 待办（M8 剩余）：gRPC API、投递重试的持久化退避状态（多实例去重）、
-  Webhook 管理 API/console 页面。
+- M8b 已完成：Webhook 投递租约与持久化退避（多实例去重）。
+  - identity 迁移 v8：`webhook_cursors` 增加 `attempts` / `retry_at` /
+    `claim_owner` / `claim_expires_at`（与游标同一行）。
+  - `WebhookCursorStore` 新增：ClaimWebhookEndpoint（到期租约可被接管、
+    单条 UPDATE + INSERT OR IGNORE 原子竞争）、RenewWebhookClaim（仅 owner，
+    返回 false 表示被接管）、ReleaseWebhookClaim、WebhookRetryState /
+    SetWebhookRetryState。
+  - dispatcher：每个端点单写者（先抢租约，续租 goroutine 被接管即停止），
+    失败后指数退避写入数据库、启动时先等待持久化的 `retry_at`（上限
+    MaxBackoff）再投递；成功清零。`Config.InstanceID`（缺省随机）标识实例。
+  - 测试：`identity/sqlite_webhook_test.go`（租约竞争/接管/续租归属/释放、
+    退避往返与游标互不覆盖）、`webhook/webhook_test.go`
+    （两个实例共享 store 只投递一次、holder 停止后接管、
+    重启后遵守持久化 retry_at）。
+- 待办（M8 剩余）：gRPC API、Webhook 管理 API/console 页面。
 
 ---
 

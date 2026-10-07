@@ -2,6 +2,7 @@ package identity
 
 import (
 	"errors"
+	"time"
 
 	"tailscale.com/tailcfg"
 )
@@ -74,6 +75,26 @@ type WebhookCursorStore interface {
 	GetWebhookCursor(endpoint string) uint64
 	// SetWebhookCursor records the last event ID delivered to an endpoint.
 	SetWebhookCursor(endpoint string, eventID uint64) error
+
+	// ClaimWebhookEndpoint claims exclusive delivery for an endpoint until
+	// expiresAt. It reports false when another instance holds a live claim, so
+	// several control-plane instances sharing a database deliver each event
+	// once between them (receivers still deduplicate by delivery ID, because
+	// delivery is at-least-once).
+	ClaimWebhookEndpoint(endpoint, owner string, now, expiresAt time.Time) (bool, error)
+	// RenewWebhookClaim extends a claim. It reports false when the claim was
+	// taken over (the previous holder must stop delivering).
+	RenewWebhookClaim(endpoint, owner string, expiresAt time.Time) (bool, error)
+	// ReleaseWebhookClaim drops a claim the owner still holds, so another
+	// instance can take over immediately instead of waiting for the lease to
+	// expire.
+	ReleaseWebhookClaim(endpoint, owner string) error
+	// WebhookRetryState returns the persisted backoff of an endpoint: how many
+	// consecutive attempts failed and when the next one may start.
+	WebhookRetryState(endpoint string) (attempts int, retryAt time.Time)
+	// SetWebhookRetryState persists the backoff state. attempts 0 with a zero
+	// retryAt means "healthy".
+	SetWebhookRetryState(endpoint string, attempts int, retryAt time.Time) error
 }
 
 // Store is the persistence boundary of the trust plane.

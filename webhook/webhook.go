@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -73,7 +74,22 @@ type Config struct {
 	MaxBackoff time.Duration
 	// Now, if set, overrides the clock (tests).
 	Now func() time.Time
+	// InstanceID identifies this process in webhook delivery leases. Defaults
+	// to a random identifier; tests may pin it.
+	InstanceID string
+	// LeaseDuration is how long a delivery lease is valid without renewal.
+	// Zero uses DefaultLeaseDuration. Only short-lived for tests.
+	LeaseDuration time.Duration
+	// LeaseRenewInterval is how often the lease holder renews it. Zero uses
+	// LeaseDuration/3.
+	LeaseRenewInterval time.Duration
 }
+
+const (
+	// DefaultLeaseDuration bounds how long a crashed instance can block
+	// delivery for an endpoint.
+	DefaultLeaseDuration = time.Minute
+)
 
 // Store is the part of the trust plane the dispatcher consumes. It is
 // satisfied by [identity.Store]; keeping it narrow lets tests use a tiny fake
@@ -87,6 +103,18 @@ type Store interface {
 	GetWebhookCursor(endpoint string) uint64
 	// SetWebhookCursor records the last delivered event ID.
 	SetWebhookCursor(endpoint string, eventID uint64) error
+
+	// ClaimWebhookEndpoint claims exclusive delivery for an endpoint until
+	// expiresAt. See [identity.WebhookCursorStore] for the semantics.
+	ClaimWebhookEndpoint(endpoint, owner string, now, expiresAt time.Time) (bool, error)
+	// RenewWebhookClaim extends a claim; false means it was taken over.
+	RenewWebhookClaim(endpoint, owner string, expiresAt time.Time) (bool, error)
+	// ReleaseWebhookClaim drops a claim the owner still holds.
+	ReleaseWebhookClaim(endpoint, owner string) error
+	// WebhookRetryState returns the persisted backoff state.
+	WebhookRetryState(endpoint string) (attempts int, retryAt time.Time)
+	// SetWebhookRetryState persists the backoff state.
+	SetWebhookRetryState(endpoint string, attempts int, retryAt time.Time) error
 }
 
 // Dispatcher delivers audit events to the configured endpoints.
@@ -94,6 +122,8 @@ type Dispatcher struct {
 	cfg    Config
 	log    *slog.Logger
 	client *http.Client
+	// owner is this process's identity in delivery leases.
+	owner string
 }
 
 // Delivery is the JSON document POSTed to an endpoint.
@@ -170,7 +200,33 @@ func New(cfg Config) (*Dispatcher, error) {
 		}
 	}
 
-	return &Dispatcher{cfg: cfg, log: cfg.Logger, client: cfg.HTTPClient}, nil
+	if cfg.InstanceID == "" {
+		id, err := randomInstanceID()
+		if err != nil {
+			return nil, err
+		}
+		cfg.InstanceID = id
+	}
+	if cfg.LeaseDuration <= 0 {
+		cfg.LeaseDuration = DefaultLeaseDuration
+	}
+	if cfg.LeaseRenewInterval <= 0 {
+		cfg.LeaseRenewInterval = cfg.LeaseDuration / 3
+		if cfg.LeaseRenewInterval < time.Second {
+			cfg.LeaseRenewInterval = time.Second
+		}
+	}
+
+	return &Dispatcher{cfg: cfg, log: cfg.Logger, client: cfg.HTTPClient, owner: cfg.InstanceID}, nil
+}
+
+// randomInstanceID returns a random lease owner identifier.
+func randomInstanceID() (string, error) {
+	var buf [8]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", fmt.Errorf("webhook: generating instance id: %w", err)
+	}
+	return hex.EncodeToString(buf[:]), nil
 }
 
 // Run delivers events until ctx is cancelled. One goroutine per endpoint; the
@@ -189,21 +245,77 @@ func (d *Dispatcher) Run(ctx context.Context) {
 }
 
 // runEndpoint drives one endpoint's cursor until ctx is cancelled.
+//
+// Delivery is single-writer per endpoint: the instance holding the durable
+// lease delivers, and the others wait. That is what keeps several instances
+// sharing one database from double delivering; the retry backoff is persisted
+// with the same row, so a restart does not reset it.
 func (d *Dispatcher) runEndpoint(ctx context.Context, ep Endpoint) {
-	delay := d.cfg.PollInterval
+	if !d.acquire(ctx, ep) {
+		return
+	}
+	defer func() {
+		if err := d.cfg.Store.ReleaseWebhookClaim(ep.ID, d.owner); err != nil {
+			d.log.Warn("releasing webhook claim", "endpoint", ep.ID, "err", err)
+		}
+	}()
+
+	lost := make(chan struct{})
+	renewCtx, stopRenew := context.WithCancel(ctx)
+	defer stopRenew()
+	go d.renewLoop(renewCtx, ep.ID, lost)
+
+	attempts, retryAt := d.cfg.Store.WebhookRetryState(ep.ID)
+	delay := d.backoffFor(attempts)
+
+	// A persisted retry time from a previous instance is honoured before the
+	// first attempt, so a restart does not hammer a down receiver.
+	if wait := time.Until(retryAt); wait > 0 {
+		if wait > d.cfg.MaxBackoff {
+			wait = d.cfg.MaxBackoff
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-lost:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+
 	for {
+		if ctx.Err() != nil {
+			return
+		}
+		select {
+		case <-lost:
+			d.log.Warn("webhook delivery lease was taken over; stopping", "endpoint", ep.ID)
+			return
+		default:
+		}
+
 		progress, failed := d.deliverPending(ctx, ep)
 		switch {
 		case failed:
-			// Back off so a down endpoint does not get hammered.
+			// Back off so a down endpoint does not get hammered, and persist
+			// the delay so a restart does not reset it.
 			if delay < d.cfg.MaxBackoff {
 				delay *= 2
 				if delay > d.cfg.MaxBackoff {
 					delay = d.cfg.MaxBackoff
 				}
 			}
+			attempts++
+			d.storeRetry(ep, attempts, d.cfg.Now().Add(delay))
 		case progress:
 			delay = d.cfg.PollInterval
+			if attempts > 0 {
+				attempts = 0
+				d.storeRetry(ep, 0, time.Time{})
+			}
 		}
 
 		timer := time.NewTimer(delay)
@@ -211,9 +323,91 @@ func (d *Dispatcher) runEndpoint(ctx context.Context, ep Endpoint) {
 		case <-ctx.Done():
 			timer.Stop()
 			return
+		case <-lost:
+			timer.Stop()
+			d.log.Warn("webhook delivery lease was taken over; stopping", "endpoint", ep.ID)
+			return
 		case <-timer.C:
 		}
 	}
+}
+
+// acquire blocks until this instance holds the endpoint's delivery lease, and
+// reports false when ctx is cancelled first.
+func (d *Dispatcher) acquire(ctx context.Context, ep Endpoint) bool {
+	waiting := false
+	for {
+		claimed, err := d.cfg.Store.ClaimWebhookEndpoint(ep.ID, d.owner,
+			d.cfg.Now(), d.cfg.Now().Add(d.cfg.LeaseDuration))
+		switch {
+		case err != nil:
+			d.log.Error("claiming webhook endpoint", "endpoint", ep.ID, "err", err)
+		case claimed:
+			if waiting {
+				d.log.Info("acquired webhook delivery lease", "endpoint", ep.ID)
+			}
+			return true
+		case !waiting:
+			d.log.Debug("another instance holds the webhook delivery lease", "endpoint", ep.ID)
+			waiting = true
+		}
+
+		timer := time.NewTimer(d.cfg.PollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		case <-timer.C:
+		}
+	}
+}
+
+// renewLoop extends the lease until ctx is cancelled or the lease is taken
+// over, in which case lost is closed.
+func (d *Dispatcher) renewLoop(ctx context.Context, endpoint string, lost chan<- struct{}) {
+	ticker := time.NewTicker(d.cfg.LeaseRenewInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			ok, err := d.cfg.Store.RenewWebhookClaim(endpoint, d.owner, d.cfg.Now().Add(d.cfg.LeaseDuration))
+			if err != nil {
+				d.log.Error("renewing webhook claim", "endpoint", endpoint, "err", err)
+				continue
+			}
+			if !ok {
+				close(lost)
+				return
+			}
+		}
+	}
+}
+
+// storeRetry persists the endpoint's backoff state, logging failures: a
+// delivery that is a little early after a restart is safe, a wrongly skipped
+// one is not.
+func (d *Dispatcher) storeRetry(ep Endpoint, attempts int, retryAt time.Time) {
+	if err := d.cfg.Store.SetWebhookRetryState(ep.ID, attempts, retryAt); err != nil {
+		d.log.Error("persisting webhook retry state", "endpoint", ep.ID, "err", err)
+	}
+}
+
+// backoffFor returns the delay after attempts consecutive failures.
+func (d *Dispatcher) backoffFor(attempts int) time.Duration {
+	delay := d.cfg.PollInterval
+	for i := 0; i < attempts; i++ {
+		if delay >= d.cfg.MaxBackoff {
+			return d.cfg.MaxBackoff
+		}
+		delay *= 2
+	}
+	if delay > d.cfg.MaxBackoff {
+		delay = d.cfg.MaxBackoff
+	}
+	return delay
 }
 
 // deliverPending walks the events after the endpoint's cursor.

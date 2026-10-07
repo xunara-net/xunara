@@ -21,12 +21,30 @@ type fakeStore struct {
 	mu      sync.Mutex
 	events  []identity.AuditEvent
 	cursors map[string]uint64
+	claims  map[string]claimState
+	retries map[string]retryState
 
 	listErr chan struct{} // optional: closed to fail ListAuditAfter
 }
 
+// claimState mirrors the durable delivery lease.
+type claimState struct {
+	owner   string
+	expires time.Time
+}
+
+// retryState mirrors the persisted backoff.
+type retryState struct {
+	attempts int
+	retryAt  time.Time
+}
+
 func newFakeStore() *fakeStore {
-	return &fakeStore{cursors: make(map[string]uint64)}
+	return &fakeStore{
+		cursors: make(map[string]uint64),
+		claims:  make(map[string]claimState),
+		retries: make(map[string]retryState),
+	}
 }
 
 func (s *fakeStore) append(action string) uint64 {
@@ -72,6 +90,52 @@ func (s *fakeStore) SetWebhookCursor(endpoint string, eventID uint64) error {
 	return nil
 }
 
+func (s *fakeStore) ClaimWebhookEndpoint(endpoint, owner string, now, expiresAt time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	claim := s.claims[endpoint]
+	if claim.owner != "" && claim.owner != owner && claim.expires.After(now) {
+		return false, nil
+	}
+	s.claims[endpoint] = claimState{owner: owner, expires: expiresAt}
+	return true, nil
+}
+
+func (s *fakeStore) RenewWebhookClaim(endpoint, owner string, expiresAt time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	claim := s.claims[endpoint]
+	if claim.owner != owner {
+		return false, nil
+	}
+	claim.expires = expiresAt
+	s.claims[endpoint] = claim
+	return true, nil
+}
+
+func (s *fakeStore) ReleaseWebhookClaim(endpoint, owner string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if claim := s.claims[endpoint]; claim.owner == owner {
+		delete(s.claims, endpoint)
+	}
+	return nil
+}
+
+func (s *fakeStore) WebhookRetryState(endpoint string) (int, time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	retry := s.retries[endpoint]
+	return retry.attempts, retry.retryAt
+}
+
+func (s *fakeStore) SetWebhookRetryState(endpoint string, attempts int, retryAt time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retries[endpoint] = retryState{attempts: attempts, retryAt: retryAt}
+	return nil
+}
+
 // recorded is one delivery a test receiver observed.
 type recorded struct {
 	event     string
@@ -79,6 +143,7 @@ type recorded struct {
 	delivery  string
 	timestamp string
 	signature string
+	at        time.Time
 }
 
 // recordingReceiver collects deliveries, optionally failing the first
@@ -107,6 +172,7 @@ func (r *recordingReceiver) ServeHTTP(w http.ResponseWriter, req *http.Request) 
 		delivery:  req.Header.Get("X-Xunara-Delivery"),
 		timestamp: req.Header.Get("X-Xunara-Timestamp"),
 		signature: req.Header.Get("X-Xunara-Signature"),
+		at:        time.Now(),
 	})
 	notify := r.notify
 	r.mu.Unlock()
@@ -324,5 +390,126 @@ func TestGlobMatch(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("globMatch(%q, %q) = %v, want %v", tc.pattern, tc.s, got, tc.want)
 		}
+	}
+}
+
+// mustDispatcher builds a dispatcher or fails the test.
+func mustDispatcher(t *testing.T, cfg Config) *Dispatcher {
+	t.Helper()
+	d, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return d
+}
+
+// TestDeliveryLeaseSingleWriter checks that two instances sharing a store
+// deliver each event once between them, and that a stopped holder's lease is
+// taken over.
+func TestDeliveryLeaseSingleWriter(t *testing.T) {
+	store := newFakeStore()
+	store.append("node.registered")
+	store.append("node.approved")
+
+	receiver := &recordingReceiver{}
+	hs := httptest.NewServer(receiver)
+	t.Cleanup(hs.Close)
+
+	endpoint := Endpoint{ID: "ops", URL: hs.URL, Secret: "s3cret"}
+	base := Config{
+		Endpoints:          []Endpoint{endpoint},
+		Store:              store,
+		PollInterval:       5 * time.Millisecond,
+		LeaseDuration:      time.Minute,
+		LeaseRenewInterval: time.Second,
+	}
+
+	ctxA, cancelA := context.WithCancel(context.Background())
+	ctxB, cancelB := context.WithCancel(context.Background())
+	t.Cleanup(func() { cancelA(); cancelB() })
+
+	cfgA := base
+	cfgA.InstanceID = "a"
+	cfgB := base
+	cfgB.InstanceID = "b"
+	dA := mustDispatcher(t, cfgA)
+	dB := mustDispatcher(t, cfgB)
+
+	go dA.Run(ctxA)
+	go dB.Run(ctxB)
+
+	waitFor(t, func() bool { return len(receiver.delivered()) == 2 }, "two deliveries")
+
+	// The second instance must not duplicate them while the first holds the
+	// lease.
+	time.Sleep(100 * time.Millisecond)
+	if got := len(receiver.delivered()); got != 2 {
+		t.Fatalf("deliveries = %d, want 2 (one writer per endpoint)", got)
+	}
+
+	// The holder stops; the other instance takes over and delivers the event
+	// that arrived afterwards.
+	cancelA()
+	waitFor(t, func() bool { return store.GetWebhookCursor("ops") == 2 }, "cursor at 2")
+	store.append("node.deleted")
+	waitFor(t, func() bool { return store.GetWebhookCursor("ops") == 3 }, "takeover delivery")
+	if got := len(receiver.delivered()); got != 3 {
+		t.Fatalf("deliveries = %d, want 3", got)
+	}
+}
+
+// TestRetryBackoffIsPersisted checks that a failed delivery's backoff is
+// durable: a fresh instance waits for the recorded retry time instead of
+// hammering the receiver immediately.
+func TestRetryBackoffIsPersisted(t *testing.T) {
+	store := newFakeStore()
+	store.append("node.registered")
+
+	receiver := &recordingReceiver{status: http.StatusInternalServerError, failures: 1}
+	hs := httptest.NewServer(receiver)
+	t.Cleanup(hs.Close)
+
+	endpoint := Endpoint{ID: "ops", URL: hs.URL, Secret: "s3cret"}
+	base := Config{
+		Endpoints:          []Endpoint{endpoint},
+		Store:              store,
+		PollInterval:       5 * time.Millisecond,
+		MaxBackoff:         500 * time.Millisecond,
+		LeaseDuration:      time.Second,
+		LeaseRenewInterval: time.Second,
+	}
+
+	ctxA, cancelA := context.WithCancel(context.Background())
+	t.Cleanup(cancelA)
+	cfgA := base
+	cfgA.InstanceID = "a"
+	dA := mustDispatcher(t, cfgA)
+	go dA.Run(ctxA)
+
+	waitFor(t, func() bool {
+		attempts, _ := store.WebhookRetryState("ops")
+		return attempts == 1
+	}, "persisted retry state")
+
+	_, retryAt := store.WebhookRetryState("ops")
+	if retryAt.IsZero() || !retryAt.After(time.Now()) {
+		t.Fatalf("retryAt = %v, want a future time", retryAt)
+	}
+	cancelA()
+
+	// A fresh instance must honour the persisted delay.
+	ctxB, cancelB := context.WithCancel(context.Background())
+	t.Cleanup(cancelB)
+	cfgB := base
+	cfgB.InstanceID = "b"
+	dB := mustDispatcher(t, cfgB)
+	go dB.Run(ctxB)
+
+	waitFor(t, func() bool { return len(receiver.delivered()) == 1 }, "delivery after backoff")
+	if got := receiver.delivered()[0]; got.at.Before(retryAt.Add(-2 * time.Millisecond)) {
+		t.Errorf("delivered at %v, before the persisted retry time %v", got.at, retryAt)
+	}
+	if attempts, _ := store.WebhookRetryState("ops"); attempts != 0 {
+		t.Errorf("attempts = %d after a successful delivery, want 0", attempts)
 	}
 }

@@ -185,6 +185,18 @@ CREATE TABLE IF NOT EXISTS agent_tokens (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_tokens_node ON agent_tokens(node_id);
 `,
+
+	// v8: webhook delivery leases and persisted retry backoff. A single
+	// instance (the lease owner) delivers for an endpoint at a time, so
+	// multiple control-plane instances sharing a database do not double
+	// deliver; the backoff survives a restart so a down receiver is not
+	// hammered by a fresh process.
+	`
+ALTER TABLE webhook_cursors ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE webhook_cursors ADD COLUMN retry_at INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE webhook_cursors ADD COLUMN claim_owner TEXT NOT NULL DEFAULT '';
+ALTER TABLE webhook_cursors ADD COLUMN claim_expires_at INTEGER NOT NULL DEFAULT 0;
+`,
 }
 
 // SQLiteStore is a durable [Store] sharing the control plane's database.
