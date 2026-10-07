@@ -143,6 +143,7 @@ const (
 	AuditSessionRevoked    = "session.revoked"
 	AuditDeviceApproved    = "device.approved"
 	AuditDeviceDenied      = "device.denied"
+	AuditTagRejected       = "device.tag_rejected"
 	AuditAPIKeyCreated     = "apikey.created"
 	AuditAPIKeyRevoked     = "apikey.revoked"
 )

@@ -115,6 +115,94 @@ func (e *Engine) RuleCount() int { return len(e.rules) }
 // HasRules reports whether the policy grants anything at all.
 func (e *Engine) HasRules() bool { return len(e.rules) > 0 }
 
+// TagExists reports whether the tag is defined in the document's tagOwners.
+// An undefined tag cannot be applied to any key or node.
+func (e *Engine) TagExists(tag string) bool {
+	_, ok := e.doc.TagOwners[tag]
+	return ok
+}
+
+// UserOwnsTag reports whether the user identified by loginName may apply tag.
+// The tag must be defined in tagOwners and the user must be listed there
+// directly, through a group (following nested groups), or through a
+// tag-to-tag ownership chain. It is the "may this user claim this tag" check
+// used when a client advertises tags.
+func (e *Engine) UserOwnsTag(loginName, tag string) bool {
+	if loginName == "" || tag == "" {
+		return false
+	}
+	return e.userOwnsTag(loginName, tag, nil)
+}
+
+func (e *Engine) userOwnsTag(loginName, tag string, seen []string) bool {
+	if slices.Contains(seen, tag) {
+		return false
+	}
+	seen = append(seen, tag)
+
+	owners, ok := e.doc.TagOwners[tag]
+	if !ok {
+		return false
+	}
+	for _, owner := range owners {
+		switch {
+		case strings.HasPrefix(owner, "group:"):
+			if e.groupContainsUser(owner, loginName, nil) {
+				return true
+			}
+		case strings.HasPrefix(owner, "tag:"):
+			if e.userOwnsTag(loginName, owner, seen) {
+				return true
+			}
+		default:
+			if loginNameMatches(owner, loginName) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// groupContainsUser resolves a group's user members, following nested groups.
+// Tag members are skipped: they name devices, not users.
+func (e *Engine) groupContainsUser(group, loginName string, seen []string) bool {
+	if slices.Contains(seen, group) {
+		return false
+	}
+	seen = append(seen, group)
+
+	for _, member := range e.doc.Groups[group] {
+		switch {
+		case strings.HasPrefix(member, "group:"):
+			if e.groupContainsUser(member, loginName, seen) {
+				return true
+			}
+		case strings.HasPrefix(member, "tag:"):
+			// Tag membership names devices, not users.
+		default:
+			if loginNameMatches(member, loginName) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// loginNameMatches compares an ACL selector against a profile login name. It
+// accepts the login name verbatim and, for selectors written as an email
+// address, the local part: a self-hosted tailnet's users are frequently
+// written as "alice@example.com" even though the local profile only carries
+// the login name.
+func loginNameMatches(selector, loginName string) bool {
+	if strings.EqualFold(selector, loginName) {
+		return true
+	}
+	if local, _, ok := strings.Cut(selector, "@"); ok {
+		return strings.EqualFold(local, loginName)
+	}
+	return false
+}
+
 func (e *Engine) warnf(format string, args ...any) {
 	e.warnings = append(e.warnings, fmt.Sprintf(format, args...))
 }
@@ -613,13 +701,7 @@ func (r *resolution) userMatches(id tailcfg.UserID, sel string) bool {
 	if login == "" {
 		return false
 	}
-	if strings.EqualFold(sel, login) {
-		return true
-	}
-	if local, _, ok := strings.Cut(sel, "@"); ok {
-		return strings.EqualFold(local, login)
-	}
-	return false
+	return loginNameMatches(sel, login)
 }
 
 func (r *resolution) nodesWithTag(tag string) []state.Node {
@@ -630,7 +712,7 @@ func (r *resolution) nodesWithTag(tag string) []state.Node {
 		}
 	}
 	if len(out) == 0 {
-		r.warn("policy: tag selector %q matches no node (tag assignment is not implemented yet)", tag)
+		r.warn("policy: tag selector %q matches no node", tag)
 	}
 	return out
 }

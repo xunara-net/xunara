@@ -120,6 +120,7 @@ func runStoreConformance(t *testing.T, newStore storeFactory) {
 			Expiry:    expiry,
 			Method:    RegisterMethodInteractive,
 			Ephemeral: true,
+			Tags:      []string{"tag:prod", "tag:server"},
 		}
 
 		if err := s.CreateNode(&n); err != nil {
@@ -157,6 +158,9 @@ func runStoreConformance(t *testing.T, newStore storeFactory) {
 		}
 		if got.DiscoKey != n.DiscoKey {
 			t.Error("DiscoKey did not round-trip")
+		}
+		if !slices.Equal(got.Tags, n.Tags) {
+			t.Errorf("Tags = %v, want %v", got.Tags, n.Tags)
 		}
 	})
 
@@ -484,7 +488,10 @@ func runPreAuthKeyConformance(t *testing.T, newStore storeFactory) {
 	t.Run("create assigns identity", func(t *testing.T) {
 		s := newStore(t)
 
-		k := PreAuthKey{Key: "tskey-auth-test", UserID: DefaultUserID, Reusable: true}
+		k := PreAuthKey{
+			Key: "tskey-auth-test", UserID: DefaultUserID, Reusable: true,
+			Tags: []string{"tag:prod", "tag:server"},
+		}
 		if err := s.CreatePreAuthKey(&k); err != nil {
 			t.Fatalf("CreatePreAuthKey: %v", err)
 		}
@@ -501,6 +508,9 @@ func runPreAuthKeyConformance(t *testing.T, newStore storeFactory) {
 		}
 		if got.ID != k.ID || !got.Reusable || got.UserID != DefaultUserID {
 			t.Errorf("round-trip = %+v, want %+v", got, k)
+		}
+		if !slices.Equal(got.Tags, k.Tags) {
+			t.Errorf("round-trip tags = %v, want %v", got.Tags, k.Tags)
 		}
 	})
 

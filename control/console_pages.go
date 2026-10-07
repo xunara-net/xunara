@@ -273,6 +273,7 @@ is shown once, at creation time, and never again.</p>
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <div class="field">
 <label>Lifetime <input name="ttl" placeholder="24h (empty: never)"></label>
+<label>Tags <input name="tags" placeholder="tag:server, tag:prod"></label>
 <label><input type="checkbox" name="reusable"> Reusable</label>
 <label><input type="checkbox" name="ephemeral"> Ephemeral</label>
 <button type="submit">Create key</button>
@@ -280,12 +281,13 @@ is shown once, at creation time, and never again.</p>
 </form>
 {{if .AuthKeys}}
 <table>
-<thead><tr><th>ID</th><th>Owner</th><th>Reusable</th><th>Ephemeral</th><th>Used</th><th>Expires</th><th>Created</th><th></th></tr></thead>
+<thead><tr><th>ID</th><th>Owner</th><th>Tags</th><th>Reusable</th><th>Ephemeral</th><th>Used</th><th>Expires</th><th>Created</th><th></th></tr></thead>
 <tbody>
 {{range .AuthKeys}}
 <tr>
 <td>{{.ID}}</td>
 <td>{{.Owner}}</td>
+<td>{{if .Tags}}{{range .Tags}}<code>{{.}}</code> {{end}}{{else}}—{{end}}</td>
 <td>{{if .Reusable}}yes{{else}}no{{end}}</td>
 <td>{{if .Ephemeral}}yes{{else}}no{{end}}</td>
 <td>{{if .Used}}yes{{else}}no{{end}}</td>

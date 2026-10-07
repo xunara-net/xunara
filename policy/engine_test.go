@@ -280,3 +280,62 @@ func TestRunTests(t *testing.T) {
 		t.Error("expected the test to fail")
 	}
 }
+
+// TestTagOwnership covers the tagOwners checks used when a client advertises
+// tags: TagExists is the "is this tag defined at all" gate, UserOwnsTag the
+// "may this user claim it" gate.
+func TestTagOwnership(t *testing.T) {
+	engine := mustEngine(t, `{
+		"groups": {
+			"group:ops": ["alice@example.com", "group:oncall"],
+			"group:oncall": ["bob"],
+		},
+		"tagOwners": {
+			"tag:server": ["alice@example.com"],
+			"tag:prod": ["group:ops"],
+			"tag:edge": ["tag:prod"],
+		},
+		"acls": [{"action": "accept", "src": ["*"], "dst": ["*:*"]}],
+	}`)
+
+	if !engine.TagExists("tag:server") || engine.TagExists("tag:missing") {
+		t.Errorf("TagExists = %v/%v, want true/false", engine.TagExists("tag:server"), engine.TagExists("tag:missing"))
+	}
+
+	owns := []struct {
+		login string
+		tag   string
+		want  bool
+	}{
+		{"alice", "tag:server", true}, // listed directly, bare login vs email
+		{"alice@example.com", "tag:server", true},
+		{"bob", "tag:server", false}, // not an owner
+		{"alice", "tag:prod", true},  // via group:ops
+		{"bob", "tag:prod", true},    // via nested group:oncall
+		{"carol", "tag:prod", false}, // in no group
+		{"bob", "tag:edge", true},    // tag:prod owns tag:edge
+		{"carol", "tag:edge", false},
+		{"alice", "tag:missing", false}, // undefined tag
+		{"", "tag:server", false},       // unknown user
+	}
+	for _, tt := range owns {
+		if got := engine.UserOwnsTag(tt.login, tt.tag); got != tt.want {
+			t.Errorf("UserOwnsTag(%q, %q) = %v, want %v", tt.login, tt.tag, got, tt.want)
+		}
+	}
+}
+
+// TestTagOwnershipHandlesCycles proves a tag-to-tag ownership loop cannot hang.
+func TestTagOwnershipHandlesCycles(t *testing.T) {
+	engine := mustEngine(t, `{
+		"tagOwners": {
+			"tag:a": ["tag:b"],
+			"tag:b": ["tag:a"],
+		},
+		"acls": [{"action": "accept", "src": ["*"], "dst": ["*:*"]}],
+	}`)
+
+	if engine.UserOwnsTag("alice", "tag:a") {
+		t.Error("a tag cycle must not authorize anyone")
+	}
+}

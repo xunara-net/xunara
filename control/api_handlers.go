@@ -517,6 +517,7 @@ func (s *Server) handleAPIAuthKeys(w http.ResponseWriter, r *http.Request) {
 		Reusable  bool       `json:"reusable"`
 		Ephemeral bool       `json:"ephemeral"`
 		Used      bool       `json:"used"`
+		Tags      []string   `json:"tags,omitempty"`
 		Expiry    *time.Time `json:"expiry,omitempty"`
 		Created   time.Time  `json:"created"`
 		UsedAt    *time.Time `json:"usedAt,omitempty"`
@@ -528,6 +529,7 @@ func (s *Server) handleAPIAuthKeys(w http.ResponseWriter, r *http.Request) {
 		view := authKeyView{
 			ID: k.ID, UserID: uint64(k.UserID), Reusable: k.Reusable,
 			Ephemeral: k.Ephemeral, Used: k.Used, Created: k.Created, UsedAt: k.UsedAt,
+			Tags: k.Tags,
 		}
 		if !k.Expiry.IsZero() {
 			expiry := k.Expiry
@@ -546,10 +548,11 @@ func (s *Server) handleAPICreateAuthKey(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var body struct {
-		UserID    uint64 `json:"userId"`
-		Reusable  bool   `json:"reusable"`
-		Ephemeral bool   `json:"ephemeral"`
-		TTL       string `json:"ttl"`
+		UserID    uint64   `json:"userId"`
+		Reusable  bool     `json:"reusable"`
+		Ephemeral bool     `json:"ephemeral"`
+		TTL       string   `json:"ttl"`
+		Tags      []string `json:"tags"`
 	}
 	if !decodeAPIBody(w, r, &body) {
 		return
@@ -571,11 +574,18 @@ func (s *Server) handleAPICreateAuthKey(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	tags, err := s.validateKeyTags(body.Tags)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	key := state.PreAuthKey{
 		Key:       secret,
 		UserID:    userID,
 		Reusable:  body.Reusable,
 		Ephemeral: body.Ephemeral,
+		Tags:      tags,
 	}
 	if body.TTL != "" {
 		ttl, err := time.ParseDuration(body.TTL)
@@ -601,6 +611,7 @@ func (s *Server) handleAPICreateAuthKey(w http.ResponseWriter, r *http.Request) 
 		"userId":    uint64(key.UserID),
 		"reusable":  key.Reusable,
 		"ephemeral": key.Ephemeral,
+		"tags":      key.Tags,
 		"expiry":    key.Expiry,
 	})
 }

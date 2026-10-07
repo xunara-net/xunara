@@ -161,6 +161,7 @@ func Node(n state.Node, self bool, online OnlineFunc, routes RouteTable, cfg Con
 		Created:       n.Created,
 		Cap:           n.CapVer,
 		LastSeen:      n.LastSeen,
+		Tags:          slices.Clone(n.Tags),
 	}
 
 	if n.Hostinfo != nil {

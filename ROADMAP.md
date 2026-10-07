@@ -157,10 +157,22 @@ reference/{go-oidc,oauth2,dex,webauthn}
 待办（M2b 剩余）：
 
 - `PeersChangedPatch`（更细粒度端点/DERP patch）。
-- `tag:` 的实际赋值（tagged auth key / tagOwners 校验）——当前 tag 选择器匹配不到节点。
 - `ClientVersion` 下发（版本提示）；`HomeDERP` 延迟择优（当前仅单 region 自动归位）。
 - 说明：`set-dns` 记录通过 `ExtraRecords` 在 tailnet 内可见，**不**写入外部 DNS 提供商；
   公网 ACME 校验需要额外的 DNS 集成（后续里程碑）。
+- 已完成（M2b 追加）：`tag:` 的实际赋值。
+  - `state.PreAuthKey.Tags`（迁移 v5）与 `state.Node.Tags`（迁移 v6）；
+    `state.NormalizeTags` 用上游 `tailcfg.CheckTag` 校验并排序去重，名称长度有上限。
+  - mapper 下发 `tailcfg.Node.Tags`；tag 选择器现在能匹配到节点。
+  - tagged 节点永不过期（`applyRegistrationDefaults` 跳过 key expiry，对齐上游）。
+  - `policy.Engine.TagExists`/`UserOwnsTag`：tagOwners 直连用户、嵌套 group、
+    tag→tag 链（含环保护）。
+  - 创建面校验（tag 必须已在 tagOwners 定义）：CLI `preauthkey create -tags ... -policy ...`、
+    console 表单、`POST /api/v1/auth-keys`。
+  - 客户端 `--advertise-tags`（`Hostinfo.RequestTags`）：审批时按审批人的 tagOwners
+    归属校验，任一 tag 不通过则整个审批失败（不静默降级），记 `device.tag_rejected` 审计。
+  - 已知偏离：tagged 节点仍保留 `UserID`（上游置空）；节点 tag 的“仅 tag 拥有者”语义
+    与角色模型一起在 M5c+ 完善。
 
 ## M3 — 持久化与密钥 —— 进行中
 

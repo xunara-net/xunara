@@ -83,6 +83,16 @@ CREATE TABLE IF NOT EXISTS dns_records (
 );
 CREATE INDEX IF NOT EXISTS idx_dns_records_name ON dns_records(name);
 `,
+
+	// v5: ACL tags carried by pre-authentication keys.
+	`
+ALTER TABLE preauthkeys ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
+`,
+
+	// v6: ACL tags carried by nodes.
+	`
+ALTER TABLE nodes ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
+`,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.
@@ -171,7 +181,7 @@ var _ Store = (*SQLiteStore)(nil)
 // nodeColumns is the column list every node SELECT and INSERT agrees on.
 const nodeColumns = `id, stable_id, machine_key, node_key, disco_key, user_id, hostname,
 	ipv4, ipv6, endpoints, home_derp, cap_ver, hostinfo, last_seen, expiry, created, method, ephemeral,
-	approved_routes`
+	approved_routes, tags`
 
 func (s *SQLiteStore) GetNodeByID(id NodeID) (Node, bool) {
 	return s.queryNode(context.Background(), "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", int64(id))
@@ -263,11 +273,12 @@ func scanNode(sc scanner) (Node, error) {
 		method    string
 		ephemeral int64
 		approved  string
+		tags      string
 	)
 
 	err := sc.Scan(&id, &stableID, &machineS, &nodeS, &discoS, &userID, &hostname,
 		&ipv4, &ipv6, &endpoints, &homeDERP, &capVer, &hostinfo, &lastSeen, &expiry,
-		&created, &method, &ephemeral, &approved)
+		&created, &method, &ephemeral, &approved, &tags)
 	if err != nil {
 		return Node{}, err
 	}
@@ -325,8 +336,35 @@ func scanNode(sc scanner) (Node, error) {
 	if n.ApprovedRoutes, err = decodeRoutes(approved); err != nil {
 		return Node{}, err
 	}
+	if err := decodeStringList(tags, &n.Tags); err != nil {
+		return Node{}, err
+	}
 
 	return n, nil
+}
+
+// decodeStringList parses a NOT NULL JSON string-list column, tolerating rows
+// written before the column existed (empty string means "no values").
+func decodeStringList(encoded string, out *[]string) error {
+	if encoded == "" || encoded == "[]" || encoded == "null" {
+		return nil
+	}
+	if err := json.Unmarshal([]byte(encoded), out); err != nil {
+		return fmt.Errorf("state: parsing string list: %w", err)
+	}
+	return nil
+}
+
+// encodeStringList renders a NOT NULL JSON string-list column.
+func encodeStringList(values []string) (string, error) {
+	if len(values) == 0 {
+		return "[]", nil
+	}
+	b, err := json.Marshal(values)
+	if err != nil {
+		return "", fmt.Errorf("state: encoding string list: %w", err)
+	}
+	return string(b), nil
 }
 
 // decodeRoutes parses the JSON encoding of a route list.
@@ -471,9 +509,13 @@ func (s *SQLiteStore) CreateNode(n *Node) error {
 	if err != nil {
 		return err
 	}
+	tags, err := encodeStringList(n.Tags)
+	if err != nil {
+		return err
+	}
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO nodes (`+nodeColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		int64(n.ID),
 		n.StableID,
 		textOf(n.MachineKey, ""),
@@ -493,6 +535,7 @@ func (s *SQLiteStore) CreateNode(n *Node) error {
 		string(n.Method),
 		boolToInt(n.Ephemeral),
 		approved,
+		tags,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -513,12 +556,16 @@ func (s *SQLiteStore) UpdateNode(n Node) error {
 	if err != nil {
 		return err
 	}
+	tags, err := encodeStringList(n.Tags)
+	if err != nil {
+		return err
+	}
 
 	res, err := s.db.ExecContext(context.Background(), `UPDATE nodes SET
 			stable_id = ?, machine_key = ?, node_key = ?, disco_key = ?, user_id = ?,
 			hostname = ?, ipv4 = ?, ipv6 = ?, endpoints = ?, home_derp = ?,
 			cap_ver = ?, hostinfo = ?, last_seen = ?, expiry = ?, created = ?,
-			method = ?, ephemeral = ?, approved_routes = ?
+			method = ?, ephemeral = ?, approved_routes = ?, tags = ?
 		WHERE id = ?`,
 		n.StableID,
 		textOf(n.MachineKey, ""),
@@ -538,6 +585,7 @@ func (s *SQLiteStore) UpdateNode(n Node) error {
 		string(n.Method),
 		boolToInt(n.Ephemeral),
 		approved,
+		tags,
 		int64(n.ID),
 	)
 	if err != nil {

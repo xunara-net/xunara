@@ -4,11 +4,51 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"errors"
+	"fmt"
+	"slices"
 	"strings"
 	"time"
 
 	"tailscale.com/tailcfg"
 )
+
+// NormalizeTags validates ACL tags with the upstream validator and returns
+// them sorted and deduplicated. A nil or empty input returns nil: an untagged
+// key is the common case.
+//
+// Names are additionally bounded so that a tag cannot smuggle unbounded text
+// into errors or audit records.
+func NormalizeTags(tags []string) ([]string, error) {
+	if len(tags) == 0 {
+		return nil, nil
+	}
+
+	out := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		tag = strings.TrimSpace(tag)
+		if tag == "" {
+			continue
+		}
+		if len(tag) > maxTagNameLength {
+			return nil, fmt.Errorf("state: ACL tag names are limited to %d characters", maxTagNameLength)
+		}
+		if err := tailcfg.CheckTag(tag); err != nil {
+			return nil, fmt.Errorf("state: invalid ACL tag: %w", err)
+		}
+		if !slices.Contains(out, tag) {
+			out = append(out, tag)
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+// maxTagNameLength bounds a tag name. Upstream's character rules do not
+// impose a length; this is a defensive bound for user-facing text.
+const maxTagNameLength = 63
 
 // preAuthKeyPrefix mirrors the prefix Tailscale uses for pre-authentication
 // keys.
@@ -51,6 +91,11 @@ type PreAuthKey struct {
 
 	// Used reports whether the key has authorized at least one node.
 	Used bool
+
+	// Tags are the ACL tags ("tag:<name>") every node registered with this key
+	// carries. They are validated against the policy's tagOwners where the key
+	// is created; the store treats them as opaque strings.
+	Tags []string
 
 	// Expiry is when the key stops working. The zero value never expires.
 	Expiry time.Time

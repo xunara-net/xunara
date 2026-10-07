@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -159,6 +160,14 @@ func (s *Server) registerWithAuthKey(req tailcfg.RegisterRequest, machineKey key
 		Ephemeral:       preauth.Ephemeral || req.Ephemeral,
 		RequestedExpiry: req.Expiry,
 	}
+	// Tags are part of the key's authority: the key's creator authorized them
+	// against the policy's tagOwners. Re-validate the format defensively, since
+	// a row written by a future or older build could hold anything.
+	if tags, err := state.NormalizeTags(preauth.Tags); err != nil {
+		s.log.Warn("ignoring malformed pre-auth key tags", "key_id", preauth.ID, "err", err)
+	} else {
+		node.Tags = tags
+	}
 	s.applyRegistrationDefaults(&node, now)
 
 	if err := s.store.CreateNode(&node); err != nil {
@@ -224,6 +233,62 @@ type deviceMetadata struct {
 	Ephemeral       bool              `json:"ephemeral,omitempty"`
 	RequestedExpiry time.Time         `json:"requested_expiry,omitempty"`
 	Hostinfo        *tailcfg.Hostinfo `json:"hostinfo,omitempty"`
+}
+
+// requestedTags are the ACL tags the client asked to claim during
+// registration ("tailscale up --advertise-tags").
+func (m deviceMetadata) requestedTags() []string {
+	if m.Hostinfo == nil {
+		return nil
+	}
+	return m.Hostinfo.RequestTags
+}
+
+// authorizedTags resolves the tags a client asked to claim for a device.
+//
+// Every requested tag must be well-formed and owned by the authorizing user
+// under the current policy. One rejected tag fails the whole registration:
+// silently dropping a tag would let a client believe it holds a capability it
+// does not have (this matches the upstream behaviour).
+func (s *Server) authorizedTags(userID tailcfg.UserID, requested []string, target string) ([]string, error) {
+	if len(requested) == 0 {
+		return nil, nil
+	}
+
+	login := s.UserProfile(userID).LoginName
+	engine := s.policy.Load()
+	if engine == nil {
+		s.audit(fmt.Sprintf("user:%d", userID), identity.AuditTagRejected, target,
+			"the tailnet has no policy, so no tag can be claimed")
+		return nil, NewHTTPError(http.StatusForbidden,
+			"This tailnet has no ACL policy, so no tag can be claimed.", nil)
+	}
+
+	for _, raw := range requested {
+		tag := strings.TrimSpace(raw)
+		if tag == "" {
+			continue
+		}
+		if _, err := state.NormalizeTags([]string{tag}); err != nil {
+			s.audit(fmt.Sprintf("user:%d", userID), identity.AuditTagRejected, target,
+				"a requested tag is malformed")
+			return nil, NewHTTPError(http.StatusBadRequest,
+				"The device requested a malformed tag.", nil)
+		}
+		if !engine.UserOwnsTag(login, tag) {
+			s.audit(fmt.Sprintf("user:%d", userID), identity.AuditTagRejected, target,
+				tag+" is not owned by "+login)
+			return nil, NewHTTPError(http.StatusForbidden,
+				"Tag "+tag+" is not owned by "+login+" in this tailnet's policy.", nil)
+		}
+	}
+
+	tags, err := state.NormalizeTags(requested)
+	if err != nil {
+		return nil, NewHTTPError(http.StatusBadRequest,
+			"The device requested a malformed tag.", nil)
+	}
+	return tags, nil
 }
 
 // encodeDeviceMetadata serialises the client-provided registration details.
@@ -435,6 +500,10 @@ func (s *Server) nodeForAuthorization(da identity.DeviceAuthorization, userID ta
 	}
 
 	meta := decodeDeviceMetadata(da.ClientMetadata)
+	tags, err := s.authorizedTags(userID, meta.requestedTags(), "device:"+da.ID)
+	if err != nil {
+		return state.Node{}, err
+	}
 	node := state.Node{
 		MachineKey:      machineKey,
 		NodeKey:         nodeKey,
@@ -444,6 +513,7 @@ func (s *Server) nodeForAuthorization(da identity.DeviceAuthorization, userID ta
 		Method:          state.RegisterMethodInteractive,
 		Ephemeral:       meta.Ephemeral,
 		RequestedExpiry: meta.RequestedExpiry,
+		Tags:            tags,
 	}
 	s.applyRegistrationDefaults(&node, now)
 	return node, nil

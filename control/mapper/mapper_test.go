@@ -135,6 +135,18 @@ func TestUpdateCarriesOnlyMutableFields(t *testing.T) {
 	}
 }
 
+// TestNodeCarriesTags checks ACL tags reach the wire, where clients and ACL
+// consumers read them.
+func TestNodeCarriesTags(t *testing.T) {
+	n := testNode(1, "tagged")
+	n.Tags = []string{"tag:prod"}
+
+	got := Node(n, true, neverOnline, nil, Config{})
+	if len(got.Tags) != 1 || got.Tags[0] != "tag:prod" {
+		t.Errorf("Tags = %v, want [tag:prod]", got.Tags)
+	}
+}
+
 func TestNodeMarksExpiredKeys(t *testing.T) {
 	expired := testNode(1, "expired")
 	expired.Expiry = time.Now().Add(-time.Hour)

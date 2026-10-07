@@ -12,7 +12,7 @@ import (
 // counterNextPreAuthKeyID backs pre-auth key identifier allocation.
 const counterNextPreAuthKeyID = "next_preauthkey_id"
 
-const preAuthKeyColumns = "id, secret, user_id, reusable, ephemeral, used, expiry, created, used_at"
+const preAuthKeyColumns = "id, secret, user_id, reusable, ephemeral, used, expiry, created, used_at, tags"
 
 // CreatePreAuthKey implements [PreAuthKeyStore].
 func (s *SQLiteStore) CreatePreAuthKey(k *PreAuthKey) error {
@@ -39,8 +39,13 @@ func (s *SQLiteStore) CreatePreAuthKey(k *PreAuthKey) error {
 		k.Created = time.Now().UTC()
 	}
 
+	tags, err := encodeStringList(k.Tags)
+	if err != nil {
+		return err
+	}
+
 	_, err = tx.ExecContext(ctx, `INSERT INTO preauthkeys (`+preAuthKeyColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		int64(k.ID),
 		k.Key,
 		int64(k.UserID),
@@ -50,6 +55,7 @@ func (s *SQLiteStore) CreatePreAuthKey(k *PreAuthKey) error {
 		nullableTimePtr(k.Expiry),
 		k.Created.UnixNano(),
 		nullableTime(k.UsedAt),
+		tags,
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -132,9 +138,10 @@ func scanPreAuthKey(sc scanner) (PreAuthKey, error) {
 		expiry    sql.NullInt64
 		created   int64
 		usedAt    sql.NullInt64
+		tags      string
 	)
 
-	if err := sc.Scan(&id, &secret, &userID, &reusable, &ephemeral, &used, &expiry, &created, &usedAt); err != nil {
+	if err := sc.Scan(&id, &secret, &userID, &reusable, &ephemeral, &used, &expiry, &created, &usedAt, &tags); err != nil {
 		return PreAuthKey{}, err
 	}
 
@@ -153,6 +160,9 @@ func scanPreAuthKey(sc scanner) (PreAuthKey, error) {
 	if usedAt.Valid {
 		t := time.Unix(0, usedAt.Int64).UTC()
 		k.UsedAt = &t
+	}
+	if err := decodeStringList(tags, &k.Tags); err != nil {
+		return PreAuthKey{}, err
 	}
 
 	return k, nil

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 
@@ -34,6 +35,7 @@ type consoleAuthKey struct {
 	Reusable  bool
 	Ephemeral bool
 	Used      bool
+	Tags      []string
 	Expiry    time.Time
 	Created   time.Time
 }
@@ -49,11 +51,17 @@ func (s *Server) consoleAuthKeyViews() []consoleAuthKey {
 			Reusable:  k.Reusable,
 			Ephemeral: k.Ephemeral,
 			Used:      k.Used,
+			Tags:      k.Tags,
 			Expiry:    k.Expiry,
 			Created:   k.Created,
 		})
 	}
 	return views
+}
+
+// splitTagInput splits the console's comma- or whitespace-separated tag field.
+func splitTagInput(raw string) []string {
+	return strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
 }
 
 // consoleRouter builds the operator console.
@@ -507,6 +515,12 @@ func (s *Server) handleConsoleCreateAuthKey(w http.ResponseWriter, r *http.Reque
 		Reusable:  r.PostFormValue("reusable") != "",
 		Ephemeral: r.PostFormValue("ephemeral") != "",
 	}
+	tags, err := s.validateKeyTags(splitTagInput(r.PostFormValue("tags")))
+	if err != nil {
+		s.renderError(w, http.StatusBadRequest, "Invalid tags", err.Error())
+		return
+	}
+	key.Tags = tags
 	if ttlRaw := strings.TrimSpace(r.PostFormValue("ttl")); ttlRaw != "" {
 		ttl, err := time.ParseDuration(ttlRaw)
 		if err != nil || ttl <= 0 {

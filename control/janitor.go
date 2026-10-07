@@ -75,6 +75,14 @@ func (s *Server) nodeKeyExpiry(now time.Time) time.Time {
 
 // applyRegistrationDefaults fills in the fields every new node shares.
 func (s *Server) applyRegistrationDefaults(n *state.Node, now time.Time) {
+	// Tagged nodes carry a tag instead of a user identity and never expire:
+	// that is the upstream behaviour, and a tagged node can always be
+	// re-authorized by whoever owns its tag.
+	if len(n.Tags) > 0 {
+		n.Expiry = time.Time{}
+		return
+	}
+
 	n.Expiry = s.nodeKeyExpiry(now)
 
 	// The client may request a shorter expiry than the server default.

@@ -19,6 +19,7 @@ import (
 	"tailscale.com/tailcfg"
 
 	"github.com/xunara/xunara/identity"
+	"github.com/xunara/xunara/policy"
 	"github.com/xunara/xunara/state"
 )
 
@@ -104,11 +105,38 @@ func runCreate(args []string) {
 		reusable  = fs.Bool("reusable", false, "allow the key to authorize more than one node")
 		ephemeral = fs.Bool("ephemeral", false, "mark nodes authorized by this key as ephemeral")
 		expiry    = fs.Duration("expiry", 0, "key lifetime, e.g. 24h (0 means no expiry)")
+		tagsRaw   = fs.String("tags", "", "comma-separated ACL tags for registered nodes, e.g. tag:server,tag:prod")
+		policyDoc = fs.String("policy", "", "ACL policy document validating -tags (required with -tags)")
 	)
 	fs.Parse(args)
 
 	store := openStore(*stateDir)
 	defer store.Close()
+
+	tags, err := state.NormalizeTags(strings.FieldsFunc(*tagsRaw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t'
+	}))
+	if err != nil {
+		fatal("validating tags", err)
+	}
+	if len(tags) > 0 {
+		if *policyDoc == "" {
+			fatal("validating tags", fmt.Errorf("-tags requires -policy so tags can be checked against tagOwners"))
+		}
+		doc, err := policy.Load(*policyDoc)
+		if err != nil {
+			fatal("parsing policy", err)
+		}
+		engine, err := policy.NewEngine(doc, policy.Options{})
+		if err != nil {
+			fatal("compiling policy", err)
+		}
+		for _, tag := range tags {
+			if !engine.TagExists(tag) {
+				fatal("validating tags", fmt.Errorf("tag %s is not defined in %s's tagOwners", tag, *policyDoc))
+			}
+		}
+	}
 
 	secret, err := state.NewPreAuthKeySecret()
 	if err != nil {
@@ -120,6 +148,7 @@ func runCreate(args []string) {
 		UserID:    tailcfg.UserID(*userID),
 		Reusable:  *reusable,
 		Ephemeral: *ephemeral,
+		Tags:      tags,
 	}
 	if *expiry > 0 {
 		key.Expiry = time.Now().Add(*expiry).UTC()
@@ -130,8 +159,8 @@ func runCreate(args []string) {
 	}
 
 	appendAudit(store, identity.AuditPreAuthKeyCreated, fmt.Sprintf("preauthkey:%d", key.ID),
-		fmt.Sprintf("user=%d reusable=%t ephemeral=%t expiry=%s",
-			key.UserID, key.Reusable, key.Ephemeral, formatTime(key.Expiry)))
+		fmt.Sprintf("user=%d reusable=%t ephemeral=%t expiry=%s tags=%s",
+			key.UserID, key.Reusable, key.Ephemeral, formatTime(key.Expiry), strings.Join(key.Tags, ",")))
 	fmt.Println(key.Key)
 }
 
@@ -147,11 +176,15 @@ func runList(args []string) {
 	sort.Slice(keys, func(i, j int) bool { return keys[i].ID < keys[j].ID })
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tKEY\tUSER\tREUSABLE\tEPHEMERAL\tUSED\tEXPIRY\tCREATED")
+	fmt.Fprintln(w, "ID\tKEY\tUSER\tTAGS\tREUSABLE\tEPHEMERAL\tUSED\tEXPIRY\tCREATED")
 
 	for _, k := range keys {
-		fmt.Fprintf(w, "%d\t%s\t%d\t%t\t%t\t%t\t%s\t%s\n",
-			k.ID, k.Key, k.UserID, k.Reusable, k.Ephemeral, k.Used,
+		tags := "-"
+		if len(k.Tags) > 0 {
+			tags = strings.Join(k.Tags, ",")
+		}
+		fmt.Fprintf(w, "%d\t%s\t%d\t%s\t%t\t%t\t%t\t%s\t%s\n",
+			k.ID, k.Key, k.UserID, tags, k.Reusable, k.Ephemeral, k.Used,
 			formatTime(k.Expiry), k.Created.Format(time.RFC3339))
 	}
 	w.Flush()
