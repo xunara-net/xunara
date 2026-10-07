@@ -76,4 +76,13 @@ type AgentTokenStore interface {
 	// ListAgentTokensForNode returns a node's tokens, newest first, including
 	// revoked ones (for administration).
 	ListAgentTokensForNode(nodeID int64) []AgentToken
+
+	// ListAgentTokens returns tokens across every node, newest first, at most
+	// limit of them (0 means no limit), including revoked ones.
+	ListAgentTokens(limit int) []AgentToken
+
+	// RevokeAgentToken revokes one token by public ID. Unknown and already
+	// revoked tokens are a no-op; callers distinguish them by looking the
+	// token up first when the difference matters.
+	RevokeAgentToken(id string, now time.Time) error
 }

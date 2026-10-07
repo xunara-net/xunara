@@ -329,7 +329,27 @@ reference/{go-oidc,oauth2,dex,webauthn}
   - 测试：`control/api_test.go`（401/403/scope、密钥不泄漏、注册/路由/删除、
     用户改名冲突、auth-key 一次性 secret、设备审批归属、key 吊销即时生效）。
 - `api/platform` 已完成（M7a）：组织表 + `/api/platform/v1`（见 M7 段）。
-- 待办（M5 剩余）：`api/v2`、gRPC。Webhook 已完成（M8a）。
+- M5d 已完成：Platform API v2（`/api/v2`，`control/api_v2.go`）。
+  - 认证/角色模型与 v1 相同（session 或 service API key，write 需 admin+）；
+    v1 响应形状不变，v2 是增量版本。
+  - `GET /api/v2/meta`：版本、capver 窗口、页面大小上限、身份 provider、
+    agent 协议版本、webhook/DNS provider/DERP map 是否配置；不包含任何
+    密钥材料或 secret。
+  - 游标分页（不透明 base64 游标，服务端校验种类与格式；调用方只回传）：
+    `GET /api/v2/machines`（过滤 state=online|offline、user=<id|login>、
+    tag=，未知用户返回空集而非忽略过滤）、`GET /api/v2/audit`
+    （过滤 action/actor/target 前缀，扫描上限防止全表遍历）、
+    `GET /api/v2/agent-tokens`（含节点信息，永不返回 credential）。
+  - `DELETE /api/v2/agent-tokens/{id}`：吊销原生客户端凭证（幂等、404 未知、
+    审计 `agent.token_revoked`），下一个 agent 请求立即 401。
+  - 查询串必须可解析（`net/url` 会静默丢弃坏 pair，这里 400 拒绝），
+    非法 cursor/limit/filter 一律 400。
+  - console 新增 Agents 页面（只读角色可见列表、admin+ 可吊销；secret 永不渲染）。
+  - 测试：`control/api_v2_test.go`（meta 认证与不泄漏、分页不重不漏、过滤、
+    非法输入表、token 列出/吊销/幂等/404/权限、吊销后即时失效）、
+    `identity/sqlite_agent_test.go`（跨节点列出、单条吊销、limit、幂等）、
+    console 渲染与吊销端到端。
+- 待办（M5 剩余）：gRPC。Webhook 已完成（M8a）。
 
 - M5b 已完成：Web Console（`/console/`，浏览器会话 + 每会话 CSRF）。
   - 页面：Overview（在线/离线、待审批设备、DNS、auth key、策略摘要）、Machines
@@ -524,8 +544,9 @@ reference/{go-oidc,oauth2,dex,webauthn}
     不入 body/URL、错误映射）、`client/daemon/daemon_test.go`（状态 0600、
     pending/rejected、循环与停止、401 终止）、`client/daemon/e2e_test.go`
     （真实控制面端到端：授权、netmap 状态、心跳在线、删除后失效、交互审批）。
-  - 已知限制（M9 剩余）：agent token 的列出/吊销 API 与控制台页面；netmap 为
-    轮询而非 SSE；Remote/File Transfer 尚未构建。
+  - 已知限制（M9 剩余）：netmap 为轮询而非 SSE；Remote/File Transfer 尚未构建。
+    （credential 的列出/吊销已完成：M5d 的 `/api/v2/agent-tokens` 与 console
+    Agents 页面。）
 - ACL/Zero Trust（`Xunara Warden`）。
 
 ---

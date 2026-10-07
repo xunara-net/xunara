@@ -114,6 +114,47 @@ func (s *SQLiteStore) ListAgentTokensForNode(nodeID int64) []AgentToken {
 	return out
 }
 
+// ListAgentTokens implements [AgentTokenStore].
+func (s *SQLiteStore) ListAgentTokens(limit int) []AgentToken {
+	query := `
+		SELECT id, node_id, machine_key, node_key, created_at, expires_at, last_used_at, revoked_at
+		FROM agent_tokens ORDER BY created_at DESC, id DESC`
+	args := []any{}
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
+	}
+
+	rows, err := s.db.QueryContext(context.Background(), query, args...)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var out []AgentToken
+	for rows.Next() {
+		t, err := scanAgentToken(rows.Scan)
+		if err != nil {
+			return nil
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// RevokeAgentToken implements [AgentTokenStore].
+func (s *SQLiteStore) RevokeAgentToken(id string, now time.Time) error {
+	if id == "" {
+		return nil
+	}
+	if _, err := s.db.ExecContext(context.Background(),
+		"UPDATE agent_tokens SET revoked_at = ? WHERE id = ? AND revoked_at = 0",
+		now.UTC().UnixNano(), id); err != nil {
+		return fmt.Errorf("identity: revoking agent token: %w", err)
+	}
+	return nil
+}
+
 // scanAgentToken reads one row in the canonical column order.
 func scanAgentToken(scan func(...any) error) (AgentToken, error) {
 	var (

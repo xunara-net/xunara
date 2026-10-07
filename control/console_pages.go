@@ -74,6 +74,7 @@ footer { text-align: center; color: #5b616e; font-size: .8rem; }
 <a href="/console/users"{{if eq .Nav "users"}} class="active"{{end}}>Users</a>
 <a href="/console/dns"{{if eq .Nav "dns"}} class="active"{{end}}>DNS</a>
 <a href="/console/auth-keys"{{if eq .Nav "auth-keys"}} class="active"{{end}}>Auth keys</a>
+<a href="/console/agents"{{if eq .Nav "agents"}} class="active"{{end}}>Agents</a>
 <a href="/console/policy"{{if eq .Nav "policy"}} class="active"{{end}}>Policy</a>
 <a href="/console/audit"{{if eq .Nav "audit"}} class="active"{{end}}>Audit</a>
 </nav>
@@ -99,6 +100,7 @@ var consoleTitles = map[string]string{
 	"users":     "Users",
 	"dns":       "DNS",
 	"auth-keys": "Auth keys",
+	"agents":    "Agents",
 	"policy":    "Policy",
 	"audit":     "Audit",
 }
@@ -127,6 +129,7 @@ var (
 <div class="card"><span class="num">{{.PendingDevices}}</span><span>pending devices</span></div>
 <div class="card"><span class="num">{{.DNSRecords}}</span><span>DNS records</span></div>
 <div class="card"><span class="num">{{.AuthKeys}}</span><span>auth keys</span></div>
+<div class="card"><span class="num">{{.Agents}}</span><span>agent credentials</span></div>
 </div>
 <h2>Access control</h2>
 <p>{{.Policy}}</p>
@@ -326,6 +329,42 @@ is shown once, at creation time, and never again.</p>
 </table>
 {{else}}
 <p>No auth keys.</p>
+{{end}}
+`)
+
+	consoleAgentsTemplate = consolePage("agents", `
+<h2>Agents</h2>
+<p>Xunara Agent credentials (native clients). Revoking one signs that agent out
+immediately; the device keeps its node identity and can enroll again.</p>
+{{if .Tokens}}
+<table>
+<thead><tr><th>ID</th><th>Node</th><th>Hostname</th><th>Live</th><th>Created</th><th>Expires</th><th>Last used</th><th>Revoked</th><th></th></tr></thead>
+<tbody>
+{{range .Tokens}}
+<tr>
+<td><code>{{.ID}}</code></td>
+<td>{{.NodeID}}</td>
+<td>{{if .NodeHostname}}{{.NodeHostname}}{{else}}<em>deleted</em>{{end}}</td>
+<td>{{if .Live}}yes{{else}}no{{end}}</td>
+<td>{{fmtTime .CreatedAt}}</td>
+<td>{{if .ExpiresAt}}{{fmtTime .ExpiresAt}}{{else}}never{{end}}</td>
+<td>{{if .LastUsedAt}}{{fmtTime .LastUsedAt}}{{else}}never{{end}}</td>
+<td>{{if .RevokedAt}}{{fmtTime .RevokedAt}}{{else}}—{{end}}</td>
+<td>
+{{if and $.CanWrite (not .RevokedAt)}}
+<form method="post" action="/console/agents/{{.ID}}/revoke">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<button class="danger" type="submit">Revoke</button>
+</form>
+{{else}}—{{end}}
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>No agent credentials. A device creates one when it enrolls with
+<code>/api/agent/v1/enroll</code>.</p>
 {{end}}
 `)
 

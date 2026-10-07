@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"tailscale.com/tailcfg"
+	"tailscale.com/types/key"
 
 	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/state"
@@ -55,6 +56,7 @@ func TestConsolePagesRender(t *testing.T) {
 		{"/console/users", "Xunara User"},
 		{"/console/dns", "No extra DNS records."},
 		{"/console/auth-keys", "Create key"},
+		{"/console/agents", "No agent credentials."},
 		{"/console/policy", "No policy document is configured"},
 		{"/console/audit", identity.AuditNodeApproved},
 	}
@@ -70,6 +72,58 @@ func TestConsolePagesRender(t *testing.T) {
 		if body := bodyString(t, resp); !strings.Contains(body, page.want) {
 			t.Errorf("GET %s does not contain %q:\n%s", page.path, page.want, body)
 		}
+	}
+}
+
+// TestConsoleRevokeAgentToken covers the console half of agent credential
+// administration: the list never shows the credential, and revoking it takes
+// effect immediately.
+func TestConsoleRevokeAgentToken(t *testing.T) {
+	s := newServerWithConfig(t, Config{Domain: "example.com"})
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/")
+
+	secret := seedPreAuthKey(t, s, state.PreAuthKey{})
+	machineKey := key.NewMachine()
+	nodeKey := key.NewNode()
+	enrolled := enrollAgent(t, client, hs.URL, machineKey, nodeKey, secret)
+	if enrolled.Token == "" {
+		t.Fatalf("enrollment = %+v", enrolled)
+	}
+
+	resp := getRequest(t, client, hs.URL+"/console/agents", cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("agents page status = %d", resp.StatusCode)
+	}
+	page := bodyString(t, resp)
+	if strings.Contains(page, enrolled.Token) {
+		t.Fatal("console page leaks the agent credential")
+	}
+	if !strings.Contains(page, "agent-node") {
+		t.Fatalf("agents page does not list the enrolled node:\n%s", page)
+	}
+
+	tokens := s.identity.ListAgentTokens(0)
+	if len(tokens) == 0 {
+		t.Fatal("no agent token was recorded")
+	}
+	tokenID := tokens[0].ID
+
+	csrf := extractCSRF(t, page)
+	if resp := postForm(t, client, hs.URL+"/console/agents/"+tokenID+"/revoke", url.Values{"csrf": {csrf}}, cookie); resp.StatusCode != http.StatusOK {
+		t.Fatalf("revoke status = %d", resp.StatusCode)
+	}
+
+	body, status := agentPost(t, client, hs.URL, "/api/agent/v1/netmap", enrolled.Token, agentRequest{
+		MachineKey: machineKey.Public().String(),
+		NodeKey:    nodeKey.Public().String(),
+	})
+	if status != http.StatusUnauthorized {
+		t.Fatalf("revoked credential netmap status = %d (%s), want 401", status, body)
+	}
+	if _, ok := findAudit(t, s, identity.AuditAgentTokenRevoked); !ok {
+		t.Error("agent.token_revoked audit event missing")
 	}
 }
 

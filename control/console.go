@@ -76,6 +76,7 @@ func (s *Server) consoleRouter() http.Handler {
 	r.Get("/users", s.handleConsoleUsers)
 	r.Get("/dns", s.handleConsoleDNS)
 	r.Get("/auth-keys", s.handleConsoleAuthKeys)
+	r.Get("/agents", s.handleConsoleAgents)
 	r.Get("/policy", s.handleConsolePolicy)
 	r.Get("/audit", s.handleConsoleAudit)
 
@@ -91,6 +92,7 @@ func (s *Server) consoleRouter() http.Handler {
 		r.Post("/dns/{id}/delete", s.handleConsoleDeleteDNS)
 		r.Post("/auth-keys", s.handleConsoleCreateAuthKey)
 		r.Post("/auth-keys/{id}/delete", s.handleConsoleDeleteAuthKey)
+		r.Post("/agents/{id}/revoke", s.handleConsoleRevokeAgentToken)
 	})
 
 	return r
@@ -176,6 +178,14 @@ func (s *Server) handleConsoleOverview(w http.ResponseWriter, r *http.Request) {
 	data["PendingDevices"] = len(s.identity.ListPendingDeviceAuthorizations(time.Now()))
 	data["DNSRecords"] = len(s.store.ListDNSRecords())
 	data["AuthKeys"] = len(s.store.ListPreAuthKeys())
+	agentTokens := s.identity.ListAgentTokens(0)
+	liveAgents := 0
+	for _, t := range agentTokens {
+		if t.Live(time.Now()) {
+			liveAgents++
+		}
+	}
+	data["Agents"] = liveAgents
 	data["Policy"] = policyState
 
 	s.renderConsole(w, consoleOverviewTemplate, data)
@@ -638,6 +648,66 @@ func (s *Server) handleConsoleDeleteAuthKey(w http.ResponseWriter, r *http.Reque
 	data["Notice"] = "Key revoked."
 	data["AuthKeys"] = s.consoleAuthKeyViews()
 	s.renderConsole(w, consoleAuthKeysTemplate, data)
+}
+
+// consoleAgentTokenViews renders native-client credentials for the console.
+func (s *Server) consoleAgentTokenViews() []apiAgentTokenView {
+	tokens := s.identity.ListAgentTokens(0)
+	out := make([]apiAgentTokenView, 0, len(tokens))
+	for _, t := range tokens {
+		out = append(out, s.apiAgentTokenView(t))
+	}
+	return out
+}
+
+// handleConsoleAgents implements GET /console/agents.
+func (s *Server) handleConsoleAgents(w http.ResponseWriter, r *http.Request) {
+	_, data, ok := s.consoleSession(w, r, "agents")
+	if !ok {
+		return
+	}
+	data["Tokens"] = s.consoleAgentTokenViews()
+	s.renderConsole(w, consoleAgentsTemplate, data)
+}
+
+// handleConsoleRevokeAgentToken implements POST /console/agents/{id}/revoke.
+func (s *Server) handleConsoleRevokeAgentToken(w http.ResponseWriter, r *http.Request) {
+	session, data, ok := s.consoleSession(w, r, "agents")
+	if !ok {
+		return
+	}
+	if !s.consoleCheckCSRF(w, r) {
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	var found *identity.AgentToken
+	for _, t := range s.identity.ListAgentTokens(0) {
+		if t.ID == id {
+			token := t
+			found = &token
+			break
+		}
+	}
+	if found == nil {
+		s.renderError(w, http.StatusNotFound, "Unknown credential",
+			"This agent credential does not exist.")
+		return
+	}
+	if found.RevokedAt.IsZero() {
+		if err := s.identity.RevokeAgentToken(id, time.Now().UTC()); err != nil {
+			s.log.Error("revoking agent token", "token", id, "err", err)
+			s.renderError(w, http.StatusInternalServerError, "Revoke failed", "Please try again.")
+			return
+		}
+		s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditAgentTokenRevoked,
+			"agenttoken:"+id,
+			fmt.Sprintf("revoked through the console (node %d)", found.NodeID))
+	}
+
+	data["Notice"] = "Agent credential revoked."
+	data["Tokens"] = s.consoleAgentTokenViews()
+	s.renderConsole(w, consoleAgentsTemplate, data)
 }
 
 // handleConsolePolicy implements GET /console/policy.

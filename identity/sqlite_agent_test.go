@@ -77,6 +77,58 @@ func TestAgentTokenLifecycle(t *testing.T) {
 	}
 }
 
+// TestAgentTokenListAllAndRevokeOne covers the administration surface: listing
+// across nodes and revoking a single credential.
+func TestAgentTokenListAllAndRevokeOne(t *testing.T) {
+	s := openTestStore(t)
+
+	for _, node := range []int64{1, 2, 3} {
+		if _, _, err := s.CreateAgentToken(NewAgentTokenOptions{
+			NodeID:     node,
+			MachineKey: "mkey",
+			NodeKey:    "nodekey",
+		}); err != nil {
+			t.Fatalf("CreateAgentToken(%d): %v", node, err)
+		}
+	}
+
+	all := s.ListAgentTokens(0)
+	if len(all) != 3 {
+		t.Fatalf("ListAgentTokens = %d, want 3", len(all))
+	}
+	for i := 1; i < len(all); i++ {
+		if all[i].CreatedAt.After(all[i-1].CreatedAt) {
+			t.Fatal("ListAgentTokens is not newest-first")
+		}
+	}
+	if limited := s.ListAgentTokens(2); len(limited) != 2 {
+		t.Errorf("ListAgentTokens(2) = %d, want 2", len(limited))
+	}
+
+	if err := s.RevokeAgentToken(all[0].ID, time.Now().UTC()); err != nil {
+		t.Fatalf("RevokeAgentToken: %v", err)
+	}
+	// Idempotent, and an unknown or empty ID is a no-op.
+	if err := s.RevokeAgentToken(all[0].ID, time.Now().UTC()); err != nil {
+		t.Fatalf("repeated RevokeAgentToken: %v", err)
+	}
+	if err := s.RevokeAgentToken("", time.Now().UTC()); err != nil {
+		t.Fatalf("empty RevokeAgentToken: %v", err)
+	}
+	if err := s.RevokeAgentToken("missing", time.Now().UTC()); err != nil {
+		t.Fatalf("unknown RevokeAgentToken: %v", err)
+	}
+
+	revoked := s.ListAgentTokensForNode(all[0].NodeID)
+	if len(revoked) != 1 || revoked[0].RevokedAt.IsZero() {
+		t.Errorf("token not revoked: %+v", revoked)
+	}
+	live := s.ListAgentTokensForNode(all[1].NodeID)
+	if len(live) != 1 || !live[0].RevokedAt.IsZero() {
+		t.Errorf("other node's token was revoked: %+v", live)
+	}
+}
+
 // TestAgentTokenExpiry checks that an expired credential stops resolving.
 func TestAgentTokenExpiry(t *testing.T) {
 	s := openTestStore(t)

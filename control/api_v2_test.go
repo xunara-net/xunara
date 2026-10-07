@@ -1,0 +1,274 @@
+package control
+
+import (
+	"net/http"
+	"net/url"
+	"testing"
+
+	"tailscale.com/types/key"
+
+	"github.com/xunara/xunara/identity"
+	"github.com/xunara/xunara/state"
+)
+
+// seedAPIMachine creates a node directly in the store.
+func seedAPIMachine(t *testing.T, s *Server, hostname string, tags []string) state.Node {
+	t.Helper()
+	node := state.Node{
+		MachineKey: key.NewMachine().Public(),
+		NodeKey:    key.NewNode().Public(),
+		UserID:     state.DefaultUserID,
+		Hostname:   hostname,
+		Tags:       tags,
+		Method:     state.RegisterMethodAuthKey,
+	}
+	if err := s.store.CreateNode(&node); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	return node
+}
+
+func TestAPIV2Meta(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+
+	if resp := apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/meta", "", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous meta status = %d, want 401", resp.StatusCode)
+	}
+
+	_, token := seedAPIKey(t, s, identity.ScopeRead)
+	resp := apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/meta", token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("meta status = %d", resp.StatusCode)
+	}
+	meta := decodeAPI(t, resp)
+	if meta["version"] != Version {
+		t.Errorf("version = %v, want %s", meta["version"], Version)
+	}
+	if meta["maxPageSize"] != float64(apiV2MaxPageSize) {
+		t.Errorf("maxPageSize = %v", meta["maxPageSize"])
+	}
+	if _, ok := meta["agentProtocolVersion"]; !ok {
+		t.Error("meta lacks the agent protocol version")
+	}
+	// No key material or secrets in the discovery document.
+	for _, forbidden := range []string{"noiseKey", "machineKey", "secret", "token"} {
+		if _, ok := meta[forbidden]; ok {
+			t.Errorf("meta leaks %q", forbidden)
+		}
+	}
+}
+
+func TestAPIV2MachinesPaginationAndFilters(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+
+	seeded := []state.Node{
+		seedAPIMachine(t, s, "one", nil),
+		seedAPIMachine(t, s, "two", []string{"tag:server"}),
+		seedAPIMachine(t, s, "three", nil),
+	}
+	_, token := seedAPIKey(t, s, identity.ScopeRead)
+
+	// First page: bounded and followed by a cursor.
+	resp := apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/machines?limit=2", token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("page 1 status = %d", resp.StatusCode)
+	}
+	page := decodeAPI(t, resp)
+	items, _ := page["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("page 1 items = %d, want 2", len(items))
+	}
+	cursor, _ := page["nextCursor"].(string)
+	if cursor == "" {
+		t.Fatal("page 1 lacks a next cursor")
+	}
+
+	// Second page: the rest, no cursor.
+	resp = apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/machines?limit=2&cursor="+url.QueryEscape(cursor), token, nil)
+	page = decodeAPI(t, resp)
+	items, _ = page["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("page 2 items = %d, want 1", len(items))
+	}
+	if next, _ := page["nextCursor"].(string); next != "" {
+		t.Errorf("last page has cursor %q", next)
+	}
+	last := items[0].(map[string]any)
+	if last["stableId"] != seeded[2].StableID {
+		t.Errorf("page 2 item = %v, want the third machine", last["stableId"])
+	}
+
+	// Tag filter.
+	resp = apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/machines?tag=tag:server", token, nil)
+	page = decodeAPI(t, resp)
+	if items, _ = page["items"].([]any); len(items) != 1 {
+		t.Fatalf("tag filter items = %d, want 1", len(items))
+	}
+	if got := items[0].(map[string]any)["stableId"]; got != seeded[1].StableID {
+		t.Errorf("tag filter item = %v", got)
+	}
+
+	// User filter accepts the login name, and an unknown name matches nothing
+	// instead of silently unfiltering.
+	resp = apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/machines?user=local", token, nil)
+	page = decodeAPI(t, resp)
+	if items, _ = page["items"].([]any); len(items) != 3 {
+		t.Fatalf("user filter items = %d, want 3", len(items))
+	}
+	resp = apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/machines?user=nobody", token, nil)
+	page = decodeAPI(t, resp)
+	if items, _ = page["items"].([]any); len(items) != 0 {
+		t.Fatalf("unknown user filter items = %d, want 0", len(items))
+	}
+
+	// Offline filter: no map session is open in this test.
+	resp = apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/machines?state=offline", token, nil)
+	page = decodeAPI(t, resp)
+	if items, _ = page["items"].([]any); len(items) != 3 {
+		t.Fatalf("offline filter items = %d, want 3", len(items))
+	}
+
+	// Malformed input is rejected, not ignored.
+	for _, target := range []string{
+		"/api/v2/machines?cursor=not-a-cursor",
+		"/api/v2/machines?state=broken",
+		"/api/v2/machines?limit=0",
+		"/api/v2/machines?limit=nope",
+	} {
+		if resp := apiRequest(t, client, http.MethodGet, hs.URL+target, token, nil); resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s status = %d, want 400", target, resp.StatusCode)
+		}
+	}
+}
+
+func TestAPIV2AuditPaginationAndFilters(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+
+	for i := 0; i < 5; i++ {
+		s.audit("tester", "test.something", "test:target", "detail")
+	}
+	s.audit("tester", "test.special", "test:special", "detail")
+
+	_, token := seedAPIKey(t, s, identity.ScopeRead)
+
+	resp := apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/audit?limit=2", token, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("audit page status = %d", resp.StatusCode)
+	}
+	page := decodeAPI(t, resp)
+	items, _ := page["items"].([]any)
+	if len(items) != 2 {
+		t.Fatalf("audit page items = %d, want 2", len(items))
+	}
+	cursor, _ := page["nextCursor"].(string)
+	if cursor == "" {
+		t.Fatal("audit page lacks a next cursor")
+	}
+
+	// The cursor continues without repeating or skipping events.
+	seen := map[float64]bool{}
+	for _, it := range items {
+		seen[it.(map[string]any)["id"].(float64)] = true
+	}
+	for cursor != "" {
+		resp = apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/audit?limit=2&cursor="+url.QueryEscape(cursor), token, nil)
+		page = decodeAPI(t, resp)
+		items, _ = page["items"].([]any)
+		for _, it := range items {
+			id := it.(map[string]any)["id"].(float64)
+			if seen[id] {
+				t.Fatalf("audit event %v delivered twice", id)
+			}
+			seen[id] = true
+		}
+		cursor, _ = page["nextCursor"].(string)
+	}
+	// The server seeds its local user at startup, so compare against the
+	// store's own count rather than the number of events this test appended.
+	if want := len(s.identity.ListAudit(0)); len(seen) != want {
+		t.Fatalf("paged audit events = %d, want %d", len(seen), want)
+	}
+
+	// Action filter.
+	resp = apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/audit?action=test.special", token, nil)
+	page = decodeAPI(t, resp)
+	if items, _ = page["items"].([]any); len(items) != 1 {
+		t.Fatalf("action filter items = %d, want 1", len(items))
+	}
+	if got := items[0].(map[string]any)["target"]; got != "test:special" {
+		t.Errorf("action filter item = %v", got)
+	}
+
+	if resp := apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/audit?cursor=%%%", token, nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("bad cursor status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestAPIV2AgentTokensListAndRevoke(t *testing.T) {
+	s := newServerWithConfig(t, Config{Domain: "example.com"})
+	hs := newTestHTTPServer(t, s)
+	client := hs.Client()
+
+	secret := seedPreAuthKey(t, s, state.PreAuthKey{})
+	machineKey := key.NewMachine()
+	nodeKey := key.NewNode()
+	enrolled := enrollAgent(t, client, hs.URL, machineKey, nodeKey, secret)
+	if enrolled.Token == "" {
+		t.Fatalf("enrollment = %+v", enrolled)
+	}
+
+	_, readToken := seedAPIKey(t, s, identity.ScopeRead)
+	resp := apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/agent-tokens", readToken, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("agent-tokens status = %d", resp.StatusCode)
+	}
+	page := decodeAPI(t, resp)
+	items, _ := page["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("agent tokens = %d, want 1", len(items))
+	}
+	view := items[0].(map[string]any)
+	if view["live"] != true || view["nodeHostname"] != "agent-node" {
+		t.Errorf("token view = %v", view)
+	}
+	if _, ok := view["token"]; ok {
+		t.Error("token list leaks the credential")
+	}
+	tokenID := view["id"].(string)
+
+	// Revoking needs the write scope: a read-only key is refused.
+	if resp := apiRequest(t, client, http.MethodDelete, hs.URL+"/api/v2/agent-tokens/"+tokenID, readToken, nil); resp.StatusCode != http.StatusForbidden {
+		t.Errorf("read-only revoke status = %d, want 403", resp.StatusCode)
+	}
+
+	_, writeToken := seedAPIKey(t, s)
+	if resp := apiRequest(t, client, http.MethodDelete, hs.URL+"/api/v2/agent-tokens/"+tokenID, writeToken, nil); resp.StatusCode != http.StatusOK {
+		t.Errorf("revoke status = %d, want 200", resp.StatusCode)
+	}
+	// Idempotent retry.
+	if resp := apiRequest(t, client, http.MethodDelete, hs.URL+"/api/v2/agent-tokens/"+tokenID, writeToken, nil); resp.StatusCode != http.StatusOK {
+		t.Errorf("repeated revoke status = %d, want 200", resp.StatusCode)
+	}
+	if resp := apiRequest(t, client, http.MethodDelete, hs.URL+"/api/v2/agent-tokens/xunara_agenttoken_missing", writeToken, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown token revoke status = %d, want 404", resp.StatusCode)
+	}
+
+	// The revoked credential stops working immediately.
+	body, status := agentPost(t, client, hs.URL, "/api/agent/v1/netmap", enrolled.Token, agentRequest{
+		MachineKey: machineKey.Public().String(),
+		NodeKey:    nodeKey.Public().String(),
+	})
+	if status != http.StatusUnauthorized {
+		t.Fatalf("revoked token netmap status = %d (%s), want 401", status, body)
+	}
+
+	if _, ok := findAudit(t, s, identity.AuditAgentTokenRevoked); !ok {
+		t.Error("agent.token_revoked audit event missing")
+	}
+}

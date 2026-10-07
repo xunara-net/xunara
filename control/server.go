@@ -479,6 +479,7 @@ func (s *Server) Handler() http.Handler {
 	r.Post("/derp/admit", s.handleDERPAdmit)
 	r.Mount("/api/agent/v1", s.agentRouter())
 	r.Mount("/api/v1", s.apiRouter())
+	r.Mount("/api/v2", s.apiV2Router())
 	r.Mount("/console", s.consoleRouter())
 	r.Get("/", s.handleRoot)
 

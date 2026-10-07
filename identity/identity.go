@@ -147,7 +147,10 @@ const (
 	AuditNodeDisconnectReported = "node.disconnect_reported"
 	// AuditAgentEnrolled records a native client (Xunara Agent) enrolling or
 	// rotating its machine-bound credential.
-	AuditAgentEnrolled     = "agent.enrolled"
+	AuditAgentEnrolled = "agent.enrolled"
+	// AuditAgentTokenRevoked records an administrator revoking a native
+	// client's machine-bound credential.
+	AuditAgentTokenRevoked = "agent.token_revoked"
 	AuditRouteApproved     = "route.approved"
 	AuditRouteUnapproved   = "route.unapproved"
 	AuditDNSRecordSet      = "dns.record_set"
