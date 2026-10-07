@@ -136,7 +136,7 @@ func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWri
 			peers := msg.Peers
 			selfNode := msg.Node
 			changed := sess.diff(msg, peers)
-			if sess.syncDNS(msg, mapper.DNSConfig(s.mapperConfig())) {
+			if sess.syncDNS(msg, mapper.DNSConfig(s.mapperConfig(), self)) {
 				changed = true
 			}
 			if sess.syncPacketFilter(msg, s.packetFilterFor(self), req.Version) {
@@ -198,17 +198,33 @@ func (s *Server) updateMap(self state.Node) *tailcfg.MapResponse {
 // mapperConfig snapshots the tailnet-wide configuration for one netmap build.
 func (s *Server) mapperConfig() mapper.Config {
 	return mapper.Config{
-		Domain:        s.cfg.Domain,
-		Resolvers:     s.resolvers,
-		Routes:        s.dnsRoutes,
-		ExtraRecords:  s.store.ListDNSRecords(),
-		DERPMap:       s.cfg.DERPMap,
-		FilterFor:     s.packetFilterFor,
-		UserProfile:   s.UserProfile,
-		SSHPolicyFor:  s.sshPolicyFor,
-		NodeCaps:      s.nodeCapsFunc(),
-		ClientVersion: s.clientVersionFor(),
+		Domain:         s.cfg.Domain,
+		Resolvers:      s.resolvers,
+		Routes:         s.dnsRoutes,
+		ExtraRecords:   s.extraDNSRecords(),
+		CertDomainsFor: s.certDomainsFor,
+		DERPMap:        s.cfg.DERPMap,
+		FilterFor:      s.packetFilterFor,
+		UserProfile:    s.UserProfile,
+		SSHPolicyFor:   s.sshPolicyFor,
+		NodeCaps:       s.nodeCapsFunc(),
+		ClientVersion:  s.clientVersionFor(),
 	}
+}
+
+// extraDNSRecords returns the records published through MagicDNS to every
+// client. ACME challenge records are excluded: only the public certificate
+// authority needs them, and they can live outside the tailnet domain.
+func (s *Server) extraDNSRecords() []state.DNSRecord {
+	records := s.store.ListDNSRecords()
+	out := records[:0:0]
+	for _, r := range records {
+		if isACMEChallengeName(r.Name) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 // clientVersionFor builds the client-version advisory from the configured

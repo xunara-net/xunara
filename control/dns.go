@@ -1,11 +1,14 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
+	"time"
 
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/dnstype"
@@ -13,6 +16,84 @@ import (
 	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/state"
 )
+
+// DNSProvider writes records to the tailnet's public authoritative DNS zone.
+//
+// It exists for ACME DNS-01: the control plane is not an authoritative
+// nameserver, so the challenge record a client submits through
+// /machine/set-dns has to reach the zone a public certificate authority
+// resolves.
+type DNSProvider interface {
+	// PutTXT creates or replaces the TXT record at name.
+	PutTXT(ctx context.Context, name, value string) error
+	// DeleteTXT removes the TXT record at name. Removing a missing record is
+	// not an error.
+	DeleteTXT(ctx context.Context, name string) error
+}
+
+// acmeChallengePrefix is the label ACME DNS-01 challenges live under.
+const acmeChallengePrefix = "_acme-challenge."
+
+// certChallengeTTL is how long a DNS-01 challenge record is kept before the
+// janitor removes it from the internal table and the public zone. Certificate
+// authorities read the record within minutes; a day is ample slack.
+const certChallengeTTL = 24 * time.Hour
+
+// normalizeCertDomains lowercases, trims and de-duplicates configured
+// certificate domains, rejecting malformed names.
+func normalizeCertDomains(domains []string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, d := range domains {
+		d = strings.Trim(strings.ToLower(strings.TrimSpace(d)), ".")
+		if d == "" {
+			continue
+		}
+		if strings.Contains(d, "_acme-challenge.") || strings.Contains(d, " ") || !strings.Contains(d, ".") {
+			return nil, fmt.Errorf("control: invalid certificate domain %q", d)
+		}
+		if seen[d] {
+			continue
+		}
+		seen[d] = true
+		out = append(out, d)
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+// certDomainsFor returns the DNS names a node may obtain certificates for:
+// its own MagicDNS FQDN plus the operator's extra certificate domains. It
+// returns nil when no DNS provider is configured, which is what makes clients
+// report "certificates not supported" instead of starting an impossible
+// challenge.
+func (s *Server) certDomainsFor(node state.Node) []string {
+	if s.cfg.DNSProvider == nil {
+		return nil
+	}
+	var out []string
+	if domain := strings.Trim(s.cfg.Domain, "."); domain != "" {
+		out = append(out, strings.TrimSuffix(node.FQDN(domain), "."))
+	}
+	out = append(out, s.certDomains...)
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// certDomainAllowed reports whether name is the ACME challenge name of one of
+// the node's certificate domains.
+func (s *Server) certDomainAllowed(node state.Node, name string) bool {
+	base, ok := strings.CutPrefix(name, acmeChallengePrefix)
+	if !ok {
+		return false
+	}
+	return slices.Contains(s.certDomainsFor(node), base)
+}
+
+// isACMEChallengeName reports whether name is a DNS-01 challenge record.
+func isACMEChallengeName(name string) bool {
+	return strings.HasPrefix(name, acmeChallengePrefix)
+}
 
 // parseResolvers turns configured resolver strings into wire resolvers.
 //
@@ -79,10 +160,13 @@ func parseDNSRoutes(routes map[string][]string) (map[string][]*dnstype.Resolver,
 
 // handleSetDNS implements POST /machine/set-dns inside a Noise session.
 //
-// Clients use it to answer ACME DNS-01 challenges for names under the
-// tailnet's MagicDNS domain. Xunara stores the record durably and publishes it
-// to every client through MapResponse.DNSConfig.ExtraRecords; it does not talk
-// to an external DNS provider.
+// Clients use it for two things:
+//
+//   - ACME DNS-01 challenges ("_acme-challenge.<cert domain>"), which must
+//     reach the public authoritative DNS zone through the configured
+//     [DNSProvider], because that is where a certificate authority looks.
+//   - Ordinary records under the tailnet's MagicDNS domain, which are stored
+//     and published to every client through MapResponse.DNSConfig.ExtraRecords.
 func (ns *noiseServer) handleSetDNS(w http.ResponseWriter, req *http.Request) {
 	var setReq tailcfg.SetDNSRequest
 	if err := json.NewDecoder(req.Body).Decode(&setReq); err != nil {
@@ -114,6 +198,20 @@ func (ns *noiseServer) handleSetDNS(w http.ResponseWriter, req *http.Request) {
 	if err := ns.server.store.UpsertDNSRecord(record); err != nil {
 		httpError(w, err)
 		return
+	}
+
+	// An ACME challenge is only useful once the public zone carries it: fail
+	// the request (the client retries) rather than pretending success.
+	if isACMEChallengeName(record.Name) && ns.server.cfg.DNSProvider != nil {
+		ctx, cancel := context.WithTimeout(req.Context(), 20*time.Second)
+		defer cancel()
+		if err := ns.server.cfg.DNSProvider.PutTXT(ctx, record.Name, record.Value); err != nil {
+			ns.server.log.Error("publishing ACME challenge record",
+				"node_id", int(node.ID), "name", record.Name, "err", err)
+			httpError(w, NewHTTPError(http.StatusBadGateway,
+				"could not publish the DNS-01 challenge to the public zone", err))
+			return
+		}
 	}
 
 	ns.server.log.Info("stored DNS record",
@@ -149,10 +247,17 @@ func (s *Server) dnsRecordFromRequest(node state.Node, req tailcfg.SetDNSRequest
 		return nil, fmt.Errorf("control: DNS record value is longer than %d bytes", maxDNSRecordValueLength)
 	}
 
-	// Only names under the tailnet's own MagicDNS suffix may be published:
-	// otherwise any node could inject records for arbitrary domains into every
-	// client's resolver.
-	if err := s.checkRecordNameInDomain(name); err != nil {
+	if isACMEChallengeName(name) {
+		// A DNS-01 challenge is authority for its exact certificate domain
+		// only: a node may not answer challenges for names it was not
+		// offered, and the record is never published to MagicDNS.
+		if !s.certDomainAllowed(node, name) {
+			return nil, fmt.Errorf("control: node %d is not allowed to answer challenges for %q", node.ID, name)
+		}
+	} else if err := s.checkRecordNameInDomain(name); err != nil {
+		// Ordinary records must stay under the tailnet's own MagicDNS
+		// suffix: otherwise any node could inject records for arbitrary
+		// domains into every client's resolver.
 		return nil, err
 	}
 

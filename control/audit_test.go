@@ -156,16 +156,16 @@ func TestSetDNSIsAudited(t *testing.T) {
 	postRaw(t, client, "/machine/set-dns", tailcfg.SetDNSRequest{
 		Version: tailcfg.CurrentCapabilityVersion,
 		NodeKey: nodeKey.Public(),
-		Name:    "_acme-challenge.node-a.xunara.test.",
+		Name:    "notes.node-a.xunara.test.",
 		Type:    "TXT",
-		Value:   "challenge-token",
+		Value:   "hello",
 	})
 
 	event, ok := findAudit(t, s, identity.AuditDNSRecordSet)
 	if !ok {
 		t.Fatalf("audit log has no %s event: %+v", identity.AuditDNSRecordSet, auditEvents(t, s))
 	}
-	if event.Target != "dns:_acme-challenge.node-a.xunara.test/TXT" {
+	if event.Target != "dns:notes.node-a.xunara.test/TXT" {
 		t.Errorf("target = %q", event.Target)
 	}
 	// The record value may be an ACME challenge secret and must not be

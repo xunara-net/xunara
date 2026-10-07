@@ -86,6 +86,11 @@ type Config struct {
 	// is nothing to tell it. A nil function disables the field entirely.
 	ClientVersion func(state.Node) *tailcfg.ClientVersion
 
+	// CertDomainsFor returns the DNS names for which a node may obtain TLS
+	// certificates (ACME DNS-01). Nil, or an empty result, tells the client
+	// this tailnet cannot issue certificates.
+	CertDomainsFor func(state.Node) []string
+
 	// DERPMap is advertised to clients when non-nil.
 	DERPMap *tailcfg.DERPMap
 }
@@ -100,7 +105,7 @@ func Full(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc, ca
 		Node:          Node(self, true, online, routes, cfg),
 		Peers:         peerNodes(self, nodes, online, routes, cfg),
 		Domain:        cfg.Domain,
-		DNSConfig:     DNSConfig(cfg),
+		DNSConfig:     DNSConfig(cfg, self),
 		DERPMap:       cfg.DERPMap,
 		UserProfiles:  userProfiles(self, nodes, cfg),
 		SSHPolicy:     sshPolicyFor(cfg, self),
@@ -293,25 +298,39 @@ func nodeUserID(n state.Node) tailcfg.UserID {
 	return n.UserID
 }
 
-// DNSConfig builds the MagicDNS configuration, or nil when the tailnet has no
-// domain configured (nil means "unchanged"/"none" to the client).
+// certDomainsFor runs the CertDomainsFor hook, tolerating a nil one.
+func certDomainsFor(cfg Config, self state.Node) []string {
+	if cfg.CertDomainsFor == nil {
+		return nil
+	}
+	return cfg.CertDomainsFor(self)
+}
+
+// DNSConfig builds the MagicDNS configuration, or nil when the tailnet has
+// neither a domain nor a certificate service (nil means "unchanged"/"none" to
+// the client).
 //
-// CertDomains advertises that this control plane answers ACME DNS-01
-// challenges for the tailnet's MagicDNS suffix: a client that runs "tailscale
-// cert" POSTs the challenge record to /machine/set-dns, and the record is then
-// served to the tailnet through ExtraRecords.
-func DNSConfig(cfg Config) *tailcfg.DNSConfig {
+// CertDomains advertises the names for which this control plane will answer
+// ACME DNS-01 challenges: a client that runs "tailscale cert" POSTs the
+// challenge record to /machine/set-dns, and the control plane writes it to the
+// tailnet's public DNS zone. The hook returns nil when no external DNS
+// provider is configured, so a client reports "not supported" instead of
+// starting a challenge that could never be validated.
+func DNSConfig(cfg Config, self state.Node) *tailcfg.DNSConfig {
 	domain := strings.Trim(cfg.Domain, ".")
-	if domain == "" {
+	certDomains := dedupeDomains(certDomainsFor(cfg, self))
+	if domain == "" && len(certDomains) == 0 {
 		return nil
 	}
 
 	out := &tailcfg.DNSConfig{
-		Domains:     []string{domain},
-		Proxied:     true,
 		Resolvers:   cfg.Resolvers,
 		Routes:      cfg.Routes,
-		CertDomains: []string{domain},
+		CertDomains: certDomains,
+	}
+	if domain != "" {
+		out.Domains = []string{domain}
+		out.Proxied = true
 	}
 	for _, r := range cfg.ExtraRecords {
 		out.ExtraRecords = append(out.ExtraRecords, tailcfg.DNSRecord{
@@ -320,6 +339,22 @@ func DNSConfig(cfg Config) *tailcfg.DNSConfig {
 			Value: r.Value,
 		})
 	}
+	return out
+}
+
+// dedupeDomains normalises, sorts and de-duplicates DNS names.
+func dedupeDomains(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	var out []string
+	for _, d := range in {
+		d = strings.Trim(strings.ToLower(strings.TrimSpace(d)), ".")
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		out = append(out, d)
+	}
+	slices.Sort(out)
 	return out
 }
 

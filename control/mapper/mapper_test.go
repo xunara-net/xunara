@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -325,7 +326,7 @@ func TestDNSConfigIncludesResolversRoutesAndRecords(t *testing.T) {
 		},
 	}
 
-	dns := DNSConfig(cfg)
+	dns := DNSConfig(cfg, state.Node{})
 	if dns == nil {
 		t.Fatal("DNSConfig = nil, want a configuration")
 	}
@@ -341,8 +342,10 @@ func TestDNSConfigIncludesResolversRoutesAndRecords(t *testing.T) {
 	if got := dns.Routes["corp.example.com"]; len(got) != 1 || got[0].Addr != "10.0.0.53" {
 		t.Errorf("Routes = %v", dns.Routes)
 	}
-	if len(dns.CertDomains) != 1 || dns.CertDomains[0] != "example.com" {
-		t.Errorf("CertDomains = %v, want [example.com]", dns.CertDomains)
+	// Without a CertDomainsFor hook the tailnet offers no certificates: the
+	// hook is only set when a public DNS zone writer exists.
+	if len(dns.CertDomains) != 0 {
+		t.Errorf("CertDomains = %v, want none without the hook", dns.CertDomains)
 	}
 	if len(dns.ExtraRecords) != 1 {
 		t.Fatalf("ExtraRecords = %v, want one record", dns.ExtraRecords)
@@ -352,7 +355,37 @@ func TestDNSConfigIncludesResolversRoutesAndRecords(t *testing.T) {
 		t.Errorf("ExtraRecords[0] = %+v", rec)
 	}
 
-	if got := DNSConfig(Config{}); got != nil {
+	if got := DNSConfig(Config{}, state.Node{}); got != nil {
 		t.Errorf("DNSConfig without a domain = %+v, want nil", got)
+	}
+}
+
+func TestCertDomainsHook(t *testing.T) {
+	self := testNode(1, "Web Server")
+	cfg := Config{
+		Domain: "example.com",
+		CertDomainsFor: func(n state.Node) []string {
+			return []string{
+				strings.TrimSuffix(n.FQDN("example.com"), "."),
+				"extra.example.com",
+			}
+		},
+	}
+
+	dns := DNSConfig(cfg, self)
+	if dns == nil {
+		t.Fatal("DNSConfig = nil, want a configuration")
+	}
+	// DNSConfig normalises and sorts the names.
+	want := []string{"extra.example.com", "web-server.example.com"}
+	if !slices.Equal(dns.CertDomains, want) {
+		t.Errorf("CertDomains = %v, want %v", dns.CertDomains, want)
+	}
+
+	// A hook that returns nothing still reports "no certificates", not an
+	// empty-but-present list.
+	cfg.CertDomainsFor = func(state.Node) []string { return nil }
+	if got := DNSConfig(cfg, self); len(got.CertDomains) != 0 {
+		t.Errorf("CertDomains = %v, want none", got.CertDomains)
 	}
 }

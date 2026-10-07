@@ -190,8 +190,9 @@ reference/{go-oidc,oauth2,dex,webauthn}
   端到端 `TestStreamingNetmapAdoptsClientPreferredDERP`。
 
 待办（M2b 剩余）：
-- 说明：`set-dns` 记录通过 `ExtraRecords` 在 tailnet 内可见，**不**写入外部 DNS 提供商；
-  公网 ACME 校验需要额外的 DNS 集成（后续里程碑）。
+- ~~说明：`set-dns` 记录通过 `ExtraRecords` 在 tailnet 内可见，**不**写入外部 DNS 提供商；
+  公网 ACME 校验需要额外的 DNS 集成（后续里程碑）。~~
+  已完成（M6f）：配置 DNS provider 后，`_acme-challenge.` 记录写入外部权威 DNS。
 - 已完成（M2b 追加）：`tag:` 的实际赋值。
   - `state.PreAuthKey.Tags`（迁移 v5）与 `state.Node.Tags`（迁移 v6）；
     `state.NormalizeTags` 用上游 `tailcfg.CheckTag` 校验并排序去重，名称长度有上限。
@@ -386,8 +387,9 @@ reference/{go-oidc,oauth2,dex,webauthn}
     `tailscale.com/cap/ssh` 合并。
   - 新增选择器 `autogroup:tagged`（ACL src/dst、SSH、nodeAttrs 通用）。
   - 测试：`policy/nodeattrs_test.go`、`control/nodeattrs_test.go`。
-  - 说明：`nodeAttrs: ["https"]` 只解锁客户端侧的 `tailscale serve`，控制面
-    仍不下发 DNS/ACME；Funnel 需要公网 ingress，保持不支持。
+  - 说明：`nodeAttrs: ["https"]` 解锁客户端侧的 `tailscale serve`；配置 DNS
+    provider 后控制面同时下发 `CertDomains` 并代理 DNS-01 校验（M6f）。
+    Funnel 需要公网 ingress，保持不支持。
 - M6c 已完成：Tailscale SSH check 模式（hold and delegate）。
   - `policy`：`ssh` 规则支持 `checkPeriod`（缺省 12h、"always"=0、上限 168h、
     仅 check 规则可用）；check 规则编译为 `SSHAction.HoldAndDelegate`
@@ -442,9 +444,35 @@ reference/{go-oidc,oauth2,dex,webauthn}
     Veil 中继互发、准入放行/拒绝/控制面不可达 fail-closed、probe 端点）、
     `veil/integration_test.go`（Veil ↔ `control` `/derp/admit` 真实联通）、
     `control/derpadmit_test.go`（注册/未知/过期/零 key/坏请求）。
-  - 已知限制：无 DERP mesh key、无自动证书（ACME）、无带宽限速。
-- `services/` 其余：Serve / Funnel（Funnel 明确不支持；Serve 控制面无 DNS/ACME）、
-  Discovery。
+  - 已知限制：无 DERP mesh key、无带宽限速、DERP 服务自身无自动证书
+    （TLS 证书目前手动 `-cert-file`/`-cert-key-file`）。
+- M6f 已完成：证书签发 DNS-01（`services/serve` 的控制面部分）。
+  - `control.DNSProvider` 接口（`PutTXT`/`DeleteTXT`，带 context）：控制面在
+    ACME DNS-01 校验期间代表节点写入/清理 `_acme-challenge` 记录，
+    私钥与 CSR 始终只留在客户端（`tailscale cert` 流程）。
+  - `Config.CertDomains` / `-cert-domain`（可重复）+ 节点自身 FQDN 组成
+    `certDomainsFor(node)`；无 DNS provider 时不下发 `CertDomains`
+    （客户端显示"不支持"）；域名规范化（小写、去尾点、去重）并在启动时
+    fail-closed 拒绝 `_acme-challenge.` 前缀/空格/不含点的值。
+  - `mapper.Config.CertDomainsFor` 钩子；`DNSConfig(cfg, self)` 按节点下发
+    `tailcfg.DNSConfig.CertDomains`。
+  - `POST /machine/set-dns`：`_acme-challenge.` 记录必须命中 `certDomainsFor`
+    （越权 400），写入本地库（本地挑战记录不进入 `ExtraRecords`，不对客户端
+    泄露校验值）后调用 provider `PutTXT`；provider 失败返回 502（fail-closed，
+    不假装成功）。
+  - janitor `reapACMEChallenges`：超过 24h 的挑战记录从库与公网 zone 同时清理
+    （`DeleteTXT` 幂等，provider 已删除不报错）。
+  - 新包 `dnsprovider/`：`Webhook`（JSON POST `{action,name,type,value}`，
+    Bearer token，仅允许 https 或 loopback http）与 `Cloudflare`
+    （API v4，zone 查询缓存、TTL 60、先删旧值再建、错误透传）。
+  - `cmd/xunarad`：`-dns-webhook-url` / `-dns-webhook-token-env` /
+    `-dns-cloudflare-zone` / `-dns-cloudflare-token-env`；token 只从环境变量
+    读取，绝不进 argv 或 URL query（AGENTS §8）。
+  - 测试：`control/cert_test.go`（CertDomains 下发、challenge 走 provider 且
+    不进 ExtraRecords、越权 400、provider 失败 502、reap 只删过期 challenge）、
+    `dnsprovider/webhook_test.go`、`dnsprovider/cloudflare_test.go`
+    （请求体/鉴权、put 替换旧值、幂等删除、API 错误、URL 校验）。
+- `services/` 其余：Funnel（明确不支持）；Discovery。
 - `client/`：Xunara Agent（自研客户端，独立协议，不侵入 TS2021）。
 - ACL/Zero Trust（`Xunara Warden`）。
 

@@ -15,6 +15,7 @@ import (
 	"tailscale.com/tailcfg"
 
 	"github.com/xunara/xunara/control"
+	"github.com/xunara/xunara/dnsprovider"
 	"github.com/xunara/xunara/identity"
 )
 
@@ -38,13 +39,22 @@ func main() {
 			"comma-separated OIDC scopes (default openid,profile,email)")
 		allowLocalLogin = flag.Bool("allow-local-login", false,
 			"offer the built-in local login even when OIDC is configured")
+		dnsWebhook = flag.String("dns-webhook-url", "",
+			"HTTPS endpoint that applies DNS record changes for ACME DNS-01 (enables certificates)")
+		dnsWebhookTokenEnv = flag.String("dns-webhook-token-env", "XUNARA_DNS_WEBHOOK_TOKEN",
+			"environment variable holding the DNS webhook bearer token")
+		cfZone     = flag.String("dns-cloudflare-zone", "", "Cloudflare zone for ACME DNS-01 (enables certificates)")
+		cfTokenEnv = flag.String("dns-cloudflare-token-env", "XUNARA_CLOUDFLARE_API_TOKEN",
+			"environment variable holding the Cloudflare API token")
 	)
 	var (
 		nameservers stringListFlag
 		dnsRoutes   stringListFlag
+		certDomains stringListFlag
 	)
 	flag.Var(&nameservers, "nameserver", "global DNS resolver (IP or IP:port); repeatable")
 	flag.Var(&dnsRoutes, "dns-route", "split-DNS entry suffix=resolver[,resolver]; repeatable")
+	flag.Var(&certDomains, "cert-domain", "extra DNS name clients may obtain TLS certificates for; repeatable")
 	flag.Parse()
 
 	logger := newLogger(*logLevel)
@@ -62,6 +72,12 @@ func main() {
 	routes, err := parseDNSRouteFlags(dnsRoutes)
 	if err != nil {
 		logger.Error("parsing -dns-route", "err", err)
+		os.Exit(1)
+	}
+
+	dnsProvider, err := buildDNSProvider(*dnsWebhook, *dnsWebhookTokenEnv, *cfZone, *cfTokenEnv)
+	if err != nil {
+		logger.Error("configuring the DNS provider", "err", err)
 		os.Exit(1)
 	}
 
@@ -94,6 +110,8 @@ func main() {
 		ClientVersionURL:    *clientVerURL,
 		OIDCProviders:       oidcProviders,
 		AllowLocalLogin:     *allowLocalLogin,
+		CertDomains:         certDomains,
+		DNSProvider:         dnsProvider,
 		Logger:              logger,
 	})
 	if err != nil {
@@ -109,6 +127,25 @@ func main() {
 		logger.Error("server error", "err", err)
 		os.Exit(1)
 	}
+}
+
+// buildDNSProvider assembles the external DNS writer for ACME DNS-01 from
+// flags. API tokens are read from the environment: process arguments are
+// visible to every user on the host (AGENTS.md section 8).
+func buildDNSProvider(webhookURL, webhookTokenEnv, cfZone, cfTokenEnv string) (control.DNSProvider, error) {
+	switch {
+	case webhookURL != "" && cfZone != "":
+		return nil, fmt.Errorf("configure either -dns-webhook-url or -dns-cloudflare-zone, not both")
+	case webhookURL != "":
+		return dnsprovider.NewWebhook(webhookURL, os.Getenv(webhookTokenEnv))
+	case cfZone != "":
+		token := os.Getenv(cfTokenEnv)
+		if token == "" {
+			return nil, fmt.Errorf("dnsprovider: set %s to the Cloudflare API token", cfTokenEnv)
+		}
+		return dnsprovider.NewCloudflare(cfZone, token)
+	}
+	return nil, nil
 }
 
 // stringListFlag collects a repeatable string flag.

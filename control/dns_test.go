@@ -53,16 +53,18 @@ func TestNetmapCarriesMagicDNSConfig(t *testing.T) {
 	if got := dns.Routes["corp.xunara.test"]; len(got) != 1 || got[0].Addr != "10.0.0.53" {
 		t.Errorf("Routes = %v", dns.Routes)
 	}
-	if len(dns.CertDomains) != 1 || dns.CertDomains[0] != "xunara.test" {
-		t.Errorf("CertDomains = %v, want [xunara.test]", dns.CertDomains)
+	// Without a public DNS provider the tailnet must not offer certificates:
+	// a challenge could never be validated.
+	if len(dns.CertDomains) != 0 {
+		t.Errorf("CertDomains = %v, want none without a DNS provider", dns.CertDomains)
 	}
 	if msg.Domain != "xunara.test" {
 		t.Errorf("Domain = %q, want xunara.test", msg.Domain)
 	}
 }
 
-// TestSetDNSPublishesRecordToTailnet drives the ACME DNS-01 path end to end: a
-// client publishes a challenge record, and every client's MagicDNS picks it up.
+// TestSetDNSPublishesRecordToTailnet drives the ordinary-record path end to
+// end: a client publishes a record, and every client's MagicDNS picks it up.
 func TestSetDNSPublishesRecordToTailnet(t *testing.T) {
 	s := newDNSAuthServer(t)
 	hs := httptest.NewServer(s.Handler())
@@ -88,9 +90,9 @@ func TestSetDNSPublishesRecordToTailnet(t *testing.T) {
 	postRaw(t, client, "/machine/set-dns", tailcfg.SetDNSRequest{
 		Version: tailcfg.CurrentCapabilityVersion,
 		NodeKey: nodeKey.Public(),
-		Name:    "_acme-challenge.node-a.xunara.test.",
+		Name:    "notes.node-a.xunara.test.",
 		Type:    "TXT",
-		Value:   "challenge-token",
+		Value:   "hello",
 	})
 
 	update := waitForNetmapFrame(t, frames, view, func(*netmapView) bool { return true })
@@ -101,7 +103,7 @@ func TestSetDNSPublishesRecordToTailnet(t *testing.T) {
 		t.Fatalf("ExtraRecords = %v, want the new record", update.DNSConfig.ExtraRecords)
 	}
 	rec := update.DNSConfig.ExtraRecords[0]
-	if rec.Name != "_acme-challenge.node-a.xunara.test." || rec.Type != "TXT" || rec.Value != "challenge-token" {
+	if rec.Name != "notes.node-a.xunara.test." || rec.Type != "TXT" || rec.Value != "hello" {
 		t.Errorf("record = %+v", rec)
 	}
 
@@ -113,13 +115,13 @@ func TestSetDNSPublishesRecordToTailnet(t *testing.T) {
 		t.Error("stored record has no originating node")
 	}
 
-	// Republishing the same challenge is idempotent.
+	// Republishing the same record is idempotent.
 	postRaw(t, client, "/machine/set-dns", tailcfg.SetDNSRequest{
 		Version: tailcfg.CurrentCapabilityVersion,
 		NodeKey: nodeKey.Public(),
-		Name:    "_acme-challenge.node-a.xunara.test",
+		Name:    "notes.node-a.xunara.test",
 		Type:    "TXT",
-		Value:   "challenge-token",
+		Value:   "hello",
 	})
 	if got := len(s.Store().ListDNSRecords()); got != 1 {
 		t.Errorf("stored records after repeat = %d, want 1", got)

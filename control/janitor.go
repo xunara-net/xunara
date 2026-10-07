@@ -22,7 +22,35 @@ func (s *Server) runJanitor(ctx context.Context) {
 			now := time.Now().UTC()
 			s.ReapEphemeral(now)
 			s.reapSSHChecks(now)
+			s.reapACMEChallenges(now)
 		}
+	}
+}
+
+// reapACMEChallenges removes DNS-01 challenge records past their TTL, from
+// both the internal table and the public zone. Certificate authorities read a
+// challenge within minutes; keeping the records for a day leaves ample slack
+// for retries without letting them pile up.
+func (s *Server) reapACMEChallenges(now time.Time) {
+	for _, r := range s.store.ListDNSRecords() {
+		if !isACMEChallengeName(r.Name) || r.Type != "TXT" {
+			continue
+		}
+		if now.Sub(r.Created) < certChallengeTTL {
+			continue
+		}
+		if err := s.store.DeleteDNSRecord(r.ID); err != nil {
+			s.log.Warn("removing expired ACME challenge record", "record_id", r.ID, "err", err)
+			continue
+		}
+		if s.cfg.DNSProvider != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := s.cfg.DNSProvider.DeleteTXT(ctx, r.Name); err != nil {
+				s.log.Warn("removing ACME challenge from the public zone", "name", r.Name, "err", err)
+			}
+			cancel()
+		}
+		s.log.Info("removed expired ACME challenge record", "name", r.Name, "record_id", r.ID)
 	}
 }
 

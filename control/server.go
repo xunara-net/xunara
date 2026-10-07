@@ -76,6 +76,14 @@ type Config struct {
 	// Providers are additional identity providers registered as-is (custom
 	// adapters and tests). Prefer OIDCProviders for OIDC issuers.
 	Providers []identity.IdentityProvider
+	// CertDomains are extra DNS names for which clients may obtain TLS
+	// certificates, on top of each node's own MagicDNS FQDN. They only take
+	// effect when DNSProvider is set: cert issuance needs a public zone the
+	// control plane can write ACME DNS-01 challenges to.
+	CertDomains []string
+	// DNSProvider writes ACME DNS-01 challenge records to the tailnet's
+	// public authoritative DNS zone. Nil disables certificate issuance.
+	DNSProvider DNSProvider
 	// SessionTTL bounds browser sessions. Zero uses identity.DefaultSessionTTL.
 	SessionTTL time.Duration
 	// AllowLocalLogin enables the built-in local provider even when external
@@ -133,6 +141,10 @@ type Server struct {
 
 	// policy holds the compiled ACL policy, or nil when the tailnet has none.
 	policy atomic.Pointer[policy.Engine]
+
+	// certDomains are the extra certificate names from cfg, normalised at
+	// construction. Empty when no DNS provider is configured.
+	certDomains []string
 
 	// startOnce guards the background workers started by [Server.Start].
 	startOnce sync.Once
@@ -234,6 +246,20 @@ func New(cfg Config) (*Server, error) {
 		store.Close()
 		return nil, err
 	}
+
+	certDomains, err := normalizeCertDomains(cfg.CertDomains)
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	if cfg.DNSProvider == nil {
+		if len(certDomains) > 0 {
+			cfg.Logger.Warn("certificate domains configured without a DNS provider; clients will not be offered TLS certificates")
+		}
+		// Without a public zone writer a DNS-01 challenge could never be
+		// validated, so the client must not be told to start one.
+		certDomains = nil
+	}
 	dnsRoutes, err := parseDNSRoutes(cfg.DNSRoutes)
 	if err != nil {
 		store.Close()
@@ -254,6 +280,7 @@ func New(cfg Config) (*Server, error) {
 		authTTL:           identity.DefaultAuthTransactionTTL,
 		resolvers:         resolvers,
 		dnsRoutes:         dnsRoutes,
+		certDomains:       certDomains,
 		pending:           make(map[string]*pendingRegistration),
 		pendingByNode:     make(map[key.NodePublic]string),
 		online:            make(map[state.NodeID]int),
