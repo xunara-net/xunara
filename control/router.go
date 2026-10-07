@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"google.golang.org/grpc"
 )
 
 // This file hosts several organizations on one listener. Each organization is
@@ -42,6 +43,11 @@ type OrgSite struct {
 type RouterConfig struct {
 	// ListenAddr is the address the HTTP server binds to.
 	ListenAddr string
+	// GRPCListenAddr is the address the platform gRPC API binds to. The
+	// organization is chosen by the gRPC authority, mirroring HTTP Host
+	// routing, so one listener serves every organization. Empty disables the
+	// gRPC surface.
+	GRPCListenAddr string
 	// Orgs are the organizations to serve. At least one is required.
 	Orgs []OrgSite
 	// PlatformAdminToken authorizes /api/platform/*. It is compared in
@@ -462,7 +468,14 @@ func (r *Router) Serve(ctx context.Context) error {
 
 	r.Start(ctx)
 
-	errCh := make(chan error, 1)
+	// The platform gRPC API is optional; when enabled it runs on its own
+	// listener with the HTTP server's lifecycle.
+	grpcSrv, grpcLis, err := r.startPlatformGRPC()
+	if err != nil {
+		return err
+	}
+
+	errCh := make(chan error, 2)
 	go func() {
 		r.log.Info("control server listening",
 			"addr", r.cfg.ListenAddr, "organizations", len(r.orgSnapshot()))
@@ -472,6 +485,16 @@ func (r *Router) Serve(ctx context.Context) error {
 		}
 		errCh <- nil
 	}()
+	if grpcSrv != nil {
+		go func() {
+			r.log.Info("platform gRPC listening", "addr", r.cfg.GRPCListenAddr)
+			if err := grpcSrv.Serve(grpcLis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+				errCh <- err
+				return
+			}
+			errCh <- nil
+		}()
+	}
 
 	select {
 	case err := <-errCh:
@@ -480,7 +503,9 @@ func (r *Router) Serve(ctx context.Context) error {
 		r.log.Info("control server shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		httpErr := srv.Shutdown(shutdownCtx)
+		stopPlatformGRPC(grpcSrv)
+		return httpErr
 	}
 }
 

@@ -54,6 +54,8 @@ func main() {
 			"JSON file listing organizations to host (multi-tenant mode; mutually exclusive with the per-organization flags)")
 		platformTokenEnv = flag.String("platform-token-env", "XUNARA_PLATFORM_ADMIN_TOKEN",
 			"environment variable holding the /api/platform bearer token (multi-tenant mode)")
+		grpcListen = flag.String("grpc-listen", "",
+			"address for the platform gRPC API (xunara.v2); empty disables gRPC")
 		platformStateDir = flag.String("platform-state-dir", "",
 			"directory holding the platform registry and platform-managed organizations; empty disables runtime organization CRUD")
 		webhookURL = flag.String("webhook-url", "",
@@ -83,7 +85,7 @@ func main() {
 			logger.Error("invalid configuration", "err", err)
 			os.Exit(1)
 		}
-		runRouter(*orgConfigPath, *listen, *platformTokenEnv, *platformStateDir, logger)
+		runRouter(*orgConfigPath, *listen, *grpcListen, *platformTokenEnv, *platformStateDir, logger)
 		return
 	}
 	if *platformStateDir != "" {
@@ -153,6 +155,7 @@ func main() {
 	srv, err := control.New(control.Config{
 		ServerURL:           *serverURL,
 		ListenAddr:          *listen,
+		GRPCListenAddr:      *grpcListen,
 		StateDir:            *stateDir,
 		Domain:              *domain,
 		Nameservers:         nameservers,
@@ -224,7 +227,7 @@ func checkOrgScopedFlags(visited []string) error {
 // runRouter serves a multi-tenant deployment until the process is signalled.
 // When platformStateDir is set, the platform API may also create and delete
 // organizations at runtime; their control planes live under that directory.
-func runRouter(path, listen, platformTokenEnv, platformStateDir string, logger *slog.Logger) {
+func runRouter(path, listen, grpcListen, platformTokenEnv, platformStateDir string, logger *slog.Logger) {
 	sites, err := loadOrgSites(path, logger)
 	if err != nil {
 		logger.Error("loading the organization table", "err", err)
@@ -266,6 +269,7 @@ func runRouter(path, listen, platformTokenEnv, platformStateDir string, logger *
 
 	router, err := control.NewRouter(control.RouterConfig{
 		ListenAddr:         listen,
+		GRPCListenAddr:     grpcListen,
 		Orgs:               sites,
 		PlatformAdminToken: platformToken,
 		Registry:           registry,

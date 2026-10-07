@@ -1,0 +1,150 @@
+// Xunara Platform API v2 over gRPC (M8d).
+//
+// This service mirrors the read-mostly /api/v2 surface of one organization so
+// automation can use a typed protocol instead of scraping JSON. It is part of
+// the platform plane: it never touches the Tailscale compatibility core
+// (TS2021, Noise, MapRequest), and credentials are the same service API keys
+// the HTTP API accepts.
+//
+// In a multi-tenant deployment the organization is chosen by the gRPC
+// authority (":authority"), the HTTP/2 equivalent of the Host header, so one
+// listener serves every organization exactly like the HTTP router does.
+
+syntax = "proto3";
+
+package xunara.v2;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/xunara/xunara/api/gen/xunara/v2;xunarav2";
+
+// PlatformService is the organization-scoped automation surface.
+service PlatformService {
+  // GetMeta reports what this control plane is and which optional features
+  // are configured. It never returns secrets or key material.
+  rpc GetMeta(GetMetaRequest) returns (Meta);
+
+  // ListMachines returns machines ordered by id, resumable with page_token.
+  rpc ListMachines(ListMachinesRequest) returns (ListMachinesResponse);
+
+  // ListAudit returns audit events ordered by id, resumable with page_token.
+  rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
+
+  // ListWebhooks returns the configured and managed webhook receivers. The
+  // signing secret is write-only material and is never returned.
+  rpc ListWebhooks(ListWebhooksRequest) returns (ListWebhooksResponse);
+
+  // RevokeAgentToken signs a native client out. Revoking twice succeeds; an
+  // unknown credential is NOT_FOUND.
+  rpc RevokeAgentToken(RevokeAgentTokenRequest) returns (RevokeAgentTokenResponse);
+}
+
+message GetMetaRequest {}
+
+message Meta {
+  string version = 1;
+  string server_url = 2;
+  string domain = 3;
+  uint64 capability_version = 4;
+  uint64 min_capability_version = 5;
+  uint32 max_page_size = 6;
+  repeated string identity_providers = 7;
+  uint32 agent_protocol_version = 8;
+  bool webhooks_enabled = 9;
+  bool dns_provider_configured = 10;
+  repeated string cert_domains = 11;
+  bool derp_map_configured = 12;
+  string derp_policy = 13;
+  uint32 derp_regions_served = 14;
+}
+
+message Machine {
+  uint64 id = 1;
+  string stable_id = 2;
+  string hostname = 3;
+  uint64 user_id = 4;
+  string user_login_name = 5;
+  bool online = 6;
+  bool ephemeral = 7;
+  bool expired = 8;
+  string method = 9;
+  string ipv4 = 10;
+  string ipv6 = 11;
+  google.protobuf.Timestamp created = 12;
+  google.protobuf.Timestamp last_seen = 13;
+  repeated string tags = 14;
+  repeated string approved_routes = 15;
+  repeated string announced_routes = 16;
+  bool exit_node = 17;
+}
+
+message ListMachinesRequest {
+  // page_size defaults to 50 and is bounded by Meta.max_page_size.
+  uint32 page_size = 1;
+  // page_token is the next_page_token of the previous response.
+  string page_token = 2;
+  // state filters on "online" or "offline"; empty means both.
+  string state = 3;
+  // user filters on a user id or login name; an unknown user matches nothing.
+  string user = 4;
+  // tag filters on a node tag (for example "tag:server").
+  string tag = 5;
+}
+
+message ListMachinesResponse {
+  repeated Machine machines = 1;
+  string next_page_token = 2;
+}
+
+message AuditEvent {
+  uint64 id = 1;
+  google.protobuf.Timestamp time = 2;
+  string actor = 3;
+  string action = 4;
+  string target = 5;
+  string detail = 6;
+}
+
+message ListAuditRequest {
+  // page_size defaults to 100 and is bounded by Meta.max_page_size.
+  uint32 page_size = 1;
+  string page_token = 2;
+  // action filters on the audit action (exact match).
+  string action = 3;
+  // actor filters on the actor (exact match).
+  string actor = 4;
+  // target filters on a target prefix.
+  string target = 5;
+}
+
+message ListAuditResponse {
+  repeated AuditEvent events = 1;
+  string next_page_token = 2;
+}
+
+message Webhook {
+  string id = 1;
+  string url = 2;
+  repeated string events = 3;
+  bool enabled = 4;
+  // source is "config" for deployment-configured receivers and "managed" for
+  // ones created through the API.
+  string source = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+}
+
+message ListWebhooksRequest {}
+
+message ListWebhooksResponse {
+  repeated Webhook webhooks = 1;
+}
+
+message RevokeAgentTokenRequest {
+  string id = 1;
+}
+
+message RevokeAgentTokenResponse {
+  string id = 1;
+  bool revoked = 2;
+}

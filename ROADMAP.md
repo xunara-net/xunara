@@ -349,7 +349,8 @@ reference/{go-oidc,oauth2,dex,webauthn}
     非法输入表、token 列出/吊销/幂等/404/权限、吊销后即时失效）、
     `identity/sqlite_agent_test.go`（跨节点列出、单条吊销、limit、幂等）、
     console 渲染与吊销端到端。
-- 待办（M5 剩余）：gRPC。Webhook 已完成（M8a）。
+- M5 剩余：gRPC 已由 M8d 以平台服务面覆盖（`xunara.v2.PlatformService`）；
+  Webhook 已完成（M8a）。
 
 - M5b 已完成：Web Console（`/console/`，浏览器会话 + 每会话 CSRF）。
   - 页面：Overview（在线/离线、待审批设备、DNS、auth key、策略摘要）、Machines
@@ -739,7 +740,27 @@ reference/{go-oidc,oauth2,dex,webauthn}
   - 测试：`control/api_v2_webhooks_test.go`（生命周期 + 真实投递 + 列表不泄漏
     secret、校验表、密封往返/篡改/换密钥/密钥文件权限）、
     `control/console_test.go`（console 创建/删除、配置型保护、只读角色）。
-- 待办（M8 剩余）：gRPC API。
+- M8d 已完成：平台 API v2 over gRPC（`api/proto/xunara/v2/platform.proto`）。
+  - 服务 `xunara.v2.PlatformService`：GetMeta / ListMachines / ListAudit /
+    ListWebhooks / RevokeAgentToken，语义与 `/api/v2` 一一对应（同一套
+    service API Key、scope + 角色规则、同一 base64 游标与页面边界，
+    secret 永不回传）。无缓冲流：每次调用独立、可重试。
+  - 认证与 HTTP 共享 `Server.principalForToken`（Bearer 从 gRPC
+    `authorization` metadata 读取，只认 Bearer scheme）；未认证
+    `UNAUTHENTICATED`，缺 scope/角色不足 `PERMISSION_DENIED`，坏游标/
+    坏过滤 `INVALID_ARGUMENT`，未知 agent token `NOT_FOUND`。
+  - 多组织：以 gRPC `:authority` 选组织（等价 HTTP Host，含 wildcard 与端口
+    归一化），未知 authority 返回 `NOT_FOUND`；跨组织凭据不会通过校验
+    （AGENTS §12）。
+  - 接线与生命周期：`Config.GRPCListenAddr` / `RouterConfig.GRPCListenAddr`
+    （xunarad `-grpc-listen`，空值关闭 gRPC），与 HTTP 监听并行；ctx 取消时
+    `GracefulStop`（10s 未完成转硬停），绑定失败在启动时即报错。
+  - 兼容性：不改动 TS2021 / Noise / MapRequest 与 key 规则；gRPC 只是平台面
+    的第二个传输。
+  - 测试：`control/grpc_platform_test.go`（未认证与坏凭据、meta 字段与不泄漏、
+    机器分页/过滤/坏游标、审计过滤与游标续传、webhook 列表与 secret 不回传、
+    吊销权限/幂等/404/审计、authority 选组织与跨租户拒绝、Serve gRPC
+    生命周期与坏地址）。
 
 ---
 

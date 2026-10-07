@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"google.golang.org/grpc"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"
@@ -37,6 +38,12 @@ type Config struct {
 	ServerURL string
 	// ListenAddr is the address the HTTP server binds to.
 	ListenAddr string
+	// GRPCListenAddr is the address the platform gRPC API binds to. The API
+	// speaks the same xunara.v2 service as /api/v2 with the same credentials
+	// and scopes; a separate port keeps HTTP/2 cleartext policy explicit.
+	// Like ListenAddr it serves cleartext, so deployments must terminate TLS
+	// in front of it. Empty disables the gRPC surface.
+	GRPCListenAddr string
 	// StateDir is the directory holding persistent server state.
 	StateDir string
 	// DBPath is the SQLite database file. It defaults to <StateDir>/state.db.
@@ -586,7 +593,14 @@ func (s *Server) Serve(ctx context.Context) error {
 
 	s.Start(ctx)
 
-	errCh := make(chan error, 1)
+	// The platform gRPC API is optional; when enabled it runs on its own
+	// listener with the HTTP server's lifecycle.
+	grpcSrv, grpcLis, err := s.startPlatformGRPC()
+	if err != nil {
+		return err
+	}
+
+	errCh := make(chan error, 2)
 	go func() {
 		s.log.Info("control server listening", "addr", s.cfg.ListenAddr, "url", s.cfg.ServerURL)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -595,6 +609,16 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 		errCh <- nil
 	}()
+	if grpcSrv != nil {
+		go func() {
+			s.log.Info("platform gRPC listening", "addr", s.cfg.GRPCListenAddr)
+			if err := grpcSrv.Serve(grpcLis); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+				errCh <- err
+				return
+			}
+			errCh <- nil
+		}()
+	}
 
 	select {
 	case err := <-errCh:
@@ -603,7 +627,9 @@ func (s *Server) Serve(ctx context.Context) error {
 		s.log.Info("control server shutting down")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		httpErr := srv.Shutdown(shutdownCtx)
+		stopPlatformGRPC(grpcSrv)
+		return httpErr
 	}
 }
 

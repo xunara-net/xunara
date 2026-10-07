@@ -2,6 +2,7 @@ package control
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -51,37 +52,46 @@ func (s *Server) authenticateAPI(r *http.Request) (apiPrincipal, bool) {
 		if token == "" {
 			return apiPrincipal{}, false
 		}
-
-		if strings.HasPrefix(token, identity.APIKeyPrefix) {
-			key, err := s.identity.GetAPIKeyByToken(token)
-			if err != nil {
-				return apiPrincipal{}, false
-			}
-			user, ok := s.identity.GetUser(key.UserID)
-			if !ok {
-				// The owning user is gone; the key is a dangling service
-				// identity and must not authenticate.
-				return apiPrincipal{}, false
-			}
-			if err := s.identity.TouchAPIKey(key.ID, time.Now().UTC()); err != nil {
-				s.log.Warn("recording API key use", "key", key.ID, "err", err)
-			}
-			return apiPrincipal{
-				Kind:   "api_key",
-				UserID: key.UserID,
-				Role:   user.Role,
-				Scopes: scopeSet(key.Scopes),
-				APIKey: key,
-			}, true
-		}
-
-		if session, err := s.identity.GetSessionByToken(token); err == nil {
-			return s.sessionPrincipal(session)
+		if principal, ok := s.principalForToken(token); ok {
+			return principal, true
 		}
 		return apiPrincipal{}, false
 	}
 
 	if session, ok := s.currentSession(r); ok {
+		return s.sessionPrincipal(session)
+	}
+	return apiPrincipal{}, false
+}
+
+// principalForToken resolves a bearer token, without an HTTP request: an API
+// key (service identity) or a session token. The gRPC surface uses it too, so
+// both transports accept exactly the same credentials.
+func (s *Server) principalForToken(token string) (apiPrincipal, bool) {
+	if strings.HasPrefix(token, identity.APIKeyPrefix) {
+		key, err := s.identity.GetAPIKeyByToken(token)
+		if err != nil {
+			return apiPrincipal{}, false
+		}
+		user, ok := s.identity.GetUser(key.UserID)
+		if !ok {
+			// The owning user is gone; the key is a dangling service
+			// identity and must not authenticate.
+			return apiPrincipal{}, false
+		}
+		if err := s.identity.TouchAPIKey(key.ID, time.Now().UTC()); err != nil {
+			s.log.Warn("recording API key use", "key", key.ID, "err", err)
+		}
+		return apiPrincipal{
+			Kind:   "api_key",
+			UserID: key.UserID,
+			Role:   user.Role,
+			Scopes: scopeSet(key.Scopes),
+			APIKey: key,
+		}, true
+	}
+
+	if session, err := s.identity.GetSessionByToken(token); err == nil {
 		return s.sessionPrincipal(session)
 	}
 	return apiPrincipal{}, false
@@ -114,15 +124,24 @@ func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, scope stri
 		writeAPIError(w, http.StatusUnauthorized, "authentication required")
 		return apiPrincipal{}, false
 	}
-	if !principal.Scopes[scope] {
-		writeAPIError(w, http.StatusForbidden, "missing scope: "+scope)
-		return apiPrincipal{}, false
-	}
-	if scope == identity.ScopeWrite && !principal.Role.CanWrite() {
-		writeAPIError(w, http.StatusForbidden, "role "+principal.Role.String()+" may not change the tailnet")
+	if err := authorizeScope(principal, scope); err != nil {
+		writeAPIError(w, http.StatusForbidden, err.Error())
 		return apiPrincipal{}, false
 	}
 	return principal, true
+}
+
+// authorizeScope applies the scope and role rules shared by every transport:
+// the scope must be granted, and a write additionally needs a role that may
+// change tailnet state (service keys inherit their owner's role).
+func authorizeScope(principal apiPrincipal, scope string) error {
+	if !principal.Scopes[scope] {
+		return errors.New("missing scope: " + scope)
+	}
+	if scope == identity.ScopeWrite && !principal.Role.CanWrite() {
+		return errors.New("role " + principal.Role.String() + " may not change the tailnet")
+	}
+	return nil
 }
 
 // requireSelfScope authenticates the request and checks the scope without
