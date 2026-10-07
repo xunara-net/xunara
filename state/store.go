@@ -21,6 +21,7 @@ type Store interface {
 	DNSRecordStore
 	TKAStore
 	DeviceAttrStore
+	ServiceStore
 
 	// GetNodeByID returns the node with the given server-local ID.
 	GetNodeByID(id NodeID) (Node, bool)

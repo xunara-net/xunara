@@ -126,6 +126,24 @@ CREATE TABLE IF NOT EXISTS node_device_attrs (
 	PRIMARY KEY (node_id, attr)
 );
 `,
+
+	// v10: services nodes advertise about themselves (Xunara Atlas). The name
+	// is the primary key: it is unique per organization, so resolution is
+	// unambiguous. The foreign key cascades: deleting a node drops its
+	// services, and no other row can claim the freed name.
+	`
+CREATE TABLE IF NOT EXISTS node_services (
+	node_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+	name       TEXT    NOT NULL,
+	protocol   TEXT    NOT NULL,
+	port       INTEGER NOT NULL,
+	metadata   TEXT    NOT NULL DEFAULT '{}',
+	created    INTEGER NOT NULL,
+	updated    INTEGER NOT NULL,
+	PRIMARY KEY (name)
+);
+CREATE INDEX IF NOT EXISTS idx_node_services_node ON node_services(node_id);
+`,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.

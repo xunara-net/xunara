@@ -250,6 +250,41 @@ func TestSQLiteMigratesV8ToV9(t *testing.T) {
 	}
 }
 
+// TestSQLiteMigratesV9ToV10 simulates a database written before service
+// discovery existed: reopening it must create the table (v10) and keep the
+// node rows readable.
+func TestSQLiteMigratesV9ToV10(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	ctx := context.Background()
+	first := openTestSQLite(t, path)
+	n := Node{Hostname: "old", NodeKey: key.NewNode().Public()}
+	if err := first.CreateNode(&n); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "DROP TABLE node_services"); err != nil {
+		t.Fatalf("dropping node_services: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "PRAGMA user_version = 9"); err != nil {
+		t.Fatalf("downgrading schema version: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second := openTestSQLite(t, path)
+	got, ok := second.GetNodeByNodeKey(n.NodeKey)
+	if !ok {
+		t.Fatal("node did not survive the v9 -> v10 migration")
+	}
+	if err := second.ReplaceNodeServices(got.ID, []Service{{Name: "api", Protocol: "tcp", Port: 8080}}); err != nil {
+		t.Fatalf("ReplaceNodeServices after migration: %v", err)
+	}
+	if svc, ok := second.GetServiceByName("api"); !ok || svc.Port != 8080 {
+		t.Errorf("service after migration = %+v, %v", svc, ok)
+	}
+}
+
 func TestSQLiteStoreConcurrentAccess(t *testing.T) {
 	s := openTestSQLite(t, filepath.Join(t.TempDir(), "state.db"))
 

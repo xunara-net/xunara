@@ -42,6 +42,9 @@ type MemoryStore struct {
 
 	deviceAttrs map[NodeID]map[string]any
 
+	// services are keyed by name because names are unique per organization.
+	services map[string]Service
+
 	tka TKAMeta
 
 	// configRevision counts out-of-band configuration changes.
@@ -61,6 +64,7 @@ func NewMemoryStore() *MemoryStore {
 		preauth:     make(map[string]PreAuthKey),
 		dns:         make(map[uint64]DNSRecord),
 		deviceAttrs: make(map[NodeID]map[string]any),
+		services:    make(map[string]Service),
 		byNode:      make(map[key.NodePublic]NodeID),
 		byStab:      make(map[string]NodeID),
 		byMach:      make(map[key.MachinePublic][]NodeID),
@@ -205,6 +209,11 @@ func (s *MemoryStore) DeleteNode(id NodeID) error {
 	delete(s.byNode, n.NodeKey)
 	delete(s.byStab, n.StableID)
 	delete(s.deviceAttrs, id)
+	for name, svc := range s.services {
+		if svc.NodeID == id {
+			delete(s.services, name)
+		}
+	}
 	s.byMach[n.MachineKey] = removeID(s.byMach[n.MachineKey], id)
 	return nil
 }
@@ -234,6 +243,11 @@ func (s *MemoryStore) SetNodeDeviceAttrs(id NodeID, update map[string]any) error
 	}
 	if len(attrs) == 0 {
 		delete(s.deviceAttrs, id)
+		for name, svc := range s.services {
+			if svc.NodeID == id {
+				delete(s.services, name)
+			}
+		}
 		return nil
 	}
 	s.deviceAttrs[id] = attrs

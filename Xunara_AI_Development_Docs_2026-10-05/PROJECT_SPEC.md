@@ -618,3 +618,86 @@ Network / Service / Application / Data
 核心定位：
 
 > Identity + Network + Service + Application + Data Control Plane
+
+## 22. Xunara Atlas — 服务发现（v1）
+
+目标：尾网内的节点能把自己提供的服务（名称、协议、端口）发布到控制面，
+其它节点与管理员能发现它；**访问控制仍由既有 ACL / grants 决定**——发现
+不等于授权。
+
+边界（v1 明确不做，避免被误当成代理层）：
+
+- 不做代理、转发、VIP、负载均衡、健康检查与故障转移；
+- 不新增官方客户端内层端点、不改 TS2021 / Noise / MapRequest / MapResponse
+  的结构（AGENTS §4）；官方客户端经 MagicDNS 解析服务名后按既有 ACL 连接；
+- 不做跨组织发现：服务在组织内可见（AGENTS §12）；
+- 不把服务名当作身份：service ≠ user ≠ machine ≠ node（AGENTS §5）。
+
+### 22.1 模型
+
+```text
+Service = (node_id, name, protocol, port, metadata?)
+```
+
+- `name`：DNS label（1–63 字节，`[a-z0-9-]`，首尾非 `-`），组织内唯一。
+- `protocol`：`tcp` 或 `udp`。
+- `port`：1–65535。
+- `metadata`：可选 `map<string,string>`，供人/自动化读的说明字段（版本、区域
+  等）；不承载 secret（AGENTS §8），审计与日志不写其值。
+
+### 22.2 单一写入者与生命周期
+
+- 只有节点自己可以写：经原生客户端协议 `/api/agent/v1/services`（agent token
+  + machine key/node key 复述，与 `/heartbeat` 同一身份规则）。
+- 发布是**整批替换**（声明式、幂等）：请求体列出该节点当前的全部服务；
+  空数组表示撤销全部服务。
+- 管理面永远只读（HTTP v2 / gRPC / Console / CLI），与设备姿态属性同一模式
+  （AGENTS §10 的边界：节点行为数据由节点负责，管理员只观察）。
+- 删除节点 → 服务级联删除；节点过期不自动删除服务（管理员仍能看到"过期
+  节点持有某服务名"，便于排障；过期节点不参与 netmap）。
+
+### 22.3 命名与 DNS
+
+- 启用 `Domain` 时，每个服务在 MagicDNS 中产生 `<name>.<domain>.` 的 A/AAAA
+  记录，指向发布节点的地址（经既有 `ExtraRecords` 机制）。
+- 名字冲突 fail-closed：与任何节点 FQDN、既有 DNS 记录或其它节点的服务名
+  冲突时，整个发布请求失败（409），不做静默覆盖。
+- 关闭 `Domain` 时服务仍可发布与查询，只是没有 DNS 名称。
+
+### 22.4 限制（fail-closed，整批原子）
+
+| 项 | 上限 |
+|---|---|
+| 每节点服务数 | 32 |
+| 组织内服务总数 | 512（每条服务都会变成每个 netmap 的 DNS 记录） |
+| name | 63 字节，DNS label |
+| port | 1–65535 |
+| metadata 项数 | 16 |
+| metadata 键 | ≤64 字节，可打印 ASCII 无空格 |
+| metadata 值 | ≤256 字节，无控制字符 |
+| metadata 总编码 | 2 KiB |
+| 单次发布服务数 | 32 |
+
+任一项非法 → 整批 400，不部分应用；服务名回显前净化。
+
+### 22.5 管理面（只读）
+
+```text
+HTTP   GET  /api/v2/services             # read scope，cursor 分页，node/name 过滤
+gRPC   PlatformService.ListServices      # 同规则、同值
+CLI    xunara services list|show         # 直接读状态目录
+Console  Machines 页 Services 计数 / Services 页
+```
+
+### 22.6 审计
+
+```text
+node.services_updated   # target=节点，detail=服务名列表（含协议/端口），无 metadata 值
+```
+
+### 22.7 后续（不在 v1）
+
+- 按 ACL/grants 的可见性（当前与 MagicDNS 节点名一样全组织可见）；
+- 服务就绪/健康状态与自动摘除；
+- 跨组织服务共享（Sharing）；
+- 与 `svc:`（Tailscale Services VIP）互通——需要上游控制面语义，不猜 API。
