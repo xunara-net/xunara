@@ -1,6 +1,7 @@
 package control
 
 import (
+	"errors"
 	"net/http"
 	"slices"
 	"strconv"
@@ -58,23 +59,27 @@ type PlatformAuditEvent struct {
 func (r *Router) handlePlatformAudit(w http.ResponseWriter, req *http.Request) {
 	query := req.URL.Query()
 
-	orgs, ok := r.selectAuditOrgs(w, query["org"])
-	if !ok {
+	orgs, err := r.selectAuditOrgs(query["org"])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	cursors, ok := parseAuditCursors(w, query["cursor"])
-	if !ok {
+	cursors, err := parseAuditCursors(query["cursor"])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	patterns, ok := parseAuditActions(w, query["action"])
-	if !ok {
+	patterns, err := parseAuditActions(query["action"])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	limit, ok := parseAuditLimit(w, query.Get("limit"))
-	if !ok {
+	limit, err := parseAuditLimit(query.Get("limit"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -128,71 +133,68 @@ func (r *Router) handlePlatformAudit(w http.ResponseWriter, req *http.Request) {
 
 // selectAuditOrgs resolves the org filter. An empty filter selects every
 // organization, in the router's configured order.
-func (r *Router) selectAuditOrgs(w http.ResponseWriter, raw []string) ([]*routerOrg, bool) {
+func (r *Router) selectAuditOrgs(raw []string) ([]*routerOrg, error) {
 	wanted := splitAuditList(raw)
 	if len(wanted) == 0 {
-		return r.orgs, true
+		r.mu.RLock()
+		defer r.mu.RUnlock()
+		return slices.Clone(r.orgs), nil
 	}
 
 	selected := make([]*routerOrg, 0, len(wanted))
 	for _, id := range wanted {
 		org := r.orgByID(id)
 		if org == nil {
-			http.Error(w, "unknown organization "+strconv.Quote(id), http.StatusBadRequest)
-			return nil, false
+			return nil, errors.New("unknown organization " + strconv.Quote(id))
 		}
 		if !slices.ContainsFunc(selected, func(o *routerOrg) bool { return o.site.ID == id }) {
 			selected = append(selected, org)
 		}
 	}
-	return selected, true
+	return selected, nil
 }
 
 // parseAuditCursors parses "org:id" pairs, accepting the parameter once with
 // comma-separated pairs or repeated. Unknown organizations and malformed pairs
 // are rejected: a typo would otherwise silently re-export everything.
-func parseAuditCursors(w http.ResponseWriter, raw []string) (map[string]uint64, bool) {
+func parseAuditCursors(raw []string) (map[string]uint64, error) {
 	cursors := make(map[string]uint64)
 	for _, pair := range splitAuditList(raw) {
 		org, idText, ok := strings.Cut(pair, ":")
 		if !ok || org == "" || idText == "" {
-			http.Error(w, "cursor must look like org:id", http.StatusBadRequest)
-			return nil, false
+			return nil, errors.New("cursor must look like org:id")
 		}
 		id, err := strconv.ParseUint(idText, 10, 64)
 		if err != nil {
-			http.Error(w, "invalid cursor id "+strconv.Quote(idText), http.StatusBadRequest)
-			return nil, false
+			return nil, errors.New("invalid cursor id " + strconv.Quote(idText))
 		}
 		cursors[org] = id
 	}
-	return cursors, true
+	return cursors, nil
 }
 
 // parseAuditActions splits and validates the action filter. Patterns are
 // validated even when nothing is exported, so a typo fails loudly.
-func parseAuditActions(w http.ResponseWriter, raw []string) ([]string, bool) {
+func parseAuditActions(raw []string) ([]string, error) {
 	patterns := splitAuditList(raw)
 	for _, pattern := range patterns {
 		if _, err := webhook.MatchGlob(pattern, ""); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return nil, false
+			return nil, err
 		}
 	}
-	return patterns, true
+	return patterns, nil
 }
 
 // parseAuditLimit bounds the per-organization scan.
-func parseAuditLimit(w http.ResponseWriter, raw string) (int, bool) {
+func parseAuditLimit(raw string) (int, error) {
 	if raw == "" {
-		return platformAuditDefaultLimit, true
+		return platformAuditDefaultLimit, nil
 	}
 	limit, err := strconv.Atoi(raw)
 	if err != nil || limit < 1 {
-		http.Error(w, "invalid limit", http.StatusBadRequest)
-		return 0, false
+		return 0, errors.New("invalid limit")
 	}
-	return min(limit, platformAuditMaxLimit), true
+	return min(limit, platformAuditMaxLimit), nil
 }
 
 // matchesAnyAction reports whether an action matches one of the patterns; an

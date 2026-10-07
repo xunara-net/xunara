@@ -75,8 +75,13 @@ func (s *Server) startPlatformGRPC() (*grpc.Server, net.Listener, error) {
 }
 
 // startPlatformGRPC binds the optional platform gRPC listener for a router.
+// Both surfaces are registered on it: the organization-scoped service and the
+// deployment-level admin service.
 func (r *Router) startPlatformGRPC() (*grpc.Server, net.Listener, error) {
-	return startPlatformGRPCOn(r.cfg.GRPCListenAddr, r.RegisterPlatformGRPC)
+	return startPlatformGRPCOn(r.cfg.GRPCListenAddr, func(reg grpc.ServiceRegistrar) {
+		r.RegisterPlatformGRPC(reg)
+		r.RegisterPlatformAdminGRPC(reg)
+	})
 }
 
 // startPlatformGRPCOn binds addr and registers the platform service on it. A

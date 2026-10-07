@@ -1,14 +1,20 @@
-// Xunara Platform API v2 over gRPC (M8d).
+// Xunara Platform API v2 over gRPC (M8d, M8e).
 //
-// This service mirrors the read-mostly /api/v2 surface of one organization so
-// automation can use a typed protocol instead of scraping JSON. It is part of
-// the platform plane: it never touches the Tailscale compatibility core
+// PlatformService mirrors the read-mostly /api/v2 surface of one organization
+// so automation can use a typed protocol instead of scraping JSON. It is part
+// of the platform plane: it never touches the Tailscale compatibility core
 // (TS2021, Noise, MapRequest), and credentials are the same service API keys
 // the HTTP API accepts.
 //
-// In a multi-tenant deployment the organization is chosen by the gRPC
-// authority (":authority"), the HTTP/2 equivalent of the Host header, so one
-// listener serves every organization exactly like the HTTP router does.
+// PlatformAdminService mirrors /api/platform/v1, the deployment-level surface
+// a multi-tenant operator automates. It accepts only the process-level
+// platform admin token.
+//
+// In a multi-tenant deployment the organization for PlatformService is chosen
+// by the gRPC authority (":authority"), the HTTP/2 equivalent of the Host
+// header, so one listener serves every organization exactly like the HTTP
+// router does. PlatformAdminService is deployment-scoped and ignores the
+// authority.
 
 syntax = "proto3";
 
@@ -147,4 +153,132 @@ message RevokeAgentTokenRequest {
 message RevokeAgentTokenResponse {
   string id = 1;
   bool revoked = 2;
+}
+
+// PlatformAdminService is the deployment-level automation surface. It mirrors
+// the /api/platform/v1 HTTP API and is authorized by the process-level platform
+// admin token only; an organization's own credentials (session or API key)
+// never reach it, because that would cross tenant boundaries. The service is
+// available in multi-tenant deployments that configure a platform token.
+service PlatformAdminService {
+  // ListOrganizations returns every hosted organization with a status summary.
+  rpc ListOrganizations(ListOrganizationsRequest) returns (ListOrganizationsResponse);
+
+  // GetOrganization returns one organization by ID.
+  rpc GetOrganization(GetOrganizationRequest) returns (Organization);
+
+  // CreateOrganization creates a platform-managed organization.
+  rpc CreateOrganization(CreateOrganizationRequest) returns (Organization);
+
+  // UpdateOrganization renames or retargets a managed organization. Configured
+  // organizations are read-only.
+  rpc UpdateOrganization(UpdateOrganizationRequest) returns (Organization);
+
+  // DeleteOrganization archives and removes a managed organization. Deleting
+  // twice reports NOT_FOUND; the organzation's configured peers are untouched.
+  rpc DeleteOrganization(DeleteOrganizationRequest) returns (DeleteOrganizationResponse);
+
+  // ListAudit exports the audit logs of every hosted organization as one
+  // resumable, time-ordered stream. Pagination is per organization (each has
+  // its own ID space), so callers keep the returned cursors and hand them back
+  // on the next call.
+  rpc ListAudit(ListPlatformAuditRequest) returns (ListPlatformAuditResponse);
+}
+
+message Organization {
+  string id = 1;
+  string name = 2;
+  repeated string domains = 3;
+  OrganizationStats stats = 4;
+  // managed is true for organizations created through the platform API.
+  // Configured organizations are read-only.
+  bool managed = 5;
+}
+
+message OrganizationStats {
+  uint64 nodes = 1;
+  uint64 online = 2;
+  uint64 users = 3;
+  uint64 pending_devices = 4;
+  bool policy_loaded = 5;
+}
+
+message ListOrganizationsRequest {}
+
+message ListOrganizationsResponse {
+  repeated Organization organizations = 1;
+}
+
+message GetOrganizationRequest {
+  string id = 1;
+}
+
+message CreateOrganizationRequest {
+  // id is the stable identifier; it cannot be changed later.
+  string id = 1;
+  string name = 2;
+  // domains are the login-server host names routed to this organization.
+  repeated string domains = 3;
+  string server_url = 4;
+  // domain is the organization's MagicDNS domain; empty disables MagicDNS.
+  string domain = 5;
+}
+
+// StringList gives a repeated field the presence a proto3 field otherwise
+// lacks, so an update can tell "leave unchanged" from "set to empty".
+message StringList {
+  repeated string values = 1;
+}
+
+message UpdateOrganizationRequest {
+  string id = 1;
+  // name, when set, renames the organization.
+  optional string name = 2;
+  // domains, when set, replaces the domain list. ID, server_url and the
+  // MagicDNS domain cannot be changed: clients are configured with the
+  // organization's URL.
+  optional StringList domains = 3;
+}
+
+message DeleteOrganizationRequest {
+  string id = 1;
+}
+
+message DeleteOrganizationResponse {
+  string id = 1;
+  bool deleted = 2;
+  // archived_at names where the organization's state directory was archived;
+  // the same value the HTTP API calls archivedAt.
+  string archived_at = 3;
+}
+
+message PlatformAuditEvent {
+  string org = 1;
+  uint64 id = 2;
+  google.protobuf.Timestamp time = 3;
+  string actor = 4;
+  string action = 5;
+  string target = 6;
+  string detail = 7;
+}
+
+message ListPlatformAuditRequest {
+  // orgs selects organizations to export; empty means every organization.
+  repeated string orgs = 1;
+  // cursors are "org:id" pairs: the last event ID already consumed per
+  // organization. Unknown organizations and malformed pairs are rejected.
+  repeated string cursors = 2;
+  // actions filters on audit action globs ("*" is the only wildcard). An empty
+  // filter matches every action.
+  repeated string actions = 3;
+  // limit bounds how many raw events one organization is scanned for; it
+  // defaults to 500 and is capped at 2000.
+  uint32 limit = 4;
+}
+
+message ListPlatformAuditResponse {
+  repeated PlatformAuditEvent events = 1;
+  // cursors are the next "org:id" positions, one per exported organization.
+  map<string, uint64> cursors = 2;
+  bool has_more = 3;
 }

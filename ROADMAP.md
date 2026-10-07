@@ -761,6 +761,24 @@ reference/{go-oidc,oauth2,dex,webauthn}
     机器分页/过滤/坏游标、审计过滤与游标续传、webhook 列表与 secret 不回传、
     吊销权限/幂等/404/审计、authority 选组织与跨租户拒绝、Serve gRPC
     生命周期与坏地址）。
+- M8e 已完成：部署级平台管理面 over gRPC（`xunara.v2.PlatformAdminService`）。
+  - 服务镜像 `/api/platform/v1`：ListOrganizations / GetOrganization /
+    CreateOrganization / UpdateOrganization / DeleteOrganization /
+    ListAudit（跨组织审计导出，保持"每组织游标 + 过滤事件也推进游标"语义）。
+  - 认证只接受进程级平台令牌（常量时间比较）：未配置令牌一律
+    `PERMISSION_DENIED`（fail closed），错误/缺失令牌 `UNAUTHENTICATED`；
+    组织自己的 session 或 API key 永远不能到达该服务（AGENTS §12）。
+  - HTTP 错误映射沿用同一份 `orgAPIError` 状态：400→`INVALID_ARGUMENT`、
+    409→`ALREADY_EXISTS`、404→`NOT_FOUND`、配置型组织只读→
+    `FAILED_PRECONDITION`、未启用注册表→`PERMISSION_DENIED`。
+  - `UpdateOrganization` 用 `optional` 字段表达 PATCH 语义：`name` 缺失即
+    不变，`domains` 用 `StringList` 包装以区分"缺省"与"清空"。
+  - 审计导出的解析（org/cursor/action/limit）抽成纯函数，HTTP 与 gRPC
+    共用同一套校验，避免两份实现漂移。
+  - 测试：`control/grpc_platform_admin_test.go`（令牌缺失/错误/被禁用、
+    组织 key 越界拒绝、CRUD 生命周期与域名规范化、重复 ID/域名 409、
+    校验 400、配置型组织只读、归档路径、注册表未启用、跨组织审计导出与
+    游标续传、glob/游标/组织名校验）。
 
 ---
 

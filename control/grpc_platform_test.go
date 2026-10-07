@@ -19,10 +19,10 @@ import (
 	"github.com/xunara/xunara/webhook"
 )
 
-// startGRPCTestServer serves register on a loopback port and returns a typed
-// client. Extra dial options let a test pin the authority, which is how the
+// startGRPCConn serves register on a loopback port and returns a client
+// connection. Extra dial options let a test pin the authority, which is how the
 // router selects an organization.
-func startGRPCTestServer(t *testing.T, register func(grpc.ServiceRegistrar), opts ...grpc.DialOption) xunarav2.PlatformServiceClient {
+func startGRPCConn(t *testing.T, register func(grpc.ServiceRegistrar), opts ...grpc.DialOption) *grpc.ClientConn {
 	t.Helper()
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -42,7 +42,21 @@ func startGRPCTestServer(t *testing.T, register func(grpc.ServiceRegistrar), opt
 		t.Fatalf("grpc.NewClient: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return xunarav2.NewPlatformServiceClient(conn)
+	return conn
+}
+
+// startGRPCTestServer serves register and returns the organization-scoped
+// client.
+func startGRPCTestServer(t *testing.T, register func(grpc.ServiceRegistrar), opts ...grpc.DialOption) xunarav2.PlatformServiceClient {
+	t.Helper()
+	return xunarav2.NewPlatformServiceClient(startGRPCConn(t, register, opts...))
+}
+
+// registerPlatformGRPCServices registers both platform surfaces of a router,
+// exactly like [Router.Start] does on its own listener.
+func registerPlatformGRPCServices(reg grpc.ServiceRegistrar, router *Router) {
+	router.RegisterPlatformGRPC(reg)
+	router.RegisterPlatformAdminGRPC(reg)
 }
 
 // grpcCtx attaches a bearer credential the same way a real client would.
