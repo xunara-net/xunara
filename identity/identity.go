@@ -142,4 +142,5 @@ const (
 	AuditSessionCreated    = "session.created"
 	AuditSessionRevoked    = "session.revoked"
 	AuditDeviceApproved    = "device.approved"
+	AuditDeviceDenied      = "device.denied"
 )

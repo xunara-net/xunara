@@ -270,6 +270,40 @@ func (s *SQLiteStore) UpdateUser(u User) error {
 
 type scanner interface{ Scan(dest ...any) error }
 
+// DeleteUser implements [UserStore].
+//
+// The external identity links are deleted with the user: a dangling link
+// pointing at a missing user would be a login failure waiting to happen.
+func (s *SQLiteStore) DeleteUser(id tailcfg.UserID) error {
+	ctx := context.Background()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("identity: starting user deletion: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM external_identities WHERE user_id = ?", int64(id)); err != nil {
+		return fmt.Errorf("identity: deleting external identities of user %d: %w", id, err)
+	}
+	res, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id = ?", int64(id))
+	if err != nil {
+		return fmt.Errorf("identity: deleting user %d: %w", id, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("identity: deleting user %d: %w", id, err)
+	}
+	if affected == 0 {
+		return ErrUserNotFound
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("identity: committing user deletion: %w", err)
+	}
+	return nil
+}
+
 func scanUser(sc scanner) (User, error) {
 	var (
 		id        int64

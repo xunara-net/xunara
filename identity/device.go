@@ -97,6 +97,11 @@ type DeviceAuthorizationStore interface {
 	// GetDeviceAuthorization returns an authorization by ID.
 	GetDeviceAuthorization(id string) (DeviceAuthorization, bool)
 
+	// GetDeviceAuthorizationByNodeKey returns the most recent authorization
+	// for a node key, so an instance that did not create the registration can
+	// follow it up.
+	GetDeviceAuthorizationByNodeKey(nodeKey string) (DeviceAuthorization, bool)
+
 	// ApproveDeviceAuthorization approves a pending, unexpired authorization
 	// for the given user. The machine and node keys are taken from the stored
 	// row, never from the caller.

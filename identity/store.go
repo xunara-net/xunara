@@ -28,6 +28,9 @@ type UserStore interface {
 	ListUsers() []User
 	// UpdateUser replaces a stored user. It fails if the user is unknown.
 	UpdateUser(u User) error
+	// DeleteUser removes a user and its external identity links. It fails
+	// with ErrUserNotFound if the user is unknown.
+	DeleteUser(id tailcfg.UserID) error
 }
 
 // ExternalIdentityStore is the link between external accounts and users.

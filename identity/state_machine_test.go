@@ -317,3 +317,54 @@ func TestDefaultTTLs(t *testing.T) {
 		t.Errorf("device authorization TTL %v is too long", DefaultDeviceAuthorizationTTL)
 	}
 }
+
+func TestDeleteUserRemovesLinks(t *testing.T) {
+	s := openTestStore(t)
+	alice := createTestUser(t, s, "alice")
+	bob := createTestUser(t, s, "bob")
+
+	for _, link := range []ExternalIdentity{
+		{ProviderID: "dex", Subject: "sub-a", UserID: alice.ID},
+		{ProviderID: "dex", Subject: "sub-b", UserID: bob.ID},
+	} {
+		link := link
+		if err := s.LinkExternalIdentity(&link); err != nil {
+			t.Fatalf("LinkExternalIdentity: %v", err)
+		}
+	}
+
+	if err := s.DeleteUser(alice.ID); err != nil {
+		t.Fatalf("DeleteUser: %v", err)
+	}
+	if _, ok := s.GetUser(alice.ID); ok {
+		t.Error("deleted user is still present")
+	}
+	if _, ok := s.GetExternalIdentity("dex", "sub-a"); ok {
+		t.Error("deleted user's external identity is still present")
+	}
+	if _, ok := s.GetExternalIdentity("dex", "sub-b"); !ok {
+		t.Error("another user's external identity was deleted")
+	}
+	if err := s.DeleteUser(alice.ID); err != ErrUserNotFound {
+		t.Errorf("deleting twice = %v, want ErrUserNotFound", err)
+	}
+}
+
+func TestGetDeviceAuthorizationByNodeKey(t *testing.T) {
+	s := openTestStore(t)
+
+	da, err := s.CreateDeviceAuthorization(NewDeviceAuthorizationOptions{
+		MachineKey: "mkey:abc", NodeKey: "nkey:def",
+	})
+	if err != nil {
+		t.Fatalf("CreateDeviceAuthorization: %v", err)
+	}
+
+	got, ok := s.GetDeviceAuthorizationByNodeKey("nkey:def")
+	if !ok || got.ID != da.ID {
+		t.Fatalf("GetDeviceAuthorizationByNodeKey = %+v, %v", got, ok)
+	}
+	if _, ok := s.GetDeviceAuthorizationByNodeKey("nkey:unknown"); ok {
+		t.Error("unknown node key returned an authorization")
+	}
+}

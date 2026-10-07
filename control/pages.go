@@ -1,0 +1,122 @@
+package control
+
+import (
+	"html/template"
+	"net/http"
+)
+
+// pageHead is shared by every page: no external assets, no scripts, a strict
+// referrer policy.
+const pageHead = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{{.Title}} — Xunara</title>
+<style>
+body { font-family: system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #16181d; }
+main { max-width: 34rem; margin: 6vh auto; background: #fff; padding: 2rem; border-radius: .75rem;
+       box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+h1 { font-size: 1.35rem; margin-top: 0; }
+p { line-height: 1.5; }
+.provider { display: block; margin: .6rem 0; padding: .7rem 1rem; background: #16181d; color: #fff;
+            text-decoration: none; border-radius: .5rem; text-align: center; }
+.provider:hover { background: #2b2f38; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: .4rem 1rem; }
+dt { color: #5b616e; }
+.actions { margin-top: 1.5rem; display: flex; gap: .75rem; }
+button { font: inherit; padding: .7rem 1.2rem; border-radius: .5rem; border: 0; cursor: pointer; }
+.approve { background: #1a7f37; color: #fff; }
+.deny { background: #fff; color: #b42318; border: 1px solid #d0d5dd; }
+footer { margin-top: 2rem; color: #5b616e; font-size: .8rem; }
+code { background: #f1f2f4; padding: .1rem .3rem; border-radius: .25rem; }
+</style>
+</head>
+<body><main>
+`
+
+var pageFoot = template.Must(template.New("foot").Parse(`<footer>Xunara {{.Version}}</footer></main></body></html>`))
+
+var (
+	loginPageTemplate = template.Must(template.New("login").Parse(pageHead + `
+<h1>Sign in</h1>
+<p>Choose an identity provider to continue.</p>
+{{range .Providers}}<a class="provider" href="{{.URL}}">{{.Name}}</a>{{end}}
+` + `</main></body></html>`))
+
+	errorPageTemplate = template.Must(template.New("error").Parse(pageHead + `
+<h1>{{.Title}}</h1>
+<p>{{.Message}}</p>
+<p><a href="/login">Back to sign-in</a></p>
+` + `</main></body></html>`))
+
+	approvePageTemplate = template.Must(template.New("approve").Parse(pageHead + `
+<h1>Device approval</h1>
+<p>A device is asking to join the tailnet. Approving authorizes the machine keys
+below; it does not make the device a human identity.</p>
+<dl>
+<dt>Device</dt><dd>{{.Hostname}}</dd>
+<dt>Operating system</dt><dd>{{.OS}}</dd>
+<dt>Requested</dt><dd>{{.Created}}</dd>
+<dt>Signed in as</dt><dd>{{.LoginName}}</dd>
+</dl>
+<form method="post" action="/register/{{.AuthID}}/approve">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<div class="actions">
+<button class="approve" type="submit">Approve device</button>
+</div>
+</form>
+<form method="post" action="/register/{{.AuthID}}/deny">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<div class="actions">
+<button class="deny" type="submit">Deny</button>
+</div>
+</form>
+` + `</main></body></html>`))
+
+	decidedPageTemplate = template.Must(template.New("decided").Parse(pageHead + `
+<h1>Registration {{.State}}</h1>
+<p>This device registration was already {{.State}}. You can close this window and
+return to the device.</p>
+` + `</main></body></html>`))
+)
+
+// renderLoginPage lists the configured providers.
+func (s *Server) renderLoginPage(w http.ResponseWriter, providers []providerView) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := loginPageTemplate.Execute(w, map[string]any{"Title": "Sign in", "Providers": providers}); err != nil {
+		s.log.Error("rendering login page", "err", err)
+	}
+}
+
+// renderError shows a plain error page. The message must be static, never
+// provider- or request-controlled text.
+func (s *Server) renderError(w http.ResponseWriter, status int, title, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
+	if err := errorPageTemplate.Execute(w, map[string]any{
+		"Title": title, "Message": message,
+	}); err != nil {
+		s.log.Error("rendering error page", "err", err)
+	}
+}
+
+// renderApprovePage shows the device approval form.
+func (s *Server) renderApprovePage(w http.ResponseWriter, data map[string]any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := approvePageTemplate.Execute(w, data); err != nil {
+		s.log.Error("rendering approval page", "err", err)
+	}
+}
+
+// renderDecidedPage shows the outcome of a device decision.
+func (s *Server) renderDecidedPage(w http.ResponseWriter, state string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := decidedPageTemplate.Execute(w, map[string]any{
+		"Title": "Registration " + state,
+		"State": state,
+	}); err != nil {
+		s.log.Error("rendering decided page", "err", err)
+	}
+}

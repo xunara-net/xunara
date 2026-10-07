@@ -235,6 +235,26 @@ reference/{go-oidc,oauth2,dex,webauthn}
     错误 state/nonce/issuer/audience/过期/未来 iat/过旧 iat/未知签名密钥/无 id_token/
     PKCE 不匹配/code 重放/JWKS 轮换/懒发现失败关闭/URL 校验。
 - External Identity 唯一键 `(provider_id, subject)`，Email 仅属性。
+- M4b-3 已完成：控制面登录/会话/设备审批接线。
+  - `GET /login`（provider 选择、`return_to` 仅接受同源绝对路径，杜绝开放重定向）、
+    `GET /oidc/callback/{providerID}`、`POST /logout`。
+  - 登录流程：AuthTransaction（浏览器绑定 cookie）→ Provider.Callback →
+    原子消费（重放拒绝）→ `(provider, subject)` 查找/创建用户（**绝不按 email 合并**）
+    → SQLite Session → HttpOnly/SameSite=Lax/（https 时）Secure cookie。
+  - 设备审批：`GET /register/{authID}` 展示设备信息（客户端参数字典落库在
+    DeviceAuthorization.client_metadata），`POST .../approve|deny`（会话 + 每会话 CSRF）。
+  - 多实例：followup 以 DeviceAuthorization 为依据（按 node key 查询），
+    审批任一实例可见；内存 pending 仅作唤醒快路径。
+  - 审计：login.succeeded/failed（原因分类有界、不含 provider 原文）、
+    session.created/revoked、user.created、device.approved/denied、node.approved。
+  - 客户端注册响应（`RegisterResponse.Login`）改用信任面资料。
+  - 配置：`Config.OIDCProviders`（每个 provider 默认回调
+    `<server-url>/oidc/callback/<id>`）、`Config.Providers`（自定义适配器）、
+    `Config.AllowLocalLogin`；xunarad 增加对应参数，**client secret 只从
+    `XUNARA_OIDC_CLIENT_SECRET` 环境变量读取**（不进 argv）。
+  - 测试：`control/login_test.go`（本地登录/登出、未知 provider、开放重定向表、
+    OIDC 浏览器流与重放/无绑定拒绝、同 email 不同 subject 不合并、设备审批的
+    会话/CSRF/幂等/拒绝、过期与未知链接、注册响应资料）。
 - OIDC 安全清单：state / nonce / PKCE(S256) / issuer / audience / signature / exp / iat / redirect allowlist / JWKS rotation / clock skew / code & state replay。
 - Session 存储必须支持多实例、吊销、过期、审计、轮换（禁止 server-local map 作为核心存储）。
 - 测试：`IDENTITY_LOGIN.md` §18 Security Test Matrix。

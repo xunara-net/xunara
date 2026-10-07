@@ -61,6 +61,20 @@ type Config struct {
 	// has no policy and everything is allowed, which is what the official
 	// service does for a tailnet without a policy.
 	PolicyPath string
+	// OIDCProviders configures external OpenID Connect identity providers.
+	// Each provider gets its own callback path
+	// <ServerURL>/oidc/callback/<provider-id> unless RedirectURL says
+	// otherwise.
+	OIDCProviders []identity.OIDCConfig
+	// Providers are additional identity providers registered as-is (custom
+	// adapters and tests). Prefer OIDCProviders for OIDC issuers.
+	Providers []identity.IdentityProvider
+	// SessionTTL bounds browser sessions. Zero uses identity.DefaultSessionTTL.
+	SessionTTL time.Duration
+	// AllowLocalLogin enables the built-in local provider even when external
+	// providers are configured. It is enabled automatically when no external
+	// provider is configured at all.
+	AllowLocalLogin bool
 	// Logger receives server logs. Defaults to slog.Default.
 	Logger *slog.Logger
 }
@@ -83,6 +97,21 @@ type Server struct {
 	// identity is the trust plane: users, external identities and the audit
 	// log. It shares the control plane's database.
 	identity identity.Store
+
+	// providers is the registry of configured identity providers, and
+	// providerRedirects maps a provider to its registered callback URL.
+	providers         *identity.Registry
+	providerRedirects map[string]string
+
+	// secureCookies marks cookies Secure; sessionTTL bounds browser sessions;
+	// authTTL bounds pending login transactions.
+	secureCookies bool
+	sessionTTL    time.Duration
+	authTTL       time.Duration
+
+	// approveMu serialises device approvals so an approval is applied exactly
+	// once even under concurrent requests.
+	approveMu sync.Mutex
 
 	// resolvers and dnsRoutes are the parsed forms of cfg.Nameservers and
 	// cfg.DNSRoutes; parsing happens once, at construction, so a bad
@@ -148,6 +177,51 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 
+	providers := identity.NewRegistry()
+	redirects := make(map[string]string)
+
+	// The built-in local provider is the single-user mode's login method; it
+	// is only offered by default when no external provider exists, because it
+	// authenticates anyone who can reach the login page.
+	if len(cfg.OIDCProviders) == 0 && len(cfg.Providers) == 0 || cfg.AllowLocalLogin {
+		local := identity.LocalLogin{}
+		providers.Register(local)
+	}
+	for _, p := range cfg.Providers {
+		if p == nil {
+			store.Close()
+			return nil, fmt.Errorf("control: nil identity provider")
+		}
+		providers.Register(p)
+		if rp, ok := p.(interface{ RedirectURL() string }); ok {
+			redirects[p.ID()] = rp.RedirectURL()
+		}
+	}
+	for _, oc := range cfg.OIDCProviders {
+		if oc.ID == "" {
+			oc.ID = "oidc"
+		}
+		if oc.RedirectURL == "" && cfg.ServerURL != "" {
+			oc.RedirectURL = cfg.ServerURL + "/oidc/callback/" + oc.ID
+		}
+		provider, err := identity.NewOIDCProvider(oc)
+		if err != nil {
+			store.Close()
+			return nil, fmt.Errorf("control: %w", err)
+		}
+		providers.Register(provider)
+		redirects[provider.ID()] = provider.RedirectURL()
+	}
+	if len(providers.IDs()) == 0 {
+		store.Close()
+		return nil, fmt.Errorf("control: no identity provider configured")
+	}
+
+	sessionTTL := cfg.SessionTTL
+	if sessionTTL <= 0 {
+		sessionTTL = identity.DefaultSessionTTL
+	}
+
 	resolvers, err := parseResolvers(cfg.Nameservers)
 	if err != nil {
 		store.Close()
@@ -160,18 +234,23 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	srv := &Server{
-		cfg:           cfg,
-		log:           cfg.Logger,
-		noiseKey:      noiseKey,
-		store:         store,
-		closer:        store,
-		identity:      identityStore,
-		resolvers:     resolvers,
-		dnsRoutes:     dnsRoutes,
-		pending:       make(map[string]*pendingRegistration),
-		pendingByNode: make(map[key.NodePublic]string),
-		online:        make(map[state.NodeID]int),
-		watchers:      make(map[uint64]chan struct{}),
+		cfg:               cfg,
+		log:               cfg.Logger,
+		noiseKey:          noiseKey,
+		store:             store,
+		closer:            store,
+		identity:          identityStore,
+		providers:         providers,
+		providerRedirects: redirects,
+		secureCookies:     strings.HasPrefix(strings.ToLower(cfg.ServerURL), "https://"),
+		sessionTTL:        sessionTTL,
+		authTTL:           identity.DefaultAuthTransactionTTL,
+		resolvers:         resolvers,
+		dnsRoutes:         dnsRoutes,
+		pending:           make(map[string]*pendingRegistration),
+		pendingByNode:     make(map[key.NodePublic]string),
+		online:            make(map[state.NodeID]int),
+		watchers:          make(map[uint64]chan struct{}),
 	}
 
 	// A broken policy file must stop the server from starting: falling back to
@@ -308,7 +387,12 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/key", s.handleKey)
 	r.Get("/health", s.handleHealth)
 	r.Get("/version", s.handleVersion)
+	r.Get("/login", s.handleLogin)
+	r.Post("/logout", s.handleLogout)
+	r.Get("/oidc/callback/{providerID}", s.handleCallback)
 	r.Get("/register/{authID}", s.handleRegisterPage)
+	r.Post("/register/{authID}/approve", s.handleApproveDevice)
+	r.Post("/register/{authID}/deny", s.handleDenyDevice)
 	r.Get("/", s.handleRoot)
 
 	return r

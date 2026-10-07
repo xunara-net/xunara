@@ -65,6 +65,18 @@ func (s *SQLiteStore) GetDeviceAuthorization(id string) (DeviceAuthorization, bo
 	return da, true
 }
 
+// GetDeviceAuthorizationByNodeKey implements [DeviceAuthorizationStore].
+func (s *SQLiteStore) GetDeviceAuthorizationByNodeKey(nodeKey string) (DeviceAuthorization, bool) {
+	row := s.db.QueryRowContext(context.Background(),
+		"SELECT "+deviceAuthorizationColumns+
+			" FROM device_authorizations WHERE node_key = ? ORDER BY created_at DESC LIMIT 1", nodeKey)
+	da, err := scanDeviceAuthorization(row)
+	if err != nil {
+		return DeviceAuthorization{}, false
+	}
+	return da, true
+}
+
 // ApproveDeviceAuthorization implements [DeviceAuthorizationStore].
 //
 // The UPDATE is conditional on the row still being pending and unexpired, so

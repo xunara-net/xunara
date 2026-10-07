@@ -15,17 +15,27 @@ import (
 	"tailscale.com/tailcfg"
 
 	"github.com/xunara/xunara/control"
+	"github.com/xunara/xunara/identity"
 )
 
 func main() {
 	var (
-		listen      = flag.String("listen", "0.0.0.0:8080", "address to listen on")
-		stateDir    = flag.String("state-dir", "data", "directory for persistent state")
-		serverURL   = flag.String("server-url", "", "externally reachable base URL (defaults to http://<listen>)")
-		domain      = flag.String("domain", "", "tailnet MagicDNS domain (empty disables MagicDNS)")
-		derpMapPath = flag.String("derp-map", "", "path to a tailcfg.DERPMap JSON file to advertise to clients")
-		policyPath  = flag.String("policy", "", "path to an ACL policy document (HuJSON); empty allows everything")
-		logLevel    = flag.String("log-level", "info", "log level: debug|info|warn|error")
+		listen       = flag.String("listen", "0.0.0.0:8080", "address to listen on")
+		stateDir     = flag.String("state-dir", "data", "directory for persistent state")
+		serverURL    = flag.String("server-url", "", "externally reachable base URL (defaults to http://<listen>)")
+		domain       = flag.String("domain", "", "tailnet MagicDNS domain (empty disables MagicDNS)")
+		derpMapPath  = flag.String("derp-map", "", "path to a tailcfg.DERPMap JSON file to advertise to clients")
+		policyPath   = flag.String("policy", "", "path to an ACL policy document (HuJSON); empty allows everything")
+		logLevel     = flag.String("log-level", "info", "log level: debug|info|warn|error")
+		oidcIssuer   = flag.String("oidc-issuer", "", "OIDC issuer URL; enables OIDC login when set")
+		oidcID       = flag.String("oidc-id", "oidc", "provider ID for the OIDC issuer")
+		oidcClient   = flag.String("oidc-client-id", "", "OIDC client ID")
+		oidcRedirect = flag.String("oidc-redirect-url", "",
+			"OIDC redirect URL (default <server-url>/oidc/callback/<oidc-id>)")
+		oidcScopes = flag.String("oidc-scopes", "",
+			"comma-separated OIDC scopes (default openid,profile,email)")
+		allowLocalLogin = flag.Bool("allow-local-login", false,
+			"offer the built-in local login even when OIDC is configured")
 	)
 	var (
 		nameservers stringListFlag
@@ -53,16 +63,34 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The client secret is read from the environment, never from a flag:
+	// process arguments are visible to every user on the host.
+	var oidcProviders []identity.OIDCConfig
+	if *oidcIssuer != "" {
+		oidcProviders = append(oidcProviders, identity.OIDCConfig{
+			ID:          *oidcID,
+			DisplayName: *oidcID,
+			Issuer:      *oidcIssuer,
+			ClientID:    *oidcClient,
+			// XUNARA_OIDC_CLIENT_SECRET keeps the secret out of argv.
+			ClientSecret: os.Getenv("XUNARA_OIDC_CLIENT_SECRET"),
+			RedirectURL:  *oidcRedirect,
+			Scopes:       splitCSV(*oidcScopes),
+		})
+	}
+
 	srv, err := control.New(control.Config{
-		ServerURL:   *serverURL,
-		ListenAddr:  *listen,
-		StateDir:    *stateDir,
-		Domain:      *domain,
-		Nameservers: nameservers,
-		DNSRoutes:   routes,
-		PolicyPath:  *policyPath,
-		DERPMap:     derpMap,
-		Logger:      logger,
+		ServerURL:       *serverURL,
+		ListenAddr:      *listen,
+		StateDir:        *stateDir,
+		Domain:          *domain,
+		Nameservers:     nameservers,
+		DNSRoutes:       routes,
+		PolicyPath:      *policyPath,
+		DERPMap:         derpMap,
+		OIDCProviders:   oidcProviders,
+		AllowLocalLogin: *allowLocalLogin,
+		Logger:          logger,
 	})
 	if err != nil {
 		logger.Error("initializing server", "err", err)
@@ -143,4 +171,18 @@ func newLogger(level string) *slog.Logger {
 		l = slog.LevelInfo
 	}
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: l}))
+}
+
+// splitCSV splits a comma-separated flag value, dropping empty entries.
+func splitCSV(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
