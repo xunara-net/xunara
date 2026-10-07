@@ -253,6 +253,13 @@ func ValidateEndpoint(ep Endpoint) error {
 	return nil
 }
 
+// MatchGlob reports whether s matches a glob pattern. It exposes the same
+// syntax the endpoint event filters use ("*" is the only wildcard), so an
+// operator can copy a receiver's filter into another tool without guessing.
+func MatchGlob(pattern, s string) (bool, error) {
+	return globMatch(pattern, s)
+}
+
 // Run delivers events until ctx is cancelled. One goroutine per endpoint; a
 // running dispatcher also accepts [Upsert] and [Remove], so endpoints can be
 // managed while it serves.

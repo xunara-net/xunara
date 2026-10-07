@@ -41,6 +41,7 @@ func (r *Router) mountPlatform(pr chi.Router) {
 	pr.Use(r.requirePlatformToken)
 	pr.Get("/v1/organizations", r.handlePlatformOrganizations)
 	pr.Get("/v1/organizations/{orgID}", r.handlePlatformOrganization)
+	pr.Get("/v1/audit", r.handlePlatformAudit)
 }
 
 // requirePlatformToken enforces bearer-token auth on the platform API. It is

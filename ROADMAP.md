@@ -631,8 +631,24 @@ reference/{go-oidc,oauth2,dex,webauthn}
     白名单外 home 的 admission 拒绝、坏策略拒绝启动、真实注册+map 请求的
     端到端字节校验）、`cmd/xunarad/orgconfig_test.go`（组织表策略解析、
     未知区域/缺 map/模式不匹配的拒绝）。
+- M7c 已完成：跨组织审计导出（`control/platform_audit.go`）。
+  - `GET /api/platform/v1/audit`（平台令牌，与其他 platform API 同一认证；
+    `Cache-Control: no-store`）返回所有（或 `org=` 选定）组织的审计事件，
+    按 `(time, org, id)` 归并排序，每条带 `org`。
+  - 分页按组织：每个组织拥有独立数据库与 ID 空间，不存在可靠的全局游标。
+    响应返回 `cursors`（每组织已消费到的最大 ID）与 `has_more`，调用方保存
+    游标并在下次请求用 `cursor=org:id` 传回；`limit` 限制每个组织单次扫描的
+    原始事件数（默认 500，上限 2000）。
+  - 过滤：`action=` 支持 webhook 同款 glob（`*` 唯一通配符，新增导出
+    `webhook.MatchGlob`）；被过滤掉的事件同样推进游标（与 webhook 语义一致，
+    不会再次提供）。
+  - 校验 fail-closed：未知组织、格式错误的 cursor、非法 glob、非法 limit
+    一律 400，避免拼写错误静默导出全部日志。
+  - 测试：`control/platform_audit_test.go`（归并顺序与 org 标注、游标续传、
+    org/action 过滤与游标推进、limit 分页与 has_more、401、7 类 400 拒绝、
+    时间戳为 UTC 真实时间）。
 - 待办（M7 剩余）：组织 CRUD（当前 org 表来自进程配置，改配置需重启）、
-  `api/v2` 组织级 API 版本、跨组织审计导出。
+  `api/v2` 组织级 API 版本。
 
 ---
 
