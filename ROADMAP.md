@@ -329,7 +329,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
   - 测试：`control/api_test.go`（401/403/scope、密钥不泄漏、注册/路由/删除、
     用户改名冲突、auth-key 一次性 secret、设备审批归属、key 吊销即时生效）。
 - `api/platform` 已完成（M7a）：组织表 + `/api/platform/v1`（见 M7 段）。
-- 待办（M5 剩余）：`api/v2`、gRPC/Webhook。
+- 待办（M5 剩余）：`api/v2`、gRPC。Webhook 已完成（M8a）。
 
 - M5b 已完成：Web Console（`/console/`，浏览器会话 + 每会话 CSRF）。
   - 页面：Overview（在线/离线、待审批设备、DNS、auth key、策略摘要）、Machines
@@ -524,6 +524,32 @@ reference/{go-oidc,oauth2,dex,webauthn}
     （构建、共享 state 目录拒绝、坏配置表、expiry 解析、flag 互斥）。
 - 待办（M7 剩余）：组织 CRUD（当前 org 表来自进程配置，改配置需重启）、
   `api/v2` 组织级 API 版本、组织级 DERP 策略、跨组织审计导出。
+
+---
+
+## M8 — 自动化与集成 —— 进行中
+
+- M8a 已完成：Webhook 事件投递（`webhook/`）。
+  - 游标驱动：新表 `webhook_cursors`（身份迁移 v6）+ `ListAuditAfter`；
+    投递语义 at-least-once、每端点有序、重启后续传（无 server-local 队列，
+    AGENTS §9）。接收方按 payload 的 delivery ID 去重。
+  - 签名：`X-Xunara-Signature: sha256=<hex HMAC-SHA256(secret, "<ts>.<body>")>`
+    （`webhook.Sign` 导出给接收方/测试）；secret 只从环境变量读取
+    （单组织 `-webhook-secret-env`，多组织 `secret_env`），空 secret 拒绝启动。
+  - 端点校验：仅 https 或 loopback http；不跟随重定向（避免把签名交给
+    重定向目标）；`events` glob（仅 `*`，其他通配符拒绝）按审计 action 过滤。
+  - 失败策略：5xx/429/网络错误 → 指数退避重试（上限 1 分钟），游标不动；
+    4xx（除 408/429）→ 记录 error 并跳过该事件（避免毒事件卡住队列）；
+    写游标失败按失败处理。
+  - 接线：`control.Config.Webhooks`；`Server.Start` 启动 dispatcher；
+    xunarad `-webhook-url/-webhook-secret-env/-webhook-events`，组织表
+    `"webhooks": [{"id","url","secret_env","events"}]`（每组织独立投递）。
+  - 测试：`webhook/webhook_test.go`（顺序/签名/头、过滤与游标推进、500 重试后
+    成功、400 丢弃且不阻塞、配置校验表、glob 表）、
+    `control/webhook_test.go`（真实注册审计事件端到端经签名投递）、
+    `identity/sqlite_webhook_test.go`（游标往返/回退、ListAuditAfter 顺序与限长）。
+- 待办（M8 剩余）：gRPC API、投递重试的持久化退避状态（多实例去重）、
+  Webhook 管理 API/console 页面。
 
 ---
 

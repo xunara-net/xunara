@@ -23,6 +23,7 @@ import (
 	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/policy"
 	"github.com/xunara/xunara/state"
+	"github.com/xunara/xunara/webhook"
 )
 
 // Version is the Xunara server version reported by /version.
@@ -90,6 +91,9 @@ type Config struct {
 	// providers are configured. It is enabled automatically when no external
 	// provider is configured at all.
 	AllowLocalLogin bool
+	// Webhooks deliver audit events to operator-configured receivers. Empty
+	// disables webhook delivery.
+	Webhooks []webhook.Endpoint
 	// Logger receives server logs. Defaults to slog.Default.
 	Logger *slog.Logger
 }
@@ -141,6 +145,9 @@ type Server struct {
 
 	// policy holds the compiled ACL policy, or nil when the tailnet has none.
 	policy atomic.Pointer[policy.Engine]
+
+	// webhooks delivers audit events, or nil when no endpoint is configured.
+	webhooks *webhook.Dispatcher
 
 	// certDomains are the extra certificate names from cfg, normalised at
 	// construction. Empty when no DNS provider is configured.
@@ -292,6 +299,19 @@ func New(cfg Config) (*Server, error) {
 	if err := srv.loadPolicy(); err != nil {
 		store.Close()
 		return nil, fmt.Errorf("control: loading policy %s: %w", cfg.PolicyPath, err)
+	}
+
+	if len(cfg.Webhooks) > 0 {
+		dispatcher, err := webhook.New(webhook.Config{
+			Endpoints: cfg.Webhooks,
+			Store:     identityStore,
+			Logger:    cfg.Logger,
+		})
+		if err != nil {
+			store.Close()
+			return nil, fmt.Errorf("control: %w", err)
+		}
+		srv.webhooks = dispatcher
 	}
 
 	return srv, nil
@@ -448,6 +468,9 @@ func (s *Server) Start(ctx context.Context) {
 		go s.runJanitor(ctx)
 		go s.runConfigWatcher(ctx)
 		go s.runPolicyWatcher(ctx)
+		if s.webhooks != nil {
+			go s.webhooks.Run(ctx)
+		}
 	})
 }
 

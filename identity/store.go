@@ -59,11 +59,29 @@ type AuditStore interface {
 	ListAudit(limit int) []AuditEvent
 }
 
+// WebhookCursorStore tracks how far each webhook endpoint has consumed the
+// audit log, so delivery is durable and survives restarts.
+//
+// Delivery is at-least-once: a crash between a successful POST and the cursor
+// update redelivers that event. Receivers deduplicate by the delivery ID in
+// the payload.
+type WebhookCursorStore interface {
+	// ListAuditAfter returns events with ID greater than afterID, oldest
+	// first, at most limit of them (0 means no limit).
+	ListAuditAfter(afterID uint64, limit int) []AuditEvent
+	// GetWebhookCursor returns the last event ID delivered to an endpoint, or
+	// 0 when it has never delivered.
+	GetWebhookCursor(endpoint string) uint64
+	// SetWebhookCursor records the last event ID delivered to an endpoint.
+	SetWebhookCursor(endpoint string, eventID uint64) error
+}
+
 // Store is the persistence boundary of the trust plane.
 type Store interface {
 	UserStore
 	ExternalIdentityStore
 	AuditStore
+	WebhookCursorStore
 	AuthTransactionStore
 	SessionStore
 	DeviceAuthorizationStore

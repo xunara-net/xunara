@@ -156,6 +156,17 @@ CREATE TABLE IF NOT EXISTS ssh_check_auth (
 ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member';
 UPDATE users SET role = 'owner';
 `,
+
+	// v6: webhook delivery cursors. A webhook endpoint consumes the durable
+	// audit log; the cursor is what lets delivery resume after a restart
+	// without a server-local queue (AGENTS.md section 9).
+	`
+CREATE TABLE IF NOT EXISTS webhook_cursors (
+	endpoint      TEXT    PRIMARY KEY,
+	last_event_id INTEGER NOT NULL DEFAULT 0,
+	updated_at    INTEGER NOT NULL
+);
+`,
 }
 
 // SQLiteStore is a durable [Store] sharing the control plane's database.

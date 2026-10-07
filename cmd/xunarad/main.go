@@ -17,6 +17,7 @@ import (
 	"github.com/xunara/xunara/control"
 	"github.com/xunara/xunara/dnsprovider"
 	"github.com/xunara/xunara/identity"
+	"github.com/xunara/xunara/webhook"
 )
 
 func main() {
@@ -50,6 +51,12 @@ func main() {
 			"JSON file listing organizations to host (multi-tenant mode; mutually exclusive with the per-organization flags)")
 		platformTokenEnv = flag.String("platform-token-env", "XUNARA_PLATFORM_ADMIN_TOKEN",
 			"environment variable holding the /api/platform bearer token (multi-tenant mode)")
+		webhookURL = flag.String("webhook-url", "",
+			"HTTPS endpoint that receives audit events (enables webhook delivery)")
+		webhookSecretEnv = flag.String("webhook-secret-env", "XUNARA_WEBHOOK_SECRET",
+			"environment variable holding the webhook HMAC signing secret")
+		webhookEvents = flag.String("webhook-events", "",
+			"comma-separated audit action globs to deliver (default all events)")
 	)
 	var (
 		nameservers stringListFlag
@@ -113,6 +120,21 @@ func main() {
 		})
 	}
 
+	var webhooks []webhook.Endpoint
+	if *webhookURL != "" {
+		secret := os.Getenv(*webhookSecretEnv)
+		if secret == "" {
+			logger.Error("webhook delivery needs a signing secret", "env", *webhookSecretEnv)
+			os.Exit(1)
+		}
+		webhooks = append(webhooks, webhook.Endpoint{
+			ID:     "default",
+			URL:    *webhookURL,
+			Secret: secret,
+			Events: splitCSV(*webhookEvents),
+		})
+	}
+
 	srv, err := control.New(control.Config{
 		ServerURL:           *serverURL,
 		ListenAddr:          *listen,
@@ -128,6 +150,7 @@ func main() {
 		AllowLocalLogin:     *allowLocalLogin,
 		CertDomains:         certDomains,
 		DNSProvider:         dnsProvider,
+		Webhooks:            webhooks,
 		Logger:              logger,
 	})
 	if err != nil {
@@ -154,6 +177,7 @@ var orgScopedFlags = []string{
 	"allow-local-login", "cert-domain",
 	"dns-webhook-url", "dns-webhook-token-env",
 	"dns-cloudflare-zone", "dns-cloudflare-token-env",
+	"webhook-url", "webhook-secret-env", "webhook-events",
 }
 
 // rejectOrgScopedFlags fails when the operator combined -org-config with a

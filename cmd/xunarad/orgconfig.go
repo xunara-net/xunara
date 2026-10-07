@@ -11,6 +11,7 @@ import (
 
 	"github.com/xunara/xunara/control"
 	"github.com/xunara/xunara/identity"
+	"github.com/xunara/xunara/webhook"
 )
 
 // This file loads the multi-tenant organization table. One xunarad process can
@@ -43,7 +44,17 @@ type orgConfig struct {
 	CertDomains         []string            `json:"cert_domains"`
 	DNS                 *orgDNSConfig       `json:"dns"`
 	OIDC                *orgOIDCConfig      `json:"oidc"`
+	Webhooks            []orgWebhookConfig  `json:"webhooks"`
 	AllowLocalLogin     bool                `json:"allow_local_login"`
+}
+
+// orgWebhookConfig names one audit-event receiver. SecretEnv defaults to
+// XUNARA_WEBHOOK_SECRET.
+type orgWebhookConfig struct {
+	ID        string   `json:"id"`
+	URL       string   `json:"url"`
+	SecretEnv string   `json:"secret_env"`
+	Events    []string `json:"events"`
 }
 
 // orgDNSConfig names the public-zone writer for ACME DNS-01.
@@ -179,6 +190,24 @@ func (o orgConfig) controlConfig(logger *slog.Logger) (control.Config, error) {
 		})
 	}
 
+	var webhooks []webhook.Endpoint
+	for _, wh := range o.Webhooks {
+		secretEnv := wh.SecretEnv
+		if secretEnv == "" {
+			secretEnv = "XUNARA_WEBHOOK_SECRET"
+		}
+		secret := os.Getenv(secretEnv)
+		if secret == "" {
+			return control.Config{}, fmt.Errorf("webhook %q: environment variable %s is empty", wh.ID, secretEnv)
+		}
+		webhooks = append(webhooks, webhook.Endpoint{
+			ID:     wh.ID,
+			URL:    wh.URL,
+			Secret: secret,
+			Events: wh.Events,
+		})
+	}
+
 	return control.Config{
 		ServerURL:           o.ServerURL,
 		StateDir:            o.StateDir,
@@ -193,6 +222,7 @@ func (o orgConfig) controlConfig(logger *slog.Logger) (control.Config, error) {
 		CertDomains:         o.CertDomains,
 		DNSProvider:         dnsProvider,
 		OIDCProviders:       oidcProviders,
+		Webhooks:            webhooks,
 		AllowLocalLogin:     o.AllowLocalLogin,
 		Logger:              logger,
 	}, nil
