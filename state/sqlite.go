@@ -144,6 +144,30 @@ CREATE TABLE IF NOT EXISTS node_services (
 );
 CREATE INDEX IF NOT EXISTS idx_node_services_node ON node_services(node_id);
 `,
+
+	// v11: Xunara Flux file transfers (section 25). Metadata only: the
+	// ciphertext lives in files next to the database, keyed by transfer ID.
+	// Both node references cascade, so deleting a node drops its transfers
+	// (the janitor sweeps the orphaned content files).
+	`
+CREATE TABLE IF NOT EXISTS flux_transfers (
+	id             TEXT    PRIMARY KEY,
+	sender_node    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+	recipient_node INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+	name           TEXT    NOT NULL,
+	size           INTEGER NOT NULL,
+	sha256         TEXT    NOT NULL,
+	state          TEXT    NOT NULL,
+	recipient_key  BLOB,
+	reason         TEXT    NOT NULL DEFAULT '',
+	created_at     INTEGER NOT NULL,
+	updated_at     INTEGER NOT NULL,
+	expires_at     INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_flux_sender ON flux_transfers(sender_node, state);
+CREATE INDEX IF NOT EXISTS idx_flux_recipient ON flux_transfers(recipient_node, state);
+CREATE INDEX IF NOT EXISTS idx_flux_state ON flux_transfers(state, updated_at);
+`,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.

@@ -45,6 +45,9 @@ type MemoryStore struct {
 	// services are keyed by name because names are unique per organization.
 	services map[string]Service
 
+	// flux holds Xunara Flux transfer metadata, keyed by transfer ID.
+	flux map[string]FluxTransfer
+
 	tka TKAMeta
 
 	// configRevision counts out-of-band configuration changes.
@@ -65,6 +68,7 @@ func NewMemoryStore() *MemoryStore {
 		dns:         make(map[uint64]DNSRecord),
 		deviceAttrs: make(map[NodeID]map[string]any),
 		services:    make(map[string]Service),
+		flux:        make(map[string]FluxTransfer),
 		byNode:      make(map[key.NodePublic]NodeID),
 		byStab:      make(map[string]NodeID),
 		byMach:      make(map[key.MachinePublic][]NodeID),
@@ -212,6 +216,11 @@ func (s *MemoryStore) DeleteNode(id NodeID) error {
 	for name, svc := range s.services {
 		if svc.NodeID == id {
 			delete(s.services, name)
+		}
+	}
+	for transferID, transfer := range s.flux {
+		if transfer.SenderNode == id || transfer.RecipientNode == id {
+			delete(s.flux, transferID)
 		}
 	}
 	s.byMach[n.MachineKey] = removeID(s.byMach[n.MachineKey], id)

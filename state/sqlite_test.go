@@ -285,6 +285,51 @@ func TestSQLiteMigratesV9ToV10(t *testing.T) {
 	}
 }
 
+// TestSQLiteMigratesV10ToV11 simulates a database written before Xunara Flux
+// existed: reopening it must create the transfer table (v11) and keep the node
+// rows readable.
+func TestSQLiteMigratesV10ToV11(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	ctx := context.Background()
+	first := openTestSQLite(t, path)
+	sender := Node{Hostname: "old-sender", NodeKey: key.NewNode().Public()}
+	recipient := Node{Hostname: "old-recipient", NodeKey: key.NewNode().Public()}
+	for _, n := range []*Node{&sender, &recipient} {
+		if err := first.CreateNode(n); err != nil {
+			t.Fatalf("CreateNode: %v", err)
+		}
+	}
+	if _, err := first.db.ExecContext(ctx, "DROP TABLE flux_transfers"); err != nil {
+		t.Fatalf("dropping flux_transfers: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "PRAGMA user_version = 10"); err != nil {
+		t.Fatalf("downgrading schema version: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second := openTestSQLite(t, path)
+	if _, ok := second.GetNodeByNodeKey(sender.NodeKey); !ok {
+		t.Fatal("node did not survive the v10 -> v11 migration")
+	}
+	transfer := FluxTransfer{
+		SenderNode:    sender.ID,
+		RecipientNode: recipient.ID,
+		Name:          "old.txt",
+		Size:          4,
+		SHA256:        "00",
+		ExpiresAt:     time.Now().Add(time.Hour),
+	}
+	if err := second.CreateFluxTransfer(&transfer, FluxQuotas{}); err != nil {
+		t.Fatalf("CreateFluxTransfer after migration: %v", err)
+	}
+	if got, ok := second.GetFluxTransfer(transfer.ID); !ok || got.State != FluxPending {
+		t.Errorf("transfer after migration = %+v, %v", got, ok)
+	}
+}
+
 func TestSQLiteStoreConcurrentAccess(t *testing.T) {
 	s := openTestSQLite(t, filepath.Join(t.TempDir(), "state.db"))
 

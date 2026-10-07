@@ -22,6 +22,7 @@ type Store interface {
 	TKAStore
 	DeviceAttrStore
 	ServiceStore
+	FluxStore
 
 	// GetNodeByID returns the node with the given server-local ID.
 	GetNodeByID(id NodeID) (Node, bool)
