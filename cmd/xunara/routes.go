@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/state"
 )
 
@@ -138,6 +139,7 @@ func runRoutesApprove(args []string, approve bool) {
 	}
 
 	approved := slices.Clone(node.ApprovedRoutes)
+	before := slices.Clone(approved)
 	if *all {
 		if approve {
 			approved = node.AnnouncedRoutes()
@@ -166,6 +168,18 @@ func runRoutesApprove(args []string, approve bool) {
 	}
 	if err := store.BumpConfigRevision(); err != nil {
 		fatal("bumping configuration revision", err)
+	}
+
+	nodeRefAudit := "node:" + node.StableID
+	for _, r := range approved {
+		if !slices.Contains(before, r) {
+			appendAudit(store, identity.AuditRouteApproved, nodeRefAudit, r.String())
+		}
+	}
+	for _, r := range before {
+		if !slices.Contains(approved, r) {
+			appendAudit(store, identity.AuditRouteUnapproved, nodeRefAudit, r.String())
+		}
 	}
 
 	for _, r := range approved {

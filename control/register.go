@@ -14,6 +14,7 @@ import (
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 
+	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/state"
 )
 
@@ -86,6 +87,7 @@ func (s *Server) handleRegister(ctx context.Context, req tailcfg.RegisterRequest
 			if err := s.store.DeleteNode(node.ID); err != nil {
 				return nil, fmt.Errorf("deleting logged-out node: %w", err)
 			}
+			s.audit(nodeActor(node), identity.AuditNodeDeleted, nodeTarget(node), "client logout")
 		}
 		return &tailcfg.RegisterResponse{}, nil
 	}
@@ -171,10 +173,18 @@ func (s *Server) registerWithAuthKey(req tailcfg.RegisterRequest, machineKey key
 		s.log.Warn("marking pre-auth key used", "key_id", preauth.ID, "err", err)
 	}
 
+	s.audit(fmt.Sprintf("preauthkey:%d", preauth.ID), identity.AuditNodeRegistered, nodeTarget(node),
+		"authorized with a pre-auth key")
 	s.notifyWatchers()
 
 	return s.nodeToRegisterResponse(node), nil
 }
+
+// nodeActor names a node as an audit actor for machine-initiated events.
+func nodeActor(n state.Node) string { return "node:" + n.StableID }
+
+// nodeTarget names a node as an audit target.
+func nodeTarget(n state.Node) string { return "node:" + n.StableID }
 
 // nodeToRegisterResponse builds an authorized registration response for a node.
 func (s *Server) nodeToRegisterResponse(n state.Node) *tailcfg.RegisterResponse {
@@ -283,6 +293,14 @@ func (s *Server) ApproveRegistration(authID string) error {
 
 	if err := s.store.CreateNode(&node); err != nil && !errors.Is(err, state.ErrNodeKeyExists) {
 		return fmt.Errorf("creating node: %w", err)
+	}
+
+	if stored, ok := s.store.GetNodeByNodeKey(pr.req.NodeKey); ok {
+		// The actor is the operator approving the registration. Until the
+		// admin API lands this seam is called directly by tests, so the
+		// operator has no identity yet.
+		s.audit("admin", identity.AuditNodeApproved, nodeTarget(stored),
+			"approved an interactive registration")
 	}
 
 	s.mu.Lock()

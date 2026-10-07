@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"tailscale.com/tailcfg"
+
+	"github.com/xunara/xunara/identity"
 )
 
 // writePolicy writes an ACL document and returns its path.
@@ -98,6 +100,10 @@ func TestPolicyReloadIsPushed(t *testing.T) {
 	}
 	if len(rules) != 0 {
 		t.Errorf("rules = %+v, want none after the policy was emptied", rules)
+	}
+
+	if _, ok := findAudit(t, s, identity.AuditPolicyReloaded); !ok {
+		t.Errorf("audit log has no %s event: %+v", identity.AuditPolicyReloaded, auditEvents(t, s))
 	}
 }
 

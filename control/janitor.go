@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/state"
 )
 
@@ -53,6 +54,8 @@ func (s *Server) ReapEphemeral(now time.Time) int {
 			continue
 		}
 		s.log.Info("reaped ephemeral node", "node_id", int(n.ID), "stable_id", n.StableID)
+		s.audit("system", identity.AuditNodeReaped, nodeTarget(n),
+			"deleted an ephemeral node that stayed offline past the inactivity timeout")
 		reaped++
 	}
 

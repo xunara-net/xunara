@@ -7,8 +7,8 @@ import (
 
 	"tailscale.com/tailcfg"
 
+	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/policy"
-	"github.com/xunara/xunara/state"
 )
 
 // policyWatchInterval is how often the server checks the policy file for
@@ -33,7 +33,7 @@ func (s *Server) loadPolicy() error {
 
 	engine, err := policy.NewEngine(doc, policy.Options{
 		Domain:    s.cfg.Domain,
-		LoginName: userLoginName,
+		LoginName: s.userLoginName,
 	})
 	if err != nil {
 		return err
@@ -77,6 +77,8 @@ func (s *Server) runPolicyWatcher(ctx context.Context) {
 					"path", s.cfg.PolicyPath, "err", err)
 				continue
 			}
+			s.audit("system", identity.AuditPolicyReloaded, "policy:"+s.cfg.PolicyPath,
+				"reloaded after the file changed on disk")
 			s.notifyWatchers()
 		}
 	}
@@ -94,8 +96,9 @@ func policyModTime(path string) time.Time {
 
 // userLoginName maps a user to the login name ACL selectors are written with.
 //
-// Until the identity milestone lands every node belongs to a single local
-// profile, so this is the profile's login name.
-func userLoginName(id tailcfg.UserID) string {
-	return state.DefaultUserProfile(id).LoginName
+// It reads the trust plane so that renaming a user also renames what selectors
+// like "user:alice@example.com" match, and falls back to the default profile
+// for users the identity store does not know.
+func (s *Server) userLoginName(id tailcfg.UserID) string {
+	return s.UserProfile(id).LoginName
 }

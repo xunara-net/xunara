@@ -17,6 +17,7 @@ import (
 
 	"tailscale.com/tailcfg"
 
+	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/state"
 )
 
@@ -35,6 +36,10 @@ func main() {
 		runDNS(os.Args[2:])
 	case "policy":
 		runPolicy(os.Args[2:])
+	case "user":
+		runUser(os.Args[2:])
+	case "audit":
+		runAudit(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -57,6 +62,9 @@ Commands:
   dns list             List MagicDNS records published through set-dns
   dns delete           Delete a MagicDNS record by ID (or -all)
   policy check         Validate an ACL policy document and run its tests
+  user list            List users in the trust plane
+  user update          Change a user's login name, display name or email
+  audit list           Show the control plane audit log
 
 Run "xunara <command> -h" for command options.
 `)
@@ -115,6 +123,9 @@ func runCreate(args []string) {
 		fatal("storing key", err)
 	}
 
+	appendAudit(store, identity.AuditPreAuthKeyCreated, fmt.Sprintf("preauthkey:%d", key.ID),
+		fmt.Sprintf("user=%d reusable=%t ephemeral=%t expiry=%s",
+			key.UserID, key.Reusable, key.Ephemeral, formatTime(key.Expiry)))
 	fmt.Println(key.Key)
 }
 
@@ -153,8 +164,19 @@ func runDelete(args []string) {
 	store := openStore(*stateDir)
 	defer store.Close()
 
+	var keyID uint64
+	for _, k := range store.ListPreAuthKeys() {
+		if k.Key == fs.Arg(0) {
+			keyID = k.ID
+			break
+		}
+	}
 	if err := store.DeletePreAuthKey(fs.Arg(0)); err != nil {
 		fatal("deleting key", err)
+	}
+	if keyID != 0 {
+		appendAudit(store, identity.AuditPreAuthKeyDeleted, fmt.Sprintf("preauthkey:%d", keyID),
+			"key deleted")
 	}
 }
 
@@ -171,6 +193,29 @@ func openStore(stateDir string) *state.SQLiteStore {
 		fatal("opening state", err)
 	}
 	return store
+}
+
+// openIdentity opens the trust plane on the same database as the state store.
+func openIdentity(store *state.SQLiteStore) *identity.SQLiteStore {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	s, err := identity.NewSQLiteStore(ctx, store.DB())
+	if err != nil {
+		fatal("opening identity store", err)
+	}
+	return s
+}
+
+// appendAudit records an administrative CLI action.
+//
+// A failed audit write is reported but does not fail the command: the action
+// itself has already happened, and lying about its success would be worse.
+func appendAudit(store *state.SQLiteStore, action, target, detail string) {
+	event := identity.AuditEvent{Actor: "cli", Action: action, Target: target, Detail: detail}
+	if err := openIdentity(store).AppendAudit(&event); err != nil {
+		fmt.Fprintf(os.Stderr, "xunara: warning: writing audit event %s: %v\n", action, err)
+	}
 }
 
 func formatTime(t time.Time) string {

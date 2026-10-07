@@ -10,6 +10,7 @@ import (
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/dnstype"
 
+	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/state"
 )
 
@@ -120,6 +121,12 @@ func (ns *noiseServer) handleSetDNS(w http.ResponseWriter, req *http.Request) {
 		"name", record.Name,
 		"type", record.Type,
 		"record_id", record.ID)
+
+	// The record value is not copied into the audit log: a TXT record may
+	// carry an ACME challenge secret.
+	ns.server.audit(nodeActor(node), identity.AuditDNSRecordSet,
+		fmt.Sprintf("dns:%s/%s", record.Name, record.Type),
+		fmt.Sprintf("published record %d", record.ID))
 
 	// The new record has to reach every connected client, not just this one.
 	ns.server.notifyWatchers()

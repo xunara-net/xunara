@@ -44,6 +44,10 @@ type Config struct {
 	// every client through MagicDNS.
 	ExtraRecords []state.DNSRecord
 
+	// UserProfile describes a user to clients. A nil function falls back to the
+	// single-user default profile.
+	UserProfile func(id tailcfg.UserID) tailcfg.UserProfile
+
 	// FilterFor returns the packet filter a node should receive. A nil
 	// function means the tailnet has no policy document, which allows
 	// everything (the official default for a tailnet without a policy).
@@ -68,7 +72,7 @@ func Full(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc, ca
 		Domain:       cfg.Domain,
 		DNSConfig:    DNSConfig(cfg),
 		DERPMap:      cfg.DERPMap,
-		UserProfiles: userProfiles(self, nodes),
+		UserProfiles: userProfiles(self, nodes, cfg),
 	}
 	SetPacketFilters(resp, capVer, packetFilterFor(cfg, self))
 	return resp
@@ -83,7 +87,7 @@ func Update(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc) 
 	return &tailcfg.MapResponse{
 		Node:         Node(self, true, online, routes, cfg),
 		Peers:        peerNodes(self, nodes, online, routes, cfg),
-		UserProfiles: userProfiles(self, nodes),
+		UserProfiles: userProfiles(self, nodes, cfg),
 	}
 }
 
@@ -187,16 +191,21 @@ func peerNodes(self state.Node, nodes []state.Node, online OnlineFunc, routes Ro
 
 // userProfiles builds the profiles for the requesting node and its peers,
 // sorted by user ID as the wire requires.
-func userProfiles(self state.Node, nodes []state.Node) []tailcfg.UserProfile {
+func userProfiles(self state.Node, nodes []state.Node, cfg Config) []tailcfg.UserProfile {
 	seen := make(map[tailcfg.UserID]bool)
 	out := make([]tailcfg.UserProfile, 0, len(nodes)+1)
+
+	profile := cfg.UserProfile
+	if profile == nil {
+		profile = state.DefaultUserProfile
+	}
 
 	add := func(id tailcfg.UserID) {
 		if seen[id] {
 			return
 		}
 		seen[id] = true
-		out = append(out, state.DefaultUserProfile(id))
+		out = append(out, profile(id))
 	}
 
 	add(self.UserID)

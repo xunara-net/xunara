@@ -8,14 +8,21 @@ import (
 
 	"tailscale.com/tailcfg"
 
+	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/policy"
 	"github.com/xunara/xunara/state"
 )
 
 // userLoginName maps a user to the login name ACL selectors use. It mirrors the
-// control plane's mapping until the identity milestone lands.
-func userLoginName(id tailcfg.UserID) string {
-	return state.DefaultUserProfile(id).LoginName
+// control plane's mapping: the trust plane when it knows the user, the default
+// profile otherwise.
+func userLoginName(users identity.UserStore) func(tailcfg.UserID) string {
+	return func(id tailcfg.UserID) string {
+		if u, ok := users.GetUser(id); ok {
+			return u.LoginName
+		}
+		return state.DefaultUserProfile(id).LoginName
+	}
 }
 
 // runPolicy implements "xunara policy": validating an ACL document and running
@@ -55,9 +62,12 @@ func runPolicyCheck(args []string) {
 		fatal("parsing policy", err)
 	}
 
+	store := openStore(*stateDir)
+	defer store.Close()
+
 	engine, err := policy.NewEngine(doc, policy.Options{
 		Domain:    *domain,
-		LoginName: userLoginName,
+		LoginName: userLoginName(openIdentity(store)),
 	})
 	if err != nil {
 		fatal("compiling policy", err)
@@ -76,9 +86,6 @@ func runPolicyCheck(args []string) {
 		fmt.Println("ok")
 		return
 	}
-
-	store := openStore(*stateDir)
-	defer store.Close()
 
 	nodes := store.ListNodes()
 	if len(nodes) == 0 {

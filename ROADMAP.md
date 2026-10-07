@@ -191,13 +191,31 @@ reference/{go-oidc,oauth2,dex,webauthn}
 - 测试：`control/janitor_test.go`（过期应用、只可缩短、默认不过期、回收与在线保护）、
   `control/mapper/mapper_test.go::TestNodeMarksExpiredKeys`。
 
-待办（M3 剩余）：
+已完成（M3 剩余 / M4a Identity 基础层）：
 
-- 用户表与多用户（当前锚定 `DefaultUserID`）。
-- 审计记录（注册/审批/回收事件落库）。
+- `identity/` 包与 `User` / `ExternalIdentity` / `AuditEvent` 模型（`identity/identity.go`）。
+- SQLite 信任面存储（`identity/sqlite*.go`）：`users`（login_name 大小写不敏感唯一）、
+  `external_identities`（主键 `(provider_id, subject)`，禁止改绑他人）、`audit_events`；
+  迁移独立于 state 的 `PRAGMA user_version`，使用 `schema_migrations(module, version)` 共用同一数据库。
+- 内置本地用户：`identity.EnsureLocalUser`（首个用户 ID=1，同时登记 `(local, local)` 外部身份）。
+- 控制面接线：`Server.Identity()`、`Server.UserProfile()`（netmap `UserProfiles` 来自信任面，
+  未知用户回落默认 profile）、ACL `LoginName` 解析也走信任面。
+- 审计落库：`user.created`（播种）、`node.registered`（PAK）、`node.approved`（交互审批）、
+  `node.deleted`（logout）、`node.reaped`（ephemeral）、`dns.record_set`、`policy.reloaded`；
+  CLI 侧 `route.approved/unapproved`、`dns.record_deleted`、`preauthkey.created/deleted`、`user.updated`。
+  审计 detail 不复制 secret（PAK 明文、DNS TXT 值、OAuth token 等）。
+- CLI：`xunara user list|update`、`xunara audit list [-limit N]`。
+- 测试：`identity/sqlite_test.go`（CRUD、大小写、唯一键与改绑拒绝、幂等播种、审计顺序/limit）、
+  `control/identity_test.go`（播种、用户资料下发到 netmap）、`control/audit_test.go`
+  （注册/审批/登出/回收/set-dns 审计）、`policy` 热重载审计断言。
+
+待办（M4a 剩余）：
+
+- 节点归属多用户（`RegisterRequest` 的 auth 归属与 tagged node）。
 
 ## M4 — Identity & Login（Trust Plane）
 
+- M4a 已完成：见 M3 段落的「Identity 基础层」。
 - `IdentityProvider` 接口 + Provider Registry（本地 / Generic OIDC / WebAuthn）。
 - `AuthTransaction` / `Session` / `DeviceAuthorization` **三者分离**（见 `AGENTS.md` §10）。
 - External Identity 唯一键 `(provider_id, subject)`，Email 仅属性。

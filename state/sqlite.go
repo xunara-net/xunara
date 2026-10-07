@@ -129,6 +129,13 @@ func OpenSQLite(ctx context.Context, path string) (*SQLiteStore, error) {
 // Close closes the underlying database.
 func (s *SQLiteStore) Close() error { return s.db.Close() }
 
+// DB returns the underlying database handle.
+//
+// It exists so that other modules keeping their tables in the same file (the
+// identity store) share one connection pool: SQLite allows a single writer, so
+// one pool per process is the configuration that serialises cleanly.
+func (s *SQLiteStore) DB() *sql.DB { return s.db }
+
 func (s *SQLiteStore) migrate(ctx context.Context) error {
 	var version int
 	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {

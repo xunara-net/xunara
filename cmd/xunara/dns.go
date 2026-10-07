@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"text/tabwriter"
 	"time"
+
+	"github.com/xunara/xunara/identity"
+	"github.com/xunara/xunara/state"
 )
 
 // runDNS implements "xunara dns": inspecting and pruning the MagicDNS records
@@ -64,6 +67,8 @@ func runDNSDelete(args []string) {
 			if err := store.DeleteDNSRecord(r.ID); err != nil {
 				fatal("deleting DNS record", err)
 			}
+			appendAudit(store, identity.AuditDNSRecordDeleted,
+				fmt.Sprintf("dns:%s/%s", r.Name, r.Type), fmt.Sprintf("deleted record %d", r.ID))
 		}
 	} else {
 		if fs.NArg() != 1 {
@@ -74,8 +79,19 @@ func runDNSDelete(args []string) {
 		if err != nil {
 			fatal("parsing record ID", err)
 		}
+		var record *state.DNSRecord
+		for _, r := range store.ListDNSRecords() {
+			if r.ID == id {
+				record = &r
+				break
+			}
+		}
 		if err := store.DeleteDNSRecord(id); err != nil {
 			fatal("deleting DNS record", err)
+		}
+		if record != nil {
+			appendAudit(store, identity.AuditDNSRecordDeleted,
+				fmt.Sprintf("dns:%s/%s", record.Name, record.Type), fmt.Sprintf("deleted record %d", record.ID))
 		}
 	}
 

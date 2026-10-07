@@ -198,6 +198,7 @@ func (s *Server) mapperConfig() mapper.Config {
 		ExtraRecords: s.store.ListDNSRecords(),
 		DERPMap:      s.cfg.DERPMap,
 		FilterFor:    s.packetFilterFor,
+		UserProfile:  s.UserProfile,
 	}
 }
 

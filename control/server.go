@@ -20,6 +20,7 @@ import (
 	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"
 
+	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/policy"
 	"github.com/xunara/xunara/state"
 )
@@ -79,6 +80,10 @@ type Server struct {
 	store    state.Store
 	closer   io.Closer
 
+	// identity is the trust plane: users, external identities and the audit
+	// log. It shares the control plane's database.
+	identity identity.Store
+
 	// resolvers and dnsRoutes are the parsed forms of cfg.Nameservers and
 	// cfg.DNSRoutes; parsing happens once, at construction, so a bad
 	// configuration fails fast instead of on every netmap build.
@@ -137,6 +142,12 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 
+	identityStore, err := newIdentityStore(store)
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+
 	resolvers, err := parseResolvers(cfg.Nameservers)
 	if err != nil {
 		store.Close()
@@ -154,6 +165,7 @@ func New(cfg Config) (*Server, error) {
 		noiseKey:      noiseKey,
 		store:         store,
 		closer:        store,
+		identity:      identityStore,
 		resolvers:     resolvers,
 		dnsRoutes:     dnsRoutes,
 		pending:       make(map[string]*pendingRegistration),
@@ -252,6 +264,31 @@ func (s *Server) notifyWatchers() {
 
 // Store returns the tailnet store backing the server.
 func (s *Server) Store() state.Store { return s.store }
+
+// Identity returns the trust plane backing the server.
+func (s *Server) Identity() identity.Store { return s.identity }
+
+// UserProfile describes a user to clients. Unknown users fall back to the
+// single-user default so that a netmap can always be built.
+func (s *Server) UserProfile(id tailcfg.UserID) tailcfg.UserProfile {
+	if u, ok := s.identity.GetUser(id); ok {
+		return tailcfg.UserProfile{
+			ID:          u.ID,
+			LoginName:   u.LoginName,
+			DisplayName: u.DisplayName,
+		}
+	}
+	return state.DefaultUserProfile(id)
+}
+
+// audit records an audit event, logging (but not failing on) write errors: the
+// audit log must never take the control plane down.
+func (s *Server) audit(actor, action, target, detail string) {
+	event := identity.AuditEvent{Actor: actor, Action: action, Target: target, Detail: detail}
+	if err := s.identity.AppendAudit(&event); err != nil {
+		s.log.Error("appending audit event", "action", action, "target", target, "err", err)
+	}
+}
 
 // NoisePublicKey returns the server's TS2021 Noise public key.
 func (s *Server) NoisePublicKey() key.MachinePublic { return s.noiseKey.Public() }
