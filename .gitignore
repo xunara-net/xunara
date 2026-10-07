@@ -1,0 +1,15 @@
+# Upstream reference checkouts: large (hundreds of MB) and re-cloneable with
+# reference/clone.sh. They are not part of the project source.
+/reference/
+
+# Build output
+/bin/
+/xunarad
+
+# Local server state (holds the Noise private key)
+/data/
+*.key
+
+# Editor / OS noise
+.DS_Store
+*.swp
