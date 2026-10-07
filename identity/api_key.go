@@ -85,6 +85,10 @@ type APIKeyStore interface {
 	// revoked keys all return ErrAPIKeyNotFound.
 	GetAPIKeyByToken(token string) (APIKey, error)
 
+	// GetAPIKeyByID returns a key by its public ID, including expired and
+	// revoked ones, for administration.
+	GetAPIKeyByID(id string) (APIKey, bool)
+
 	// ListAPIKeys returns every key, newest first.
 	ListAPIKeys() []APIKey
 

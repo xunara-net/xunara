@@ -147,6 +147,15 @@ CREATE TABLE IF NOT EXISTS ssh_check_auth (
 	PRIMARY KEY (src_node_id, dst_node_id)
 );
 `,
+
+	// v5: platform roles. A human user's role gates the console and the
+	// platform API; it never changes what an official client may do on the
+	// wire. Existing users are promoted to owner because, before roles
+	// existed, every signed-in user could already do everything.
+	`
+ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'member';
+UPDATE users SET role = 'owner';
+`,
 }
 
 // SQLiteStore is a durable [Store] sharing the control plane's database.
@@ -217,12 +226,16 @@ func (s *SQLiteStore) migrate(ctx context.Context) error {
 	return nil
 }
 
-const userColumns = "id, login_name, display_name, email, created_at, updated_at"
+const userColumns = "id, login_name, display_name, email, role, created_at, updated_at"
 
 // CreateUser implements [UserStore].
 func (s *SQLiteStore) CreateUser(u *User) error {
 	if u == nil || strings.TrimSpace(u.LoginName) == "" {
 		return fmt.Errorf("identity: login name is required")
+	}
+
+	if !u.Role.Valid() {
+		u.Role = RoleMember
 	}
 
 	now := time.Now().UTC()
@@ -232,8 +245,8 @@ func (s *SQLiteStore) CreateUser(u *User) error {
 	u.UpdatedAt = now
 
 	res, err := s.db.ExecContext(context.Background(),
-		"INSERT INTO users (login_name, display_name, email, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-		u.LoginName, u.DisplayName, u.Email, u.CreatedAt.UnixNano(), u.UpdatedAt.UnixNano())
+		"INSERT INTO users (login_name, display_name, email, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+		u.LoginName, u.DisplayName, u.Email, string(u.Role), u.CreatedAt.UnixNano(), u.UpdatedAt.UnixNano())
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrLoginNameTaken
@@ -295,10 +308,14 @@ func (s *SQLiteStore) ListUsers() []User {
 func (s *SQLiteStore) UpdateUser(u User) error {
 	u.UpdatedAt = time.Now().UTC()
 
+	if !u.Role.Valid() {
+		u.Role = RoleMember
+	}
+
 	res, err := s.db.ExecContext(context.Background(),
-		`UPDATE users SET login_name = ?, display_name = ?, email = ?, created_at = ?, updated_at = ?
+		`UPDATE users SET login_name = ?, display_name = ?, email = ?, role = ?, created_at = ?, updated_at = ?
 		 WHERE id = ?`,
-		u.LoginName, u.DisplayName, u.Email, u.CreatedAt.UnixNano(), u.UpdatedAt.UnixNano(), int64(u.ID))
+		u.LoginName, u.DisplayName, u.Email, string(u.Role), u.CreatedAt.UnixNano(), u.UpdatedAt.UnixNano(), int64(u.ID))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrLoginNameTaken
@@ -355,10 +372,11 @@ func scanUser(sc scanner) (User, error) {
 		login     string
 		display   string
 		email     string
+		role      string
 		createdAt int64
 		updatedAt int64
 	)
-	if err := sc.Scan(&id, &login, &display, &email, &createdAt, &updatedAt); err != nil {
+	if err := sc.Scan(&id, &login, &display, &email, &role, &createdAt, &updatedAt); err != nil {
 		return User{}, err
 	}
 	return User{
@@ -366,6 +384,7 @@ func scanUser(sc scanner) (User, error) {
 		LoginName:   login,
 		DisplayName: display,
 		Email:       email,
+		Role:        Role(role),
 		CreatedAt:   time.Unix(0, createdAt).UTC(),
 		UpdatedAt:   time.Unix(0, updatedAt).UTC(),
 	}, nil

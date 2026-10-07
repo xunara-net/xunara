@@ -57,6 +57,7 @@ func usage() {
 	fmt.Fprint(os.Stderr, `Usage: xunara <command> [options]
 
 Commands:
+  user role            Change a user's platform role
   preauthkey create    Create a pre-authentication key
   preauthkey list      List pre-authentication keys
   preauthkey delete    Delete a pre-authentication key

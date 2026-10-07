@@ -301,6 +301,7 @@ type apiUser struct {
 	LoginName   string                `json:"loginName"`
 	DisplayName string                `json:"displayName"`
 	Email       string                `json:"email,omitempty"`
+	Role        string                `json:"role"`
 	CreatedAt   time.Time             `json:"createdAt"`
 	Identities  []apiExternalIdentity `json:"identities"`
 }
@@ -313,11 +314,16 @@ type apiExternalIdentity struct {
 }
 
 func (s *Server) apiUserView(u identity.User) apiUser {
+	role := u.Role
+	if !role.Valid() {
+		role = identity.RoleMember
+	}
 	view := apiUser{
 		ID:          uint64(u.ID),
 		LoginName:   u.LoginName,
 		DisplayName: u.DisplayName,
 		Email:       u.Email,
+		Role:        role.String(),
 		CreatedAt:   u.CreatedAt,
 		Identities:  []apiExternalIdentity{},
 	}
@@ -384,8 +390,14 @@ func (s *Server) handleAPIUpdateUser(w http.ResponseWriter, r *http.Request) {
 		LoginName   *string `json:"loginName"`
 		DisplayName *string `json:"displayName"`
 		Email       *string `json:"email"`
+		Role        *string `json:"role"`
 	}
 	if !decodeAPIBody(w, r, &body) {
+		return
+	}
+
+	if body.Role != nil && !principal.Role.IsOwner() {
+		writeAPIError(w, http.StatusForbidden, "owner role required to change roles")
 		return
 	}
 
@@ -406,6 +418,23 @@ func (s *Server) handleAPIUpdateUser(w http.ResponseWriter, r *http.Request) {
 		user.Email = *body.Email
 		changed = append(changed, "email")
 	}
+	roleChanged := false
+	if body.Role != nil {
+		role, err := identity.ParseRole(*body.Role)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if role != user.Role {
+			if user.Role.IsOwner() && role != identity.RoleOwner && !s.otherOwnerExists(user.ID) {
+				writeAPIError(w, http.StatusConflict, "cannot demote the last owner")
+				return
+			}
+			user.Role = role
+			roleChanged = true
+			changed = append(changed, "role")
+		}
+	}
 	if len(changed) == 0 {
 		writeJSON(w, http.StatusOK, s.apiUserView(user))
 		return
@@ -424,7 +453,11 @@ func (s *Server) handleAPIUpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.audit(principal.actor(), identity.AuditUserUpdated, fmt.Sprintf("user:%d", user.ID),
+	action := identity.AuditUserUpdated
+	if roleChanged {
+		action = identity.AuditUserRoleChanged
+	}
+	s.audit(principal.actor(), action, fmt.Sprintf("user:%d", user.ID),
 		"updated "+strings.Join(changed, ", "))
 	writeJSON(w, http.StatusOK, s.apiUserView(user))
 }
@@ -827,14 +860,25 @@ func (s *Server) handleAPICreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleAPIRevokeAPIKey implements DELETE /api/v1/api-keys/{id}.
+// handleAPIRevokeAPIKey implements DELETE /api/v1/api-keys/{id}. A principal
+// may always revoke its own keys; revoking someone else's needs a role that
+// may write.
 func (s *Server) handleAPIRevokeAPIKey(w http.ResponseWriter, r *http.Request) {
-	principal, ok := s.requireScope(w, r, identity.ScopeWrite)
+	principal, ok := s.requireSelfScope(w, r, identity.ScopeWrite)
 	if !ok {
 		return
 	}
 
 	id := chi.URLParam(r, "id")
+	key, ok := s.identity.GetAPIKeyByID(id)
+	if !ok {
+		writeAPIError(w, http.StatusNotFound, "key not found")
+		return
+	}
+	if key.UserID != principal.UserID && !principal.Role.CanWrite() {
+		writeAPIError(w, http.StatusForbidden, "cannot revoke another user's key")
+		return
+	}
 	if err := s.identity.RevokeAPIKey(id); err != nil {
 		s.log.Error("revoking API key", "key", id, "err", err)
 		writeAPIError(w, http.StatusInternalServerError, "could not revoke key")
@@ -858,9 +902,10 @@ func (s *Server) handleAPISessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
-// handleAPIRevokeSession implements DELETE /api/v1/sessions/{id}.
+// handleAPIRevokeSession implements DELETE /api/v1/sessions/{id}. Users may
+// always sign themselves out, whatever their role.
 func (s *Server) handleAPIRevokeSession(w http.ResponseWriter, r *http.Request) {
-	principal, ok := s.requireScope(w, r, identity.ScopeWrite)
+	principal, ok := s.requireSelfScope(w, r, identity.ScopeWrite)
 	if !ok {
 		return
 	}

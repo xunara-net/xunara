@@ -24,7 +24,10 @@ type User struct {
 	LoginName   string
 	DisplayName string
 	// Email is an attribute, never an identity key (AGENTS.md section 6).
-	Email     string
+	Email string
+	// Role gates the platform layer (console, API, CLI). The zero value is
+	// treated as [RoleMember] on write and reported as-is on read.
+	Role      Role
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
@@ -89,6 +92,9 @@ func EnsureLocalUser(store Store) (User, bool, error) {
 	u := User{
 		LoginName:   LocalLoginName,
 		DisplayName: LocalDisplayName,
+		// The built-in user bootstraps the tailnet and owns it: someone must
+		// be able to grant the first OIDC user a role.
+		Role: RoleOwner,
 	}
 	if err := store.CreateUser(&u); err != nil {
 		return User{}, false, err
@@ -126,6 +132,7 @@ type AuditEvent struct {
 const (
 	AuditUserCreated       = "user.created"
 	AuditUserUpdated       = "user.updated"
+	AuditUserRoleChanged   = "user.role_changed"
 	AuditNodeRegistered    = "node.registered"
 	AuditNodeApproved      = "node.approved"
 	AuditNodeReaped        = "node.reaped"

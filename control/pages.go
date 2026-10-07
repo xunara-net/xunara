@@ -61,6 +61,7 @@ below; it does not make the device a human identity.</p>
 <dt>Requested</dt><dd>{{.Created}}</dd>
 <dt>Signed in as</dt><dd>{{.LoginName}}</dd>
 </dl>
+{{if .CanWrite}}
 <form method="post" action="/register/{{.AuthID}}/approve">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <div class="actions">
@@ -73,6 +74,9 @@ below; it does not make the device a human identity.</p>
 <button class="deny" type="submit">Deny</button>
 </div>
 </form>
+{{else}}
+<p>Your role is read-only; ask an admin or owner to approve this device.</p>
+{{end}}
 ` + `</main></body></html>`))
 
 	decidedPageTemplate = template.Must(template.New("decided").Parse(pageHead + `
@@ -93,6 +97,7 @@ proceed; the decision is recorded in the audit log.</p>
 <dt>Expires</dt><dd>{{.Expires}}</dd>
 <dt>Deciding as</dt><dd>{{.LoginName}}</dd>
 </dl>
+{{if .CanWrite}}
 <form method="post" action="/ssh/check/{{.AuthID}}/approve">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <div class="actions">
@@ -105,6 +110,9 @@ proceed; the decision is recorded in the audit log.</p>
 <button class="deny" type="submit">Deny</button>
 </div>
 </form>
+{{else}}
+<p>Your role is read-only; ask an admin or owner to decide this connection.</p>
+{{end}}
 ` + `</main></body></html>`))
 )
 

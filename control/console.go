@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -71,27 +72,47 @@ func (s *Server) consoleRouter() http.Handler {
 	r.Get("/", s.handleConsoleOverview)
 
 	r.Get("/machines", s.handleConsoleMachines)
-	r.Post("/machines/{id}/delete", s.handleConsoleDeleteMachine)
-	r.Post("/machines/{id}/routes", s.handleConsoleMachineRoutes)
-
 	r.Get("/devices", s.handleConsoleDevices)
-	r.Post("/devices/{id}/approve", s.handleConsoleDevice(true))
-	r.Post("/devices/{id}/deny", s.handleConsoleDevice(false))
-
 	r.Get("/users", s.handleConsoleUsers)
-	r.Post("/users/{id}", s.handleConsoleUpdateUser)
-
 	r.Get("/dns", s.handleConsoleDNS)
-	r.Post("/dns/{id}/delete", s.handleConsoleDeleteDNS)
-
 	r.Get("/auth-keys", s.handleConsoleAuthKeys)
-	r.Post("/auth-keys", s.handleConsoleCreateAuthKey)
-	r.Post("/auth-keys/{id}/delete", s.handleConsoleDeleteAuthKey)
-
 	r.Get("/policy", s.handleConsolePolicy)
 	r.Get("/audit", s.handleConsoleAudit)
 
+	// Every write goes through the role guard: members may look at the
+	// tailnet, admins and owners may change it.
+	r.Group(func(r chi.Router) {
+		r.Use(s.consoleWriteAccess)
+		r.Post("/machines/{id}/delete", s.handleConsoleDeleteMachine)
+		r.Post("/machines/{id}/routes", s.handleConsoleMachineRoutes)
+		r.Post("/devices/{id}/approve", s.handleConsoleDevice(true))
+		r.Post("/devices/{id}/deny", s.handleConsoleDevice(false))
+		r.Post("/users/{id}", s.handleConsoleUpdateUser)
+		r.Post("/dns/{id}/delete", s.handleConsoleDeleteDNS)
+		r.Post("/auth-keys", s.handleConsoleCreateAuthKey)
+		r.Post("/auth-keys/{id}/delete", s.handleConsoleDeleteAuthKey)
+	})
+
 	return r
+}
+
+// consoleWriteAccess rejects console writes from read-only roles. Unauthenticated
+// requests are sent to the login page, matching the read handlers.
+func (s *Server) consoleWriteAccess(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session, ok := s.currentSession(r)
+		if !ok {
+			http.Redirect(w, r, "/login?return_to="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+			return
+		}
+		user, ok := s.identity.GetUser(session.UserID)
+		if !ok || !user.Role.CanWrite() {
+			s.renderError(w, http.StatusForbidden, "Read-only access",
+				"Your role does not allow changing the tailnet.")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // consoleSession resolves the session and adds the shared page data.
@@ -101,10 +122,17 @@ func (s *Server) consoleSession(w http.ResponseWriter, r *http.Request, nav stri
 		return identity.Session{}, nil, false
 	}
 	profile := s.UserProfile(session.UserID)
+	role := identity.RoleMember
+	if user, ok := s.identity.GetUser(session.UserID); ok && user.Role.Valid() {
+		role = user.Role
+	}
 	return session, map[string]any{
 		"Nav":       nav,
 		"Title":     consoleTitles[nav],
 		"User":      profile.LoginName,
+		"Role":      role.String(),
+		"CanWrite":  role.CanWrite(),
+		"IsOwner":   role.IsOwner(),
 		"Version":   Version,
 		"CSRF":      csrfTokenFor(token),
 		"ServerURL": s.cfg.ServerURL,
@@ -401,6 +429,31 @@ func (s *Server) handleConsoleUpdateUser(w http.ResponseWriter, r *http.Request)
 		changed = append(changed, "email")
 	}
 
+	roleChanged := false
+	if raw := strings.TrimSpace(r.PostFormValue("role")); raw != "" {
+		actor, ok := s.identity.GetUser(session.UserID)
+		if !ok || !actor.Role.IsOwner() {
+			s.renderError(w, http.StatusForbidden, "Owner role required",
+				"Only an owner may change roles.")
+			return
+		}
+		role, err := identity.ParseRole(raw)
+		if err != nil {
+			s.renderError(w, http.StatusBadRequest, "Invalid role", err.Error())
+			return
+		}
+		if role != user.Role {
+			if user.Role.IsOwner() && role != identity.RoleOwner && !s.otherOwnerExists(user.ID) {
+				s.renderError(w, http.StatusConflict, "Cannot demote the last owner",
+					"A tailnet needs at least one owner.")
+				return
+			}
+			user.Role = role
+			roleChanged = true
+			changed = append(changed, "role")
+		}
+	}
+
 	if len(changed) == 0 {
 		data["Notice"] = "No change."
 	} else if err := s.identity.UpdateUser(user); err != nil {
@@ -408,7 +461,11 @@ func (s *Server) handleConsoleUpdateUser(w http.ResponseWriter, r *http.Request)
 		s.renderError(w, http.StatusInternalServerError, "Update failed", "Please try again.")
 		return
 	} else {
-		s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditUserUpdated,
+		action := identity.AuditUserUpdated
+		if roleChanged {
+			action = identity.AuditUserRoleChanged
+		}
+		s.audit(fmt.Sprintf("user:%d", session.UserID), action,
 			fmt.Sprintf("user:%d", user.ID), "updated "+strings.Join(changed, ", ")+" through the console")
 		data["Notice"] = "User updated."
 	}

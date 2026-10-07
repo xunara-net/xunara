@@ -294,6 +294,7 @@ func (s *Server) handleSSHCheckPage(w http.ResponseWriter, req *http.Request) {
 
 	s.renderSSHCheckPage(w, map[string]any{
 		"AuthID":      authID,
+		"CanWrite":    s.userCanWrite(session.UserID),
 		"Source":      nodeLabel(src, sess.SrcNodeID),
 		"Destination": nodeLabel(dst, sess.DstNodeID),
 		"LocalUser":   sess.LocalUser,
@@ -320,6 +321,11 @@ func (s *Server) decideSSHCheck(w http.ResponseWriter, req *http.Request, verdic
 
 	session, token, ok := s.requireSession(w, req, "/ssh/check/"+authID)
 	if !ok {
+		return
+	}
+	if !s.userCanWrite(session.UserID) {
+		s.renderError(w, http.StatusForbidden, "SSH check rejected",
+			"Your role does not allow deciding SSH checks.")
 		return
 	}
 	if !checkCSRF(req, token) {

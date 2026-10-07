@@ -86,6 +86,17 @@ func (s *SQLiteStore) GetAPIKeyByToken(token string) (APIKey, error) {
 	return key, nil
 }
 
+// GetAPIKeyByID implements [APIKeyStore].
+func (s *SQLiteStore) GetAPIKeyByID(id string) (APIKey, bool) {
+	row := s.db.QueryRowContext(context.Background(),
+		"SELECT "+apiKeyColumns+" FROM api_keys WHERE id = ?", id)
+	key, err := scanAPIKey(row)
+	if err != nil {
+		return APIKey{}, false
+	}
+	return key, true
+}
+
 // ListAPIKeys implements [APIKeyStore].
 func (s *SQLiteStore) ListAPIKeys() []APIKey {
 	rows, err := s.db.QueryContext(context.Background(),

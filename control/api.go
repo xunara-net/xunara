@@ -21,6 +21,9 @@ type apiPrincipal struct {
 	Kind string // "session" or "api_key"
 
 	UserID tailcfg.UserID
+	// Role is the acting user's platform role. A service key acts for its
+	// owner's role: its scopes narrow that role, they never widen it.
+	Role   identity.Role
 	Scopes map[string]bool
 
 	Session identity.Session
@@ -54,40 +57,56 @@ func (s *Server) authenticateAPI(r *http.Request) (apiPrincipal, bool) {
 			if err != nil {
 				return apiPrincipal{}, false
 			}
+			user, ok := s.identity.GetUser(key.UserID)
+			if !ok {
+				// The owning user is gone; the key is a dangling service
+				// identity and must not authenticate.
+				return apiPrincipal{}, false
+			}
 			if err := s.identity.TouchAPIKey(key.ID, time.Now().UTC()); err != nil {
 				s.log.Warn("recording API key use", "key", key.ID, "err", err)
 			}
 			return apiPrincipal{
 				Kind:   "api_key",
 				UserID: key.UserID,
+				Role:   user.Role,
 				Scopes: scopeSet(key.Scopes),
 				APIKey: key,
 			}, true
 		}
 
 		if session, err := s.identity.GetSessionByToken(token); err == nil {
-			return sessionPrincipal(session), true
+			return s.sessionPrincipal(session)
 		}
 		return apiPrincipal{}, false
 	}
 
 	if session, ok := s.currentSession(r); ok {
-		return sessionPrincipal(session), true
+		return s.sessionPrincipal(session)
 	}
 	return apiPrincipal{}, false
 }
 
-// sessionPrincipal grants a signed-in human both scopes.
-func sessionPrincipal(session identity.Session) apiPrincipal {
+// sessionPrincipal grants a signed-in human the full scope set; the role still
+// bounds what those scopes can do.
+func (s *Server) sessionPrincipal(session identity.Session) (apiPrincipal, bool) {
+	user, ok := s.identity.GetUser(session.UserID)
+	if !ok {
+		// A session for a deleted user is not a valid principal.
+		return apiPrincipal{}, false
+	}
 	return apiPrincipal{
 		Kind:    "session",
 		UserID:  session.UserID,
+		Role:    user.Role,
 		Scopes:  map[string]bool{identity.ScopeRead: true, identity.ScopeWrite: true},
 		Session: session,
-	}
+	}, true
 }
 
-// requireScope authenticates the request and checks the scope.
+// requireScope authenticates the request and checks the scope. The write
+// scope additionally requires a role that may change tailnet state; service
+// keys inherit their owner's role.
 func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, scope string) (apiPrincipal, bool) {
 	principal, ok := s.authenticateAPI(r)
 	if !ok {
@@ -97,6 +116,40 @@ func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, scope stri
 	}
 	if !principal.Scopes[scope] {
 		writeAPIError(w, http.StatusForbidden, "missing scope: "+scope)
+		return apiPrincipal{}, false
+	}
+	if scope == identity.ScopeWrite && !principal.Role.CanWrite() {
+		writeAPIError(w, http.StatusForbidden, "role "+principal.Role.String()+" may not change the tailnet")
+		return apiPrincipal{}, false
+	}
+	return principal, true
+}
+
+// requireSelfScope authenticates the request and checks the scope without
+// consulting the role: it guards actions a principal may always take on its
+// own objects, such as revoking its own session or service key.
+func (s *Server) requireSelfScope(w http.ResponseWriter, r *http.Request, scope string) (apiPrincipal, bool) {
+	principal, ok := s.authenticateAPI(r)
+	if !ok {
+		w.Header().Set("WWW-Authenticate", `Bearer realm="xunara"`)
+		writeAPIError(w, http.StatusUnauthorized, "authentication required")
+		return apiPrincipal{}, false
+	}
+	if !principal.Scopes[scope] {
+		writeAPIError(w, http.StatusForbidden, "missing scope: "+scope)
+		return apiPrincipal{}, false
+	}
+	return principal, true
+}
+
+// requireOwner authenticates the request and requires the owner role.
+func (s *Server) requireOwner(w http.ResponseWriter, r *http.Request) (apiPrincipal, bool) {
+	principal, ok := s.requireScope(w, r, identity.ScopeWrite)
+	if !ok {
+		return apiPrincipal{}, false
+	}
+	if !principal.Role.IsOwner() {
+		writeAPIError(w, http.StatusForbidden, "owner role required")
 		return apiPrincipal{}, false
 	}
 	return principal, true

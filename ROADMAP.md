@@ -340,8 +340,27 @@ reference/{go-oidc,oauth2,dex,webauthn}
   - 测试：`control/console_test.go`（未登录重定向、8 个页面渲染、CSRF 拒绝、
     路由审批/撤回、机器删除、auth key 生命周期与一次性 secret、设备审批、
     用户编辑、策略页、审计排序）。
-  - 已知限制（待 M5c+）：尚无角色模型，任何可登录用户都能进入 console；
-    组织/多租户与 `api/v2` 未实现。
+  - 已知限制（M5c 后已解决角色部分）：组织/多租户与 `api/v2` 未实现。
+- M5c 已完成：角色模型（owner / admin / member）。
+  - `identity`：`User.Role`（迁移 v5）；此前所有用户已在做管理操作，迁移把它们
+    提升为 owner，不静默降权；`CreateUser` 默认 member；内置 local 用户是
+    owner，作为引导角色（首个 OIDC 用户用 `xunara user role` 提升）。
+    新增 `Role.CanWrite()`（admin+）与 `Role.IsOwner()`；审计
+    `user.role_changed`。
+  - `control`：`apiPrincipal.Role`；API 与 console 的写操作要求 admin+，
+    角色变更要求 owner，且拒绝把最后一个 owner 降级（409）。服务身份 API key
+    只在其 owner 的角色范围内生效（scope 只收窄、不放大）；owner 被删除后其
+    session 与 key 立即失效（401）。`session`/`api-key` 的自助吊销不受角色限制，
+    但不能吊销他人的对象。
+  - console：只读角色页面顶部提示、隐藏全部写表单；设备审批
+    `/register/{id}/approve|deny`、SSH check 审批 `/ssh/check/{id}/approve|deny`
+    也要求 admin+（此前任何登录用户皆可批准）。
+  - CLI：`xunara user role <id|login> <member|admin|owner>`（最后一个 owner
+    拒绝降级）；`xunara user list` 显示 ROLE。
+  - 测试：`identity/role_test.go`、`identity/sqlite_test.go`（默认 member、
+    local owner、迁移提升、角色往返）、`control/role_test.go`（API/console
+    角色门禁、服务 key 不放大权限、owner-only 角色变更、最后 owner 保护、
+    已删除用户会话/密钥失效、设备与 SSH check 审批门禁、自助吊销）。
 - 审批流接线（已完成）：`/register/{id}` → 登录 → 审批 → 设备授权。
 
 ## M6 — 服务与客户端

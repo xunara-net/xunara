@@ -477,6 +477,22 @@ func (s *Server) handleKey(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
+// userCanWrite reports whether a user's role may change tailnet state.
+func (s *Server) userCanWrite(userID tailcfg.UserID) bool {
+	user, ok := s.identity.GetUser(userID)
+	return ok && user.Role.CanWrite()
+}
+
+// otherOwnerExists reports whether any owner other than excludeID exists.
+func (s *Server) otherOwnerExists(excludeID tailcfg.UserID) bool {
+	for _, u := range s.identity.ListUsers() {
+		if u.ID != excludeID && u.Role.IsOwner() {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "pass"})
 }

@@ -251,3 +251,110 @@ func TestAuditAppendAndList(t *testing.T) {
 		t.Fatalf("ListAudit(2) = %+v", limited)
 	}
 }
+
+func TestCreateUserDefaultsToMember(t *testing.T) {
+	s := openTestStore(t)
+
+	u := User{LoginName: "member@example.com"}
+	if err := s.CreateUser(&u); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	got, ok := s.GetUser(u.ID)
+	if !ok {
+		t.Fatal("GetUser: not found")
+	}
+	if got.Role != RoleMember {
+		t.Errorf("Role = %q, want %q", got.Role, RoleMember)
+	}
+}
+
+func TestEnsureLocalUserIsOwner(t *testing.T) {
+	s := openTestStore(t)
+
+	u, created, err := EnsureLocalUser(s)
+	if err != nil {
+		t.Fatalf("EnsureLocalUser: %v", err)
+	}
+	if !created {
+		t.Fatal("EnsureLocalUser did not create the user")
+	}
+	if u.Role != RoleOwner {
+		t.Errorf("local user role = %q, want %q", u.Role, RoleOwner)
+	}
+
+	// Idempotent: a second call returns the same owner.
+	again, created, err := EnsureLocalUser(s)
+	if err != nil {
+		t.Fatalf("EnsureLocalUser (again): %v", err)
+	}
+	if created || again.ID != u.ID || again.Role != RoleOwner {
+		t.Errorf("second EnsureLocalUser = %+v, created=%v", again, created)
+	}
+}
+
+func TestRoleRoundTrip(t *testing.T) {
+	s := openTestStore(t)
+
+	u := User{LoginName: "admin@example.com", Role: RoleAdmin}
+	if err := s.CreateUser(&u); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if got, _ := s.GetUser(u.ID); got.Role != RoleAdmin {
+		t.Errorf("stored role = %q, want admin", got.Role)
+	}
+
+	u.Role = RoleOwner
+	if err := s.UpdateUser(u); err != nil {
+		t.Fatalf("UpdateUser: %v", err)
+	}
+	if got, _ := s.GetUser(u.ID); got.Role != RoleOwner {
+		t.Errorf("updated role = %q, want owner", got.Role)
+	}
+	if got := s.ListUsers()[0]; got.Role != RoleOwner {
+		t.Errorf("ListUsers role = %q, want owner", got.Role)
+	}
+}
+
+// TestMigrationPromotesExistingUsersToOwner simulates upgrading a database
+// written before roles existed: every user could already do everything, so the
+// migration must not silently demote them.
+func TestMigrationPromotesExistingUsersToOwner(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "old.db")+
+		"?_txlock=immediate&_pragma=busy_timeout(5000)")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	// A v1 database: the users table without a role column.
+	if _, err := db.ExecContext(ctx, `
+CREATE TABLE users (
+	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	login_name   TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+	display_name TEXT    NOT NULL DEFAULT '',
+	email        TEXT    NOT NULL DEFAULT '',
+	created_at   INTEGER NOT NULL,
+	updated_at   INTEGER NOT NULL
+);
+CREATE TABLE schema_migrations (module TEXT NOT NULL, version INTEGER NOT NULL, PRIMARY KEY (module));
+INSERT INTO schema_migrations (module, version) VALUES ('identity', 1);
+INSERT INTO users (login_name, display_name, email, created_at, updated_at)
+VALUES ('veteran@example.com', 'Veteran', '', 1, 1);
+`); err != nil {
+		t.Fatalf("building v1 schema: %v", err)
+	}
+
+	s, err := NewSQLiteStore(ctx, db)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	veteran, ok := s.GetUserByLoginName("veteran@example.com")
+	if !ok {
+		t.Fatal("pre-existing user missing after migration")
+	}
+	if veteran.Role != RoleOwner {
+		t.Errorf("pre-existing user role = %q, want owner", veteran.Role)
+	}
+}

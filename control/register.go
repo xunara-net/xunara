@@ -617,6 +617,7 @@ func (s *Server) handleRegisterPage(w http.ResponseWriter, req *http.Request) {
 
 	s.renderApprovePage(w, map[string]any{
 		"AuthID":    authID,
+		"CanWrite":  s.userCanWrite(session.UserID),
 		"Hostname":  hostname,
 		"OS":        os,
 		"Created":   da.CreatedAt.Format(time.RFC3339),
@@ -631,6 +632,11 @@ func (s *Server) handleApproveDevice(w http.ResponseWriter, req *http.Request) {
 
 	session, token, ok := s.requireSession(w, req, "/register/"+authID)
 	if !ok {
+		return
+	}
+	if !s.userCanWrite(session.UserID) {
+		s.renderError(w, http.StatusForbidden, "Approval rejected",
+			"Your role does not allow admitting devices.")
 		return
 	}
 	if !checkCSRF(req, token) {
@@ -652,6 +658,11 @@ func (s *Server) handleDenyDevice(w http.ResponseWriter, req *http.Request) {
 
 	session, token, ok := s.requireSession(w, req, "/register/"+authID)
 	if !ok {
+		return
+	}
+	if !s.userCanWrite(session.UserID) {
+		s.renderError(w, http.StatusForbidden, "Denial rejected",
+			"Your role does not allow deciding device registrations.")
 		return
 	}
 	if !checkCSRF(req, token) {

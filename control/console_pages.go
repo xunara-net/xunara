@@ -77,11 +77,12 @@ footer { text-align: center; color: #5b616e; font-size: .8rem; }
 <a href="/console/policy"{{if eq .Nav "policy"}} class="active"{{end}}>Policy</a>
 <a href="/console/audit"{{if eq .Nav "audit"}} class="active"{{end}}>Audit</a>
 </nav>
-<div class="who">{{.User}}
+<div class="who">{{.User}} <span class="tag">{{.Role}}</span>
 <form method="post" action="/logout"><button type="submit">Sign out</button></form>
 </div>
 </header>
 <main>
+{{if not .CanWrite}}<p class="notice">Your role is read-only; controls that change the tailnet are hidden.</p>{{end}}
 {{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}
 `
 
@@ -151,6 +152,7 @@ var (
 {{if .AnnouncedRoutes}}announced: {{range .AnnouncedRoutes}}<code>{{.}}</code> {{end}}{{else}}announced: none{{end}}
 </td>
 <td>
+{{if $.CanWrite}}
 <form method="post" action="/console/machines/{{.ID}}/routes">
 <input type="hidden" name="csrf" value="{{$.CSRF}}">
 <button name="action" value="approve-all" type="submit">Approve routes</button>
@@ -160,6 +162,7 @@ var (
 <input type="hidden" name="csrf" value="{{$.CSRF}}">
 <button class="danger" type="submit">Delete</button>
 </form>
+{{else}}—{{end}}
 </td>
 </tr>
 {{else}}
@@ -184,6 +187,7 @@ device a human identity.</p>
 <td>{{fmtTime .Created}}</td>
 <td>{{fmtTime .Expires}}</td>
 <td>
+{{if $.CanWrite}}
 <form method="post" action="/console/devices/{{.ID}}/approve">
 <input type="hidden" name="csrf" value="{{$.CSRF}}">
 <button type="submit">Approve</button>
@@ -192,6 +196,7 @@ device a human identity.</p>
 <input type="hidden" name="csrf" value="{{$.CSRF}}">
 <button class="danger" type="submit">Deny</button>
 </form>
+{{else}}—{{end}}
 </td>
 </tr>
 {{end}}
@@ -205,12 +210,13 @@ device a human identity.</p>
 	consoleUsersTemplate = consolePage("users", `
 <h2>Users</h2>
 <table>
-<thead><tr><th>Login name</th><th>Display name</th><th>Email</th><th>Created</th><th>Identities</th></tr></thead>
+<thead><tr><th>Login name</th><th>Display name</th><th>Role</th><th>Email</th><th>Created</th><th>Identities</th></tr></thead>
 <tbody>
 {{range .Users}}
 <tr>
 <td>{{.LoginName}}</td>
 <td>{{.DisplayName}}</td>
+<td>{{.Role}}</td>
 <td>{{if .Email}}{{.Email}}{{else}}—{{end}}</td>
 <td>{{fmtTime .CreatedAt}}</td>
 <td>{{range .Identities}}<code>{{.ProviderID}}</code> {{.Subject}}<br>{{else}}—{{end}}</td>
@@ -220,17 +226,26 @@ device a human identity.</p>
 </table>
 <h2>Edit a user</h2>
 <p>Email is an attribute, never an identity key: links follow
-(provider, subject) only.</p>
+(provider, subject) only.{{if not .IsOwner}} Only an owner may change roles.{{end}}</p>
 {{range .Users}}
+{{if $.CanWrite}}
 <form method="post" action="/console/users/{{.ID}}">
 <h3>{{.LoginName}}</h3>
 <input type="hidden" name="csrf" value="{{$.CSRF}}">
 <div class="field">
 <label>Display name <input name="displayName" value="{{.DisplayName}}"></label>
 <label>Email <input name="email" value="{{.Email}}"></label>
+{{if $.IsOwner}}
+<label>Role <select name="role">
+<option value="member"{{if eq .Role "member"}} selected{{end}}>member</option>
+<option value="admin"{{if eq .Role "admin"}} selected{{end}}>admin</option>
+<option value="owner"{{if eq .Role "owner"}} selected{{end}}>owner</option>
+</select></label>
+{{end}}
 <button type="submit">Save</button>
 </div>
 </form>
+{{end}}
 {{end}}
 `)
 
@@ -248,10 +263,12 @@ device a human identity.</p>
 <td>{{.Value}}</td>
 <td>{{fmtTime .Created}}</td>
 <td>
+{{if $.CanWrite}}
 <form method="post" action="/console/dns/{{.ID}}/delete">
 <input type="hidden" name="csrf" value="{{$.CSRF}}">
 <button class="danger" type="submit">Delete</button>
 </form>
+{{else}}—{{end}}
 </td>
 </tr>
 {{end}}
@@ -269,6 +286,7 @@ is shown once, at creation time, and never again.</p>
 {{if .CreatedKey}}
 <p class="notice">New key (copy it now): <code>{{.CreatedKey}}</code></p>
 {{end}}
+{{if .CanWrite}}
 <form method="post" action="/console/auth-keys">
 <input type="hidden" name="csrf" value="{{.CSRF}}">
 <div class="field">
@@ -279,6 +297,7 @@ is shown once, at creation time, and never again.</p>
 <button type="submit">Create key</button>
 </div>
 </form>
+{{end}}
 {{if .AuthKeys}}
 <table>
 <thead><tr><th>ID</th><th>Owner</th><th>Tags</th><th>Reusable</th><th>Ephemeral</th><th>Used</th><th>Expires</th><th>Created</th><th></th></tr></thead>
@@ -294,10 +313,12 @@ is shown once, at creation time, and never again.</p>
 <td>{{fmtTime .Expiry}}</td>
 <td>{{fmtTime .Created}}</td>
 <td>
+{{if $.CanWrite}}
 <form method="post" action="/console/auth-keys/{{.ID}}/delete">
 <input type="hidden" name="csrf" value="{{$.CSRF}}">
 <button class="danger" type="submit">Revoke</button>
 </form>
+{{else}}—{{end}}
 </td>
 </tr>
 {{end}}
