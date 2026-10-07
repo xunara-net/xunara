@@ -138,6 +138,7 @@ func (ns *noiseServer) router() http.Handler {
 		r.Post("/register", ns.handleRegister)
 		r.Post("/map", ns.handleMap)
 		r.Post("/set-dns", ns.handleSetDNS)
+		r.Post("/feature/query", ns.handleFeatureQuery)
 		r.Get("/ssh/action/{srcNodeID}/to/{dstNodeID}", ns.handleSSHAction)
 	})
 

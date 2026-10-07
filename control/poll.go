@@ -14,6 +14,7 @@ import (
 	"tailscale.com/util/zstdframe"
 
 	"github.com/xunara/xunara/control/mapper"
+	"github.com/xunara/xunara/policy"
 	"github.com/xunara/xunara/state"
 )
 
@@ -275,11 +276,26 @@ func (s *Server) sshPolicyFor(self state.Node) *tailcfg.SSHPolicy {
 // nodeAttrs grants plus tailscale.com/cap/ssh for the nodes the SSH policy
 // names as destinations. Nil when the tailnet grants no capabilities at all.
 func (s *Server) nodeCapsFunc() func(state.Node) tailcfg.NodeCapMap {
-	engine := s.policy.Load()
+	return nodeCapsAdvertiser(s.policy.Load(), s.store.ListNodes())
+}
+
+// nodeCapMap returns the capability map for one node, for handlers that need
+// the same view the netmap advertises (feature queries).
+func (s *Server) nodeCapMap(node state.Node) tailcfg.NodeCapMap {
+	advertise := nodeCapsAdvertiser(s.policy.Load(), s.store.ListNodes())
+	if advertise == nil {
+		return nil
+	}
+	return advertise(node)
+}
+
+// nodeCapsAdvertiser compiles the policy into a per-node capability lookup.
+// It returns nil when the tailnet grants no capabilities at all, which lets
+// the mapper omit CapMap entirely.
+func nodeCapsAdvertiser(engine *policy.Engine, nodes []state.Node) func(state.Node) tailcfg.NodeCapMap {
 	if engine == nil {
 		return nil
 	}
-	nodes := s.store.ListNodes()
 	grants := engine.NodeCapMaps(nodes)
 	sshDests := engine.SSHDestinations(nodes)
 	if len(grants) == 0 && len(sshDests) == 0 {

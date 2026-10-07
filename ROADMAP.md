@@ -60,7 +60,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
 已知限制（M2 起补齐）：
 
 - Store 无持久化；无预认证密钥（PAK）；`/register/{id}` 页面不自动审批（审批仅经 `ApproveRegistration` 接缝）。
-- 未处理 TKA、Funnel、SSH check、`/machine/set-dns` 等内层端点。
+- 未处理 TKA、Funnel、`/machine/feature/query` 等内层端点（后续里程碑补齐）。
 
 ---
 
@@ -472,6 +472,21 @@ reference/{go-oidc,oauth2,dex,webauthn}
     不进 ExtraRecords、越权 400、provider 失败 502、reap 只删过期 challenge）、
     `dnsprovider/webhook_test.go`、`dnsprovider/cloudflare_test.go`
     （请求体/鉴权、put 替换旧值、幂等删除、API 错误、URL 校验）。
+- M6g 已完成：`/machine/feature/query`（serve / funnel 的启用指引）。
+  - `control/featurequery.go`：解析 `tailcfg.QueryFeatureRequest`，Noise 会话
+    machine key 必须匹配请求中的 node key（跨节点探测 404）；节点已持有全部
+    所需能力时返回 `Complete:true`（"serve"/"https" → `https`，
+    "funnel" → `https` + `funnel`）。
+  - 未持有时返回可执行说明文本：`https` 需管理员在策略 `nodeAttrs` 中授予；
+    Funnel 明确不支持（策略加载即拒绝 `funnel` 属性，绝不会 Complete）；
+    未知 feature 返回有界、可打印（去除控制字符、截断）的文本。
+  - `ShouldWait` 恒为 false、`URL` 恒为空：Xunara 没有"服务端一键启用"流程，
+    CLI 打印说明后退出，不阻塞（对齐上游 `enableFeatureInteractive` 语义）。
+  - `poll.go` 的 CapMap 编译抽出 `nodeCapsAdvertiser`，netmap 与 feature query
+    共用同一份 nodeAttrs + cap/ssh 视图。
+  - 测试：`control/featurequery_test.go`（已授权 Complete、未授权说明、
+    Funnel 不支持、跨节点/未知 node key 404、未知 feature 有界、
+    截断 JSON 拒绝）。
 - `services/` 其余：Funnel（明确不支持）；Discovery。
 - `client/`：Xunara Agent（自研客户端，独立协议，不侵入 TS2021）。
 - ACL/Zero Trust（`Xunara Warden`）。
