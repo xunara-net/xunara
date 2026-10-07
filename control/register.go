@@ -171,6 +171,30 @@ func (s *Server) registerWithAuthKey(req tailcfg.RegisterRequest, machineKey key
 	}
 	s.applyRegistrationDefaults(&node, now)
 
+	actor := fmt.Sprintf("preauthkey:%d", preauth.ID)
+
+	// The machine key may already have a node whose node key changed (client
+	// re-authorization, node key expiry). Rotate it in place instead of
+	// registering a duplicate peer for the same machine (see rotation.go).
+	// A tags-only key may convert a user-owned node, so it matches any node of
+	// the machine, as upstream does.
+	existing, rotate, err := s.rotationCandidate(machineKey, userID, len(node.Tags) > 0)
+	if err != nil {
+		return nil, err
+	}
+	if rotate {
+		rotated, err := s.rotateNodeKey(existing, node, false, actor)
+		if err != nil {
+			return nil, err
+		}
+		// Mark the key used only after the rotation is durable, for the same
+		// reason as the creation path below.
+		if err := s.store.MarkPreAuthKeyUsed(preauth.Key, now); err != nil {
+			s.log.Warn("marking pre-auth key used", "key_id", preauth.ID, "err", err)
+		}
+		return s.nodeToRegisterResponse(rotated), nil
+	}
+
 	if err := s.store.CreateNode(&node); err != nil {
 		if errors.Is(err, state.ErrNodeKeyExists) {
 			return nil, NewHTTPError(http.StatusConflict, "node key already registered", nil)
@@ -184,7 +208,7 @@ func (s *Server) registerWithAuthKey(req tailcfg.RegisterRequest, machineKey key
 		s.log.Warn("marking pre-auth key used", "key_id", preauth.ID, "err", err)
 	}
 
-	s.audit(fmt.Sprintf("preauthkey:%d", preauth.ID), identity.AuditNodeRegistered, nodeTarget(node),
+	s.audit(actor, identity.AuditNodeRegistered, nodeTarget(node),
 		"authorized with a pre-auth key")
 	s.notifyWatchers()
 
@@ -456,7 +480,20 @@ func (s *Server) approveDevice(authID string, userID tailcfg.UserID, actor strin
 	if err != nil {
 		return da, err
 	}
-	if err := s.store.CreateNode(&node); err != nil && !errors.Is(err, state.ErrNodeKeyExists) {
+
+	// A machine key that already has a node for this user (or a tagged node)
+	// is re-authorizing: rotate the node in place so one machine stays one
+	// node, keeping its ID, addresses and history (see rotation.go). The
+	// approval decides the tag set, matching upstream's re-auth semantics.
+	existing, rotate, err := s.rotationCandidate(node.MachineKey, userID, false)
+	if err != nil {
+		return da, err
+	}
+	if rotate {
+		if _, err := s.rotateNodeKey(existing, node, true, actor); err != nil {
+			return da, err
+		}
+	} else if err := s.store.CreateNode(&node); err != nil && !errors.Is(err, state.ErrNodeKeyExists) {
 		return da, fmt.Errorf("creating node: %w", err)
 	}
 

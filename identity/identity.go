@@ -137,6 +137,10 @@ const (
 	AuditNodeApproved    = "node.approved"
 	AuditNodeReaped      = "node.reaped"
 	AuditNodeDeleted     = "node.deleted"
+	// AuditNodeKeyRotated records a node key rotation: the same machine key
+	// re-authorized with a new node key, so the node kept its identity
+	// (ID/StableID/ownership) instead of registering a duplicate.
+	AuditNodeKeyRotated = "node.key_rotated"
 	// AuditNodeDisconnectReported is a client-reported disconnect (the user
 	// ran `tailscale down` or the node shut down), delivered through
 	// /machine/audit-log.

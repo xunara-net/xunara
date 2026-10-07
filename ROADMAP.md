@@ -589,6 +589,35 @@ reference/{go-oidc,oauth2,dex,webauthn}
 
 ---
 
+## M10 — Node key rotation（兼容性核心，已完成）
+
+目标：同一台机器（machine key 不变）换新 node key 重新授权时，原地更新既有节点，
+不产生重复 peer。对齐上游 `hscontrol/state`（`HandleNodeFromPreAuthKey` 的
+in-place re-registration 与 `HandleNodeFromAuthPath` 的 reauth/convert 语义）。
+
+- `control/rotation.go`：
+  - `rotationCandidate` 选取要原地轮换的唯一节点：tagged 节点，或属于本次授权身份的
+    节点；tags-only 预认证密钥可转换任意单一 user-owned 节点（上游语义）。
+    机器键对应多个候选（tagged + user-owned、或多个 user-owned）时拒绝（409），
+    不任意挑一个。
+  - `rotateNodeKey` 保留节点身份与历史（ID / StableID / 地址 / 路由 / 端点 /
+    LastSeen / Created），更新 node key、hostname/hostinfo、Method、Expiry 与
+    Ephemeral；`GetNodeByNodeKey` 旧键立即失效。仍然强制 1:1
+    NodeKey↔MachineKey（新键已绑到别的机器时 409，避免 node key 索引投毒）。
+  - 标签规则：交互式审批由审批人的 tag 决定（空集把 tagged 节点转回 user-owned，
+    对齐上游 reauth）；预认证密钥带标签时替换标签（含 user→tagged 转换），
+    不带标签的密钥保留既有标签（对齐“复用同一把密钥保留管理员改过的标签”）。
+- 接线：`registerWithAuthKey`（轮换需要一把仍然有效的密钥——已烧掉的单次密钥
+  不能轮换，`.Usable` 失败返回 401，节点保持原样）与 `approveDevice`
+  （交互式 relogin 经设备审批后原地轮换）。
+- 审计：`node.key_rotated`（detail 含新旧 node key 短公钥；公钥不是秘密）。
+  peers 经既有 `PeerChange.Key` 补丁看到新 node key。
+- 测试：`control/rotation_test.go`（auth key 原地轮换且不重复、旧键失效、身份/地址
+  保留、node.key_rotated 审计；已用单次密钥拒绝轮换且节点不变；标签替换与保留；
+  交互式 relogin 原地轮换；歧义归属 409）。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。
