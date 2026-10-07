@@ -73,7 +73,7 @@ func newNetmapView() *netmapView {
 // apply folds one MapResponse into the view, following the documented
 // precedence: a non-empty Peers replaces the whole list and makes the delta
 // fields meaningless; otherwise PeersChanged adds/updates and PeersRemoved
-// deletes.
+// deletes; PeersChangedPatch mutates the fields it carries.
 func (v *netmapView) apply(msg *tailcfg.MapResponse) {
 	if msg.Node != nil {
 		v.self = msg.Node
@@ -87,9 +87,54 @@ func (v *netmapView) apply(msg *tailcfg.MapResponse) {
 	for _, p := range msg.PeersChanged {
 		v.peers[p.ID] = p
 	}
+	for _, pc := range msg.PeersChangedPatch {
+		if p, ok := v.peers[pc.NodeID]; ok {
+			v.peers[pc.NodeID] = applyPeerChange(p, pc)
+		}
+	}
 	for _, id := range msg.PeersRemoved {
 		delete(v.peers, id)
 	}
+}
+
+// applyPeerChange folds one tailcfg.PeerChange into a stored peer the way an
+// official client does: every field the patch carries replaces the stored
+// value, fields it leaves unset stay as they were.
+func applyPeerChange(p *tailcfg.Node, pc *tailcfg.PeerChange) *tailcfg.Node {
+	out := *p
+	if pc.DERPRegion != 0 {
+		out.HomeDERP = pc.DERPRegion
+	}
+	if pc.Cap != 0 {
+		out.Cap = pc.Cap
+	}
+	if pc.CapMap != nil {
+		out.CapMap = pc.CapMap
+	}
+	if pc.Endpoints != nil {
+		out.Endpoints = pc.Endpoints
+	}
+	if pc.Key != nil {
+		out.Key = *pc.Key
+	}
+	if pc.KeySignature != nil {
+		out.KeySignature = pc.KeySignature
+	}
+	if pc.DiscoKey != nil {
+		out.DiscoKey = *pc.DiscoKey
+	}
+	if pc.Online != nil {
+		online := *pc.Online
+		out.Online = &online
+	}
+	if pc.LastSeen != nil {
+		seen := *pc.LastSeen
+		out.LastSeen = &seen
+	}
+	if pc.KeyExpiry != nil {
+		out.KeyExpiry = *pc.KeyExpiry
+	}
+	return &out
 }
 
 // peerList returns the peers in the view, sorted by ID as the wire requires.

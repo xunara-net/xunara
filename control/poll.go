@@ -133,6 +133,7 @@ func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWri
 			}
 			msg := s.updateMap(self)
 			peers := msg.Peers
+			selfNode := msg.Node
 			changed := sess.diff(msg, peers)
 			if sess.syncDNS(msg, mapper.DNSConfig(s.mapperConfig())) {
 				changed = true
@@ -148,9 +149,10 @@ func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWri
 			if req.OmitPeers {
 				msg.Peers = nil
 				msg.PeersChanged = nil
+				msg.PeersChangedPatch = nil
 				msg.PeersRemoved = nil
 			}
-			sess.commit(msg, peers)
+			sess.commit(msg, selfNode, peers)
 			if err := writeMapResponse(w, req.Compress, true, msg); err != nil {
 				return
 			}

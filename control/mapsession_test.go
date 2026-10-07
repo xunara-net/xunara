@@ -14,9 +14,10 @@ func sessionNode(id tailcfg.NodeID, hostname string) *tailcfg.Node {
 // applyFrame mirrors the server's streaming loop: diff against the session,
 // then commit the frame so the session remembers what the client now has.
 func applyFrame(sess *mapSession, resp *tailcfg.MapResponse, peers []*tailcfg.Node) bool {
+	self := resp.Node
 	changed := sess.diff(resp, peers)
 	if changed {
-		sess.commit(resp, peers)
+		sess.commit(resp, self, peers)
 	}
 	return changed
 }
@@ -67,48 +68,95 @@ func TestMapSessionDelta(t *testing.T) {
 		if !applyFrame(sess, resp, []*tailcfg.Node{first, second}) {
 			t.Fatal("diff missed a self change")
 		}
-		if resp.Peers != nil || resp.PeersChanged != nil || resp.PeersRemoved != nil {
+		if resp.Node == nil {
+			t.Error("a changed self node must be included")
+		}
+		if resp.Peers != nil || resp.PeersChanged != nil || resp.PeersChangedPatch != nil || resp.PeersRemoved != nil {
 			t.Errorf("self-only update carried peer fields: %+v", resp)
 		}
 		if resp.Seq != 2 {
 			t.Errorf("Seq = %d, want 2", resp.Seq)
 		}
+		self = renamed
 	})
 
-	t.Run("one peer changed", func(t *testing.T) {
+	t.Run("endpoint change is patched", func(t *testing.T) {
 		updated := sessionNode(2, "one")
 		updated.Endpoints = []netip.AddrPort{netip.MustParseAddrPort("198.51.100.7:41641")}
 
-		resp := &tailcfg.MapResponse{Node: sessionNode(1, "renamed"), Peers: []*tailcfg.Node{updated, second}}
+		resp := &tailcfg.MapResponse{Node: self}
 		if !applyFrame(sess, resp, []*tailcfg.Node{updated, second}) {
 			t.Fatal("diff missed a peer change")
 		}
-		if len(resp.PeersChanged) != 1 || resp.PeersChanged[0].ID != 2 {
-			t.Errorf("PeersChanged = %v, want just node 2", resp.PeersChanged)
+		if len(resp.PeersChangedPatch) != 1 || resp.PeersChangedPatch[0].NodeID != 2 {
+			t.Errorf("PeersChangedPatch = %v, want just node 2", resp.PeersChangedPatch)
 		}
-		if resp.Peers != nil || resp.PeersRemoved != nil {
-			t.Errorf("delta frame carried Peers=%v PeersRemoved=%v", resp.Peers, resp.PeersRemoved)
+		if !slicesEqualAddrPorts(resp.PeersChangedPatch[0].Endpoints, updated.Endpoints) {
+			t.Errorf("patch endpoints = %v, want %v", resp.PeersChangedPatch[0].Endpoints, updated.Endpoints)
+		}
+		if resp.Peers != nil || resp.PeersChanged != nil || resp.PeersRemoved != nil {
+			t.Errorf("delta frame carried Peers=%v PeersChanged=%v PeersRemoved=%v", resp.Peers, resp.PeersChanged, resp.PeersRemoved)
+		}
+		if resp.Node != nil {
+			t.Error("an unchanged self node must be omitted from a delta frame")
+		}
+		first = updated
+	})
+
+	t.Run("structural change is sent in full", func(t *testing.T) {
+		renamed := sessionNode(2, "renamed")
+		renamed.Endpoints = first.Endpoints
+
+		resp := &tailcfg.MapResponse{Node: self}
+		if !applyFrame(sess, resp, []*tailcfg.Node{renamed, second}) {
+			t.Fatal("diff missed a structural peer change")
+		}
+		if len(resp.PeersChanged) != 1 || resp.PeersChanged[0].ID != 2 {
+			t.Errorf("PeersChanged = %v, want the full node 2", resp.PeersChanged)
+		}
+		if resp.PeersChangedPatch != nil {
+			t.Errorf("PeersChangedPatch = %v, want none for a structural change", resp.PeersChangedPatch)
+		}
+		first = renamed
+	})
+
+	t.Run("new peer is sent in full", func(t *testing.T) {
+		added := sessionNode(4, "four")
+		resp := &tailcfg.MapResponse{Node: self}
+		if !applyFrame(sess, resp, []*tailcfg.Node{first, second, added}) {
+			t.Fatal("diff missed a new peer")
+		}
+		if len(resp.PeersChanged) != 1 || resp.PeersChanged[0].ID != 4 {
+			t.Errorf("PeersChanged = %v, want the new node 4 in full", resp.PeersChanged)
+		}
+		if resp.Peers != nil || resp.PeersRemoved != nil || resp.PeersChangedPatch != nil {
+			t.Errorf("unexpected fields: Peers=%v PeersRemoved=%v PeersChangedPatch=%v",
+				resp.Peers, resp.PeersRemoved, resp.PeersChangedPatch)
 		}
 	})
 
-	t.Run("all peers changed uses the full list", func(t *testing.T) {
-		a := sessionNode(2, "a")
-		b := sessionNode(3, "b")
-		resp := &tailcfg.MapResponse{Node: sessionNode(1, "renamed")}
-		if !applyFrame(sess, resp, []*tailcfg.Node{a, b}) {
-			t.Fatal("diff missed a full relist")
+	t.Run("several peers change at once", func(t *testing.T) {
+		a := sessionNode(2, "renamed")
+		a.Endpoints = []netip.AddrPort{netip.MustParseAddrPort("198.51.100.9:41641")}
+		b := sessionNode(3, "two")
+		b.Endpoints = []netip.AddrPort{netip.MustParseAddrPort("198.51.100.8:41641")}
+
+		resp := &tailcfg.MapResponse{Node: self}
+		if !applyFrame(sess, resp, []*tailcfg.Node{a, b, sessionNode(4, "four")}) {
+			t.Fatal("diff missed peer changes")
 		}
-		if len(resp.Peers) != 2 {
-			t.Errorf("Peers = %v, want the full list", resp.Peers)
+		if len(resp.PeersChangedPatch) != 2 {
+			t.Errorf("PeersChangedPatch = %d entries, want 2", len(resp.PeersChangedPatch))
 		}
-		if resp.PeersChanged != nil || resp.PeersRemoved != nil {
-			t.Error("a full relist must not carry delta fields")
+		if resp.Peers != nil || resp.PeersChanged != nil {
+			t.Errorf("a patchable delta must not carry Peers=%v PeersChanged=%v", resp.Peers, resp.PeersChanged)
 		}
+		first, second = a, b
 	})
 
 	t.Run("peer removal", func(t *testing.T) {
-		resp := &tailcfg.MapResponse{Node: sessionNode(1, "renamed")}
-		if !applyFrame(sess, resp, []*tailcfg.Node{sessionNode(2, "a")}) {
+		resp := &tailcfg.MapResponse{Node: self}
+		if !applyFrame(sess, resp, []*tailcfg.Node{first, sessionNode(4, "four")}) {
 			t.Fatal("diff missed a removal")
 		}
 		if len(resp.PeersRemoved) != 1 || resp.PeersRemoved[0] != 3 {
@@ -117,18 +165,34 @@ func TestMapSessionDelta(t *testing.T) {
 		if resp.Peers != nil {
 			t.Errorf("Peers = %v, want nil alongside PeersRemoved", resp.Peers)
 		}
+		second = nil
 	})
 
 	t.Run("empty tailnet removes the last peer", func(t *testing.T) {
-		resp := &tailcfg.MapResponse{Node: sessionNode(1, "renamed")}
+		resp := &tailcfg.MapResponse{Node: self}
 		if !applyFrame(sess, resp, nil) {
 			t.Fatal("diff missed the removal of the last peer")
 		}
-		if len(resp.PeersRemoved) != 1 || resp.PeersRemoved[0] != 2 {
-			t.Errorf("PeersRemoved = %v, want [2]", resp.PeersRemoved)
+		if len(resp.PeersRemoved) != 2 {
+			t.Errorf("PeersRemoved = %v, want the two remaining peers", resp.PeersRemoved)
 		}
 		if resp.Peers != nil {
 			t.Errorf("Peers = %v, want nil (an empty list would read as no change)", resp.Peers)
+		}
+	})
+
+	t.Run("all-new peer set uses the full list", func(t *testing.T) {
+		a := sessionNode(8, "eight")
+		b := sessionNode(9, "nine")
+		resp := &tailcfg.MapResponse{Node: self}
+		if !applyFrame(sess, resp, []*tailcfg.Node{a, b}) {
+			t.Fatal("diff missed a completely new peer set")
+		}
+		if len(resp.Peers) != 2 || resp.Peers[0] != a || resp.Peers[1] != b {
+			t.Errorf("Peers = %v, want the two new nodes", resp.Peers)
+		}
+		if resp.PeersChanged != nil || resp.PeersChangedPatch != nil || resp.PeersRemoved != nil {
+			t.Errorf("a full list must not carry delta fields: %+v", resp)
 		}
 	})
 }
@@ -159,4 +223,18 @@ func TestMapSessionDNSSync(t *testing.T) {
 	if out.DNSConfig != grown {
 		t.Error("syncDNS did not attach the new configuration")
 	}
+}
+
+// slicesEqualAddrPorts is a local equality helper so the test does not have to
+// import slices just for one assertion.
+func slicesEqualAddrPorts(a, b []netip.AddrPort) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

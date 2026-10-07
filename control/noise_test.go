@@ -137,8 +137,11 @@ func TestStreamingNetmapIsDeltaEncoded(t *testing.T) {
 	if first.Peers == nil {
 		t.Error("the first frame must carry the full peer list")
 	}
-	if first.PeersChanged != nil || first.PeersRemoved != nil {
+	if first.PeersChanged != nil || first.PeersChangedPatch != nil || first.PeersRemoved != nil {
 		t.Error("the first frame must not carry delta fields")
+	}
+	if first.Node == nil {
+		t.Error("the first frame must carry the full self node")
 	}
 
 	// A second peer makes the tailnet big enough for deltas to be worth it.
@@ -146,7 +149,8 @@ func TestStreamingNetmapIsDeltaEncoded(t *testing.T) {
 	defer connC.Close()
 	waitForNetmap(t, frames, view, func(v *netmapView) bool { return len(v.peerList()) == 2 })
 
-	// A peer update (endpoints) must arrive as a delta, not a full relist.
+	// A peer update (endpoints) must arrive as a PeerChange patch: small,
+	// incremental, and without forcing the client to rebuild its netmap.
 	postRaw(t, clientB, "/machine/map", tailcfg.MapRequest{
 		Version:   tailcfg.CurrentCapabilityVersion,
 		NodeKey:   nodeKeyB.Public(),
@@ -160,8 +164,18 @@ func TestStreamingNetmapIsDeltaEncoded(t *testing.T) {
 	if delta.Peers != nil {
 		t.Errorf("a delta frame must not repeat the full peer list: %v", delta.Peers)
 	}
-	if len(delta.PeersChanged) != 1 {
-		t.Fatalf("PeersChanged = %d entries, want 1", len(delta.PeersChanged))
+	if len(delta.PeersChanged) != 0 {
+		t.Fatalf("an endpoint-only change must be a patch, got PeersChanged = %v", delta.PeersChanged)
+	}
+	if len(delta.PeersChangedPatch) != 1 {
+		t.Fatalf("PeersChangedPatch = %d entries, want 1", len(delta.PeersChangedPatch))
+	}
+	patch := delta.PeersChangedPatch[0]
+	if len(patch.Endpoints) != 1 || patch.Endpoints[0] != netip.MustParseAddrPort("198.51.100.7:41641") {
+		t.Errorf("patch endpoints = %v, want the new endpoint", patch.Endpoints)
+	}
+	if delta.Node != nil {
+		t.Error("a delta frame must omit the unchanged self node")
 	}
 	if delta.Seq <= first.Seq {
 		t.Errorf("Seq = %d, want greater than the first frame's %d", delta.Seq, first.Seq)
@@ -171,7 +185,7 @@ func TestStreamingNetmapIsDeltaEncoded(t *testing.T) {
 	}
 
 	// Removing the peer must arrive as PeersRemoved.
-	if err := s.Store().DeleteNode(state.NodeID(delta.PeersChanged[0].ID)); err != nil {
+	if err := s.Store().DeleteNode(state.NodeID(patch.NodeID)); err != nil {
 		t.Fatalf("deleting node B: %v", err)
 	}
 	s.notifyWatchers()

@@ -63,16 +63,27 @@ func (s *mapSession) initial(resp *tailcfg.MapResponse) {
 }
 
 // diff rewrites resp's peer fields as a delta against what this session already
-// sent, and reports whether the self node or any peer changed.
+// sent, and reports whether the frame carries anything a client can observe.
 //
 // The caller stamps the frame with [mapSession.commit] once it knows the frame
 // carries something, which may also be a DNS change rather than a peer change.
+//
+// Existing peers whose differences all fit a tailcfg.PeerChange are promoted to
+// PeersChangedPatch; peers with structural changes (name, addresses, hostinfo,
+// tags, ...) are resent in full through PeersChanged, and peers this session has
+// not shown yet are added the same way. An unchanged self node is omitted: any
+// node-shaped field would make every client rebuild its whole netmap.
 func (s *mapSession) diff(resp *tailcfg.MapResponse, peers []*tailcfg.Node) bool {
-	changed := make([]*tailcfg.Node, 0, len(peers))
+	var added, changed []*tailcfg.Node
 	seen := make(map[tailcfg.NodeID]bool, len(peers))
 	for _, p := range peers {
 		seen[p.ID] = true
-		if old, ok := s.peers[p.ID]; !ok || !old.Equal(p) {
+		old, ok := s.peers[p.ID]
+		if !ok {
+			added = append(added, p)
+			continue
+		}
+		if !old.Equal(p) {
 			changed = append(changed, p)
 		}
 	}
@@ -85,23 +96,50 @@ func (s *mapSession) diff(resp *tailcfg.MapResponse, peers []*tailcfg.Node) bool
 	}
 	slices.Sort(removed)
 
+	// Nil means "unchanged" on the wire for every delta field.
+	resp.Peers, resp.PeersChanged, resp.PeersChangedPatch, resp.PeersRemoved = nil, nil, nil, nil
+
+	observable := false
 	switch {
-	case len(removed) == 0 && len(changed) == len(peers):
-		// Every peer is new or changed: the full list is both smaller and
-		// unambiguous. A non-empty Peers makes clients ignore the delta
-		// fields, so it can never carry PeersRemoved alongside.
+	case len(added) == 0 && len(changed) == 0 && len(removed) == 0:
+		// Nothing peer-shaped changed.
+	case len(removed) == 0 && len(changed) == 0 && len(added) > 0 && len(added) == len(peers):
+		// Every peer is new to this session: the plain list is both smaller
+		// and unambiguous, exactly as on the first frame. A non-empty Peers
+		// makes clients ignore the delta fields, so it can never carry
+		// PeersRemoved alongside.
 		resp.Peers = peers
-		resp.PeersChanged, resp.PeersRemoved = nil, nil
-	case len(changed) == 0 && len(removed) == 0:
-		// Nothing peer-shaped changed: nil means "unchanged" on the wire.
-		resp.Peers, resp.PeersChanged, resp.PeersRemoved = nil, nil, nil
+		observable = true
 	default:
-		resp.Peers = nil
-		resp.PeersChanged = changed
 		resp.PeersRemoved = removed
+		resp.PeersChanged = added
+		for _, p := range changed {
+			pc, patchable := peerChangeDiff(s.peers[p.ID], p)
+			if !patchable {
+				resp.PeersChanged = append(resp.PeersChanged, p)
+				continue
+			}
+			if pc != nil {
+				resp.PeersChangedPatch = append(resp.PeersChangedPatch, pc)
+			}
+			// patchable with a nil change means the difference is invisible
+			// to clients (for example client-computed display names), so it
+			// is dropped rather than sent.
+		}
+		slices.SortFunc(resp.PeersChanged, func(a, b *tailcfg.Node) int {
+			return int(a.ID) - int(b.ID)
+		})
+		if len(resp.PeersChanged) == 0 {
+			resp.PeersChanged = nil
+		}
+		observable = len(resp.PeersChanged) > 0 || len(resp.PeersChangedPatch) > 0 || len(resp.PeersRemoved) > 0
 	}
 
-	return s.self == nil || !s.self.Equal(resp.Node) || len(changed) > 0 || len(removed) > 0
+	selfChanged := s.self == nil || (resp.Node != nil && !s.self.Equal(resp.Node))
+	if !selfChanged {
+		resp.Node = nil
+	}
+	return selfChanged || observable
 }
 
 // syncDNS attaches dns to resp when it differs from what this session already
@@ -130,8 +168,11 @@ func (s *mapSession) syncPacketFilter(resp *tailcfg.MapResponse, rules []tailcfg
 
 // commit stamps a frame that is about to be written with the session sequence
 // number and records the state it puts the client in.
-func (s *mapSession) commit(resp *tailcfg.MapResponse, peers []*tailcfg.Node) {
-	s.record(resp.Node, peers)
+//
+// self is the node the frame describes even when resp.Node was cleared by
+// [mapSession.diff] because it did not change.
+func (s *mapSession) commit(resp *tailcfg.MapResponse, self *tailcfg.Node, peers []*tailcfg.Node) {
+	s.record(self, peers)
 	s.seq++
 	resp.Seq = s.seq
 }

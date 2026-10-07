@@ -154,9 +154,25 @@ reference/{go-oidc,oauth2,dex,webauthn}
   `control/policy_test.go`（策略替换 allow-all、热重载推送、空策略=`[]`、
   坏文档保留旧策略、非法文档启动失败）。
 
-待办（M2b 剩余）：
+已完成（M2b-2 追加，PeerChange patch）：
 
-- `PeersChangedPatch`（更细粒度端点/DERP patch）。
+- `control/peerchange.go`：`peerChangeDiff` 按上游 `controlclient.peerChangeDiff` 的字段
+  分类做节点级 diff；可 patch 字段（Key/KeyExpiry/KeySignature/DiscoKey/Endpoints/
+  HomeDERP/Cap/CapMap/Online/LastSeen）进 `PeersChangedPatch`，结构性变化（Name、
+  Addresses、AllowedIPs、Hostinfo、Tags、PrimaryRoutes、Expired 等）仍整节点下发。
+  无法表达的变化（清空 Endpoints/HomeDERP/Cap/CapMap/Online/LastSeen）fail-closed，
+  回退整节点，避免客户端静默丢弃。
+- 字段集合通过反射枚举并配有守卫测试：tailscale.com 升级新增 `tailcfg.Node` 字段时
+  测试失败，已知字段之外一律 fail-closed（整节点下发）。
+- `mapSession.diff` 现在只在全部 peer 都是本会话未见过的节点时才用 `Peers` 全量列表；
+  其余增量帧优先 patch。未变化的 self node 不再随帧下发（nil = 不变），否则客户端
+  会因非增量字段（`resp.Node != nil`）而每次全量重建 netmap。
+- 全量列表（`Peers` 非空）与 `PeersRemoved` 仍互斥，`OmitPeers` 同时清空 patch 字段。
+- 测试：`control/peerchange_test.go`（逐字段 patch/不可 patch、字段全集守卫）、
+  `control/mapsession_test.go`（patch、结构性整节点、新节点、移除、全量回退）、
+  `TestStreamingNetmapIsDeltaEncoded` 改为断言端点更新以 patch 下发且省略 self。
+
+待办（M2b 剩余）：
 - `ClientVersion` 下发（版本提示）；`HomeDERP` 延迟择优（当前仅单 region 自动归位）。
 - 说明：`set-dns` 记录通过 `ExtraRecords` 在 tailnet 内可见，**不**写入外部 DNS 提供商；
   公网 ACME 校验需要额外的 DNS 集成（后续里程碑）。
