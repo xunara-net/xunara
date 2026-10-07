@@ -137,6 +137,9 @@ func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWri
 			if sess.syncDNS(msg, mapper.DNSConfig(s.mapperConfig())) {
 				changed = true
 			}
+			if sess.syncPacketFilter(msg, s.packetFilterFor(self), req.Version) {
+				changed = true
+			}
 			if !changed {
 				// Nothing the client can observe changed (for example a
 				// keep-alive woke us); sending a frame would only burn battery.
@@ -153,6 +156,23 @@ func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWri
 			}
 		}
 	}
+}
+
+// packetFilterFor returns the packet filter a node receives: the compiled ACL
+// policy when the tailnet has one, allow-all otherwise.
+func (s *Server) packetFilterFor(self state.Node) []tailcfg.FilterRule {
+	engine := s.policy.Load()
+	if engine == nil {
+		return slices.Clone(tailcfg.FilterAllowAll)
+	}
+	nodes := s.store.ListNodes()
+	rules := engine.FilterFor(self, nodes)
+	if rules == nil {
+		// A policy that grants nothing must still be sent explicitly, or the
+		// client keeps the rules it had.
+		return []tailcfg.FilterRule{}
+	}
+	return rules
 }
 
 // fullMap builds the first netmap for a node: everything a client needs.
@@ -177,6 +197,7 @@ func (s *Server) mapperConfig() mapper.Config {
 		Routes:       s.dnsRoutes,
 		ExtraRecords: s.store.ListDNSRecords(),
 		DERPMap:      s.cfg.DERPMap,
+		FilterFor:    s.packetFilterFor,
 	}
 }
 

@@ -256,3 +256,13 @@ func decodeMapResponse(t *testing.T, body []byte, compress string) *tailcfg.MapR
 	}
 	return &msg
 }
+
+// newTestHTTPServer serves a server's handler for tests that need a URL but do
+// not care about the rest of the harness.
+func newTestHTTPServer(t *testing.T, s *Server) *httptest.Server {
+	t.Helper()
+
+	hs := httptest.NewServer(s.Handler())
+	t.Cleanup(hs.Close)
+	return hs
+}

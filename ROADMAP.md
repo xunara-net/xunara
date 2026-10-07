@@ -130,10 +130,34 @@ reference/{go-oidc,oauth2,dex,webauthn}
   `TestSetDNSRequiresAConfiguredDomain`、`mapSession` DNS 指纹用例、
   `runDNSRecordConformance`（内存 + SQLite）。
 
+已完成（M2b-4，ACL 策略引擎）：
+
+- 新包 `policy/`（纯函数，文档 + 节点快照进、`tailcfg.FilterRule` 出）：
+  - HuJSON 解析（`github.com/tailscale/hujson`），未实现的顶层字段（如 `ssh`/`grants`）
+    被显式记录并告警，**不会**被当成授权。
+  - 选择器：`*`、CIDR/IP、`hosts` 别名、`group:`（支持嵌套、环检测）、`tag:`
+    （需在 `tagOwners` 声明）、用户（登录名或 `login@domain` 的本地部分）、
+    `autogroup:self`（按节点用户展开，逐节点编译）、`autogroup:member`；
+    目标侧另有 `autogroup:internet` → `0.0.0.0/0` + `::/0`。
+  - 端口：`*`、单端口、`8000-9000`、逗号列表；IPv6 目标支持 `[addr]:port`。
+  - `proto`：协议名或 IANA 号；缺省不写 `IPProto`（= 客户端默认 TCP/UDP/ICMP）。
+  - 文档自带 `tests` 由 `Engine.RunTests` 按"目的端过滤"语义求值。
+- `control`：`Config.PolicyPath` + `Server.policy`（atomic）。启动时编译，文档非法
+  直接启动失败（绝不回落到 allow-all）；运行中文件变更则重新加载，失败保留旧策略
+  并记 error 日志。
+- mapper：`Config.FilterFor`；空规则以**非 nil 空切片**下发（`{"base":[]}` = 阻断
+  全部），与 `{"base":null}`（删除）区分；无策略时保持 allow-all（官方默认）。
+- 流式会话用同样方式指纹比对 packet filter，仅在变化时下发。
+- CLI：`xunara policy check [-domain] [-skip-tests] <file>`（编译 + 跑文档测试；
+  无节点时跳过并说明）。
+- 测试：`policy/engine_test.go`（解析、选择器、端口、proto、校验错误、tests）、
+  `control/policy_test.go`（策略替换 allow-all、热重载推送、空策略=`[]`、
+  坏文档保留旧策略、非法文档启动失败）。
+
 待办（M2b 剩余）：
 
 - `PeersChangedPatch`（更细粒度端点/DERP patch）。
-- ACL → `PacketFilter` 真实策略引擎（替换 allow-all）。
+- `tag:` 的实际赋值（tagged auth key / tagOwners 校验）——当前 tag 选择器匹配不到节点。
 - `ClientVersion` 下发（版本提示）；`HomeDERP` 延迟择优（当前仅单 region 自动归位）。
 - 说明：`set-dns` 记录通过 `ExtraRecords` 在 tailnet 内可见，**不**写入外部 DNS 提供商；
   公网 ACME 校验需要额外的 DNS 集成（后续里程碑）。

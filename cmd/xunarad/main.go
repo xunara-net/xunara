@@ -24,6 +24,7 @@ func main() {
 		serverURL   = flag.String("server-url", "", "externally reachable base URL (defaults to http://<listen>)")
 		domain      = flag.String("domain", "", "tailnet MagicDNS domain (empty disables MagicDNS)")
 		derpMapPath = flag.String("derp-map", "", "path to a tailcfg.DERPMap JSON file to advertise to clients")
+		policyPath  = flag.String("policy", "", "path to an ACL policy document (HuJSON); empty allows everything")
 		logLevel    = flag.String("log-level", "info", "log level: debug|info|warn|error")
 	)
 	var (
@@ -59,6 +60,7 @@ func main() {
 		Domain:      *domain,
 		Nameservers: nameservers,
 		DNSRoutes:   routes,
+		PolicyPath:  *policyPath,
 		DERPMap:     derpMap,
 		Logger:      logger,
 	})

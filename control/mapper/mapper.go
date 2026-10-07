@@ -44,6 +44,14 @@ type Config struct {
 	// every client through MagicDNS.
 	ExtraRecords []state.DNSRecord
 
+	// FilterFor returns the packet filter a node should receive. A nil
+	// function means the tailnet has no policy document, which allows
+	// everything (the official default for a tailnet without a policy).
+	//
+	// The returned slice may be empty, which means "block everything": an
+	// empty rule set is a meaningful policy, not a missing one.
+	FilterFor func(self state.Node) []tailcfg.FilterRule
+
 	// DERPMap is advertised to clients when non-nil.
 	DERPMap *tailcfg.DERPMap
 }
@@ -62,7 +70,7 @@ func Full(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc, ca
 		DERPMap:      cfg.DERPMap,
 		UserProfiles: userProfiles(self, nodes),
 	}
-	setPacketFilters(resp, capVer)
+	SetPacketFilters(resp, capVer, packetFilterFor(cfg, self))
 	return resp
 }
 
@@ -232,14 +240,28 @@ func DNSConfig(cfg Config) *tailcfg.DNSConfig {
 	return out
 }
 
-// setPacketFilters attaches the tailnet firewall rules using the field the
-// client's capability version understands.
+// packetFilterFor returns the rules a node receives, defaulting to allow-all
+// when the tailnet has no policy document.
 //
-// Until ACL policy lands the tailnet is allow-all, which is what the official
-// service does for a tailnet with no policy document.
-func setPacketFilters(resp *tailcfg.MapResponse, capVer tailcfg.CapabilityVersion) {
-	rules := slices.Clone(tailcfg.FilterAllowAll)
+// The result is always non-nil so that an empty policy is sent as "no rules"
+// rather than "no change".
+func packetFilterFor(cfg Config, self state.Node) []tailcfg.FilterRule {
+	if cfg.FilterFor == nil {
+		return slices.Clone(tailcfg.FilterAllowAll)
+	}
+	rules := cfg.FilterFor(self)
+	if rules == nil {
+		return []tailcfg.FilterRule{}
+	}
+	return rules
+}
 
+// SetPacketFilters attaches packet filter rules to a response using the field
+// the client's capability version understands.
+//
+// rules must be non-nil: an empty non-nil slice means "block everything",
+// while a nil slice would mean "no change" in an update frame.
+func SetPacketFilters(resp *tailcfg.MapResponse, capVer tailcfg.CapabilityVersion, rules []tailcfg.FilterRule) {
 	if capVer >= packetFiltersCapVer {
 		resp.PacketFilters = map[string][]tailcfg.FilterRule{"base": rules}
 		return

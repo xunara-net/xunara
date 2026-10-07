@@ -102,6 +102,14 @@ type Node struct {
 	// only while the node announces it, and stays approved across restarts.
 	ApprovedRoutes []netip.Prefix
 
+	// Tags are the ACL tags the node carries, in "tag:<name>" form.
+	//
+	// Tag assignment (tagged pre-auth keys and the tagOwners section of the
+	// policy) is not implemented yet, so this is always empty; policies that
+	// use tag selectors therefore match no node and the server warns at load
+	// time.
+	Tags []string
+
 	// Ephemeral marks nodes that should be reaped once inactive.
 	Ephemeral bool
 }

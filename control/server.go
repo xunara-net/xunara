@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -18,6 +20,7 @@ import (
 	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"
 
+	"github.com/xunara/xunara/policy"
 	"github.com/xunara/xunara/state"
 )
 
@@ -53,6 +56,10 @@ type Config struct {
 	// EphemeralInactivityTimeout is how long an ephemeral node may stay offline
 	// before it is reaped. Zero uses the default.
 	EphemeralInactivityTimeout time.Duration
+	// PolicyPath is the ACL policy document (HuJSON). Empty means the tailnet
+	// has no policy and everything is allowed, which is what the official
+	// service does for a tailnet without a policy.
+	PolicyPath string
 	// Logger receives server logs. Defaults to slog.Default.
 	Logger *slog.Logger
 }
@@ -82,6 +89,9 @@ type Server struct {
 	mu            sync.Mutex
 	pending       map[string]*pendingRegistration
 	pendingByNode map[key.NodePublic]string
+
+	// policy holds the compiled ACL policy, or nil when the tailnet has none.
+	policy atomic.Pointer[policy.Engine]
 
 	// startOnce guards the background workers started by [Server.Start].
 	startOnce sync.Once
@@ -138,7 +148,7 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 
-	return &Server{
+	srv := &Server{
 		cfg:           cfg,
 		log:           cfg.Logger,
 		noiseKey:      noiseKey,
@@ -150,7 +160,16 @@ func New(cfg Config) (*Server, error) {
 		pendingByNode: make(map[key.NodePublic]string),
 		online:        make(map[state.NodeID]int),
 		watchers:      make(map[uint64]chan struct{}),
-	}, nil
+	}
+
+	// A broken policy file must stop the server from starting: falling back to
+	// allow-all would silently open the tailnet.
+	if err := srv.loadPolicy(); err != nil {
+		store.Close()
+		return nil, fmt.Errorf("control: loading policy %s: %w", cfg.PolicyPath, err)
+	}
+
+	return srv, nil
 }
 
 // Close releases the server's durable resources.
@@ -267,6 +286,7 @@ func (s *Server) Start(ctx context.Context) {
 	s.startOnce.Do(func() {
 		go s.runJanitor(ctx)
 		go s.runConfigWatcher(ctx)
+		go s.runPolicyWatcher(ctx)
 	})
 }
 

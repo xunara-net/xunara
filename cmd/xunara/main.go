@@ -33,6 +33,8 @@ func main() {
 		runRoutes(os.Args[2:])
 	case "dns":
 		runDNS(os.Args[2:])
+	case "policy":
+		runPolicy(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -54,6 +56,7 @@ Commands:
   routes unapprove     Withdraw approval for subnet routes
   dns list             List MagicDNS records published through set-dns
   dns delete           Delete a MagicDNS record by ID (or -all)
+  policy check         Validate an ACL policy document and run its tests
 
 Run "xunara <command> -h" for command options.
 `)
@@ -156,6 +159,10 @@ func runDelete(args []string) {
 }
 
 func openStore(stateDir string) *state.SQLiteStore {
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		fatal("creating state directory", err)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 

@@ -7,6 +7,8 @@ import (
 	"slices"
 
 	"tailscale.com/tailcfg"
+
+	"github.com/xunara/xunara/control/mapper"
 )
 
 // mapSession tracks what a streaming client has already been told about the
@@ -27,6 +29,10 @@ type mapSession struct {
 	// netmap update path normally omits DNSConfig (it forces clients into a
 	// full rebuild), so it is added back only when it actually changed.
 	dns string
+
+	// filter fingerprints the packet filter this session already sent, for the
+	// same reason as dns.
+	filter string
 }
 
 // newMapSession starts a session with a fresh opaque handle.
@@ -49,6 +55,7 @@ func newMapSession() (*mapSession, error) {
 func (s *mapSession) initial(resp *tailcfg.MapResponse) {
 	s.record(resp.Node, peersOf(resp))
 	s.dns = fingerprintDNS(resp.DNSConfig)
+	s.filter = fingerprintFilter(filterFromResponse(resp))
 
 	s.seq = 1
 	resp.MapSessionHandle = s.handle
@@ -109,6 +116,18 @@ func (s *mapSession) syncDNS(resp *tailcfg.MapResponse, dns *tailcfg.DNSConfig) 
 	return true
 }
 
+// syncPacketFilter attaches rules to resp when they differ from what this
+// session already sent, and reports whether it did.
+func (s *mapSession) syncPacketFilter(resp *tailcfg.MapResponse, rules []tailcfg.FilterRule, capVer tailcfg.CapabilityVersion) bool {
+	fp := fingerprintFilter(rules)
+	if fp == s.filter {
+		return false
+	}
+	s.filter = fp
+	mapper.SetPacketFilters(resp, capVer, rules)
+	return true
+}
+
 // commit stamps a frame that is about to be written with the session sequence
 // number and records the state it puts the client in.
 func (s *mapSession) commit(resp *tailcfg.MapResponse, peers []*tailcfg.Node) {
@@ -128,6 +147,27 @@ func fingerprintDNS(dns *tailcfg.DNSConfig) string {
 		return ""
 	}
 	return string(b)
+}
+
+// fingerprintFilter renders packet filter rules into a comparable string.
+func fingerprintFilter(rules []tailcfg.FilterRule) string {
+	if len(rules) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(rules)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// filterFromResponse extracts the rules a response carries, whichever field the
+// client's capability version uses.
+func filterFromResponse(resp *tailcfg.MapResponse) []tailcfg.FilterRule {
+	if rules, ok := resp.PacketFilters["base"]; ok {
+		return rules
+	}
+	return resp.PacketFilter
 }
 
 // record remembers the state a frame put the client in.
