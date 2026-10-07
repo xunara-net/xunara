@@ -56,37 +56,51 @@ type PasskeyService struct {
 	userVerification protocol.UserVerificationRequirement
 }
 
-// NewPasskeyService validates cfg and returns the service. A configuration
-// mistake is fatal at startup: a wrong relying party would otherwise silently
-// refuse every ceremony.
-func NewPasskeyService(store Store, cfg PasskeyConfig) (*PasskeyService, error) {
-	if store == nil {
-		return nil, errors.New("identity: passkey service needs a store")
-	}
+// normalizedPasskeyConfig is a validated configuration with defaults applied.
+type normalizedPasskeyConfig struct {
+	rpID             string
+	origins          []string
+	displayName      string
+	timeout          time.Duration
+	userVerification protocol.UserVerificationRequirement
+}
+
+// Validate reports whether the configuration can serve passkey ceremonies. It
+// is the check [NewPasskeyService] performs, exported so deployment code can
+// reject a derived configuration before opening state.
+func (cfg PasskeyConfig) Validate() error {
+	_, err := cfg.normalize()
+	return err
+}
+
+// normalize validates the configuration and applies the documented defaults.
+// A configuration mistake must be fatal at startup: a wrong relying party
+// would otherwise silently refuse every ceremony.
+func (cfg PasskeyConfig) normalize() (normalizedPasskeyConfig, error) {
 	rpID := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(cfg.RPID), "."))
 	if rpID == "" {
-		return nil, errors.New("identity: passkey sign-in needs an RP ID")
+		return normalizedPasskeyConfig{}, errors.New("identity: passkey sign-in needs an RP ID")
 	}
 	if strings.ContainsAny(rpID, "/:@ ") {
-		return nil, fmt.Errorf("identity: passkey RP ID %q must be a bare domain", cfg.RPID)
+		return normalizedPasskeyConfig{}, fmt.Errorf("identity: passkey RP ID %q must be a bare domain", cfg.RPID)
 	}
 	// Browsers refuse an IP address as RP ID, so accepting one here would
 	// start a server whose ceremonies can never succeed.
 	if net.ParseIP(rpID) != nil {
-		return nil, fmt.Errorf("identity: passkey RP ID %q must be a domain, not an IP address", cfg.RPID)
+		return normalizedPasskeyConfig{}, fmt.Errorf("identity: passkey RP ID %q must be a domain, not an IP address", cfg.RPID)
 	}
 	if err := protocol.ValidateRPID(rpID); err != nil {
-		return nil, fmt.Errorf("identity: passkey RP ID %q is not a valid domain: %w", cfg.RPID, err)
+		return normalizedPasskeyConfig{}, fmt.Errorf("identity: passkey RP ID %q is not a valid domain: %w", cfg.RPID, err)
 	}
 	if len(cfg.Origins) == 0 {
-		return nil, errors.New("identity: passkey sign-in needs at least one allowed origin")
+		return normalizedPasskeyConfig{}, errors.New("identity: passkey sign-in needs at least one allowed origin")
 	}
 
 	origins := make([]string, 0, len(cfg.Origins))
 	for _, raw := range cfg.Origins {
 		origin, err := validatePasskeyOrigin(raw, rpID)
 		if err != nil {
-			return nil, err
+			return normalizedPasskeyConfig{}, err
 		}
 		origins = append(origins, origin)
 	}
@@ -100,21 +114,6 @@ func NewPasskeyService(store Store, cfg PasskeyConfig) (*PasskeyService, error) 
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
-	timeouts := webauthn.TimeoutsConfig{
-		Registration: webauthn.TimeoutConfig{Enforce: true, Timeout: timeout, TimeoutUVD: timeout},
-		Login:        webauthn.TimeoutConfig{Enforce: true, Timeout: timeout, TimeoutUVD: timeout},
-	}
-
-	wa, err := webauthn.New(&webauthn.Config{
-		RPID:                  rpID,
-		RPDisplayName:         displayName,
-		RPOrigins:             origins,
-		AttestationPreference: protocol.PreferNoAttestation,
-		Timeouts:              timeouts,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("identity: configuring passkey sign-in: %w", err)
-	}
 
 	userVerification := cfg.UserVerification
 	if userVerification == "" {
@@ -123,10 +122,43 @@ func NewPasskeyService(store Store, cfg PasskeyConfig) (*PasskeyService, error) 
 	switch userVerification {
 	case protocol.VerificationRequired, protocol.VerificationPreferred, protocol.VerificationDiscouraged:
 	default:
-		return nil, fmt.Errorf("identity: unknown user verification requirement %q", cfg.UserVerification)
+		return normalizedPasskeyConfig{}, fmt.Errorf("identity: unknown user verification requirement %q", cfg.UserVerification)
 	}
 
-	return &PasskeyService{store: store, wa: wa, userVerification: userVerification}, nil
+	return normalizedPasskeyConfig{
+		rpID:             rpID,
+		origins:          origins,
+		displayName:      displayName,
+		timeout:          timeout,
+		userVerification: userVerification,
+	}, nil
+}
+
+// NewPasskeyService validates cfg and returns the service.
+func NewPasskeyService(store Store, cfg PasskeyConfig) (*PasskeyService, error) {
+	if store == nil {
+		return nil, errors.New("identity: passkey service needs a store")
+	}
+	norm, err := cfg.normalize()
+	if err != nil {
+		return nil, err
+	}
+
+	wa, err := webauthn.New(&webauthn.Config{
+		RPID:                  norm.rpID,
+		RPDisplayName:         norm.displayName,
+		RPOrigins:             norm.origins,
+		AttestationPreference: protocol.PreferNoAttestation,
+		Timeouts: webauthn.TimeoutsConfig{
+			Registration: webauthn.TimeoutConfig{Enforce: true, Timeout: norm.timeout, TimeoutUVD: norm.timeout},
+			Login:        webauthn.TimeoutConfig{Enforce: true, Timeout: norm.timeout, TimeoutUVD: norm.timeout},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("identity: configuring passkey sign-in: %w", err)
+	}
+
+	return &PasskeyService{store: store, wa: wa, userVerification: norm.userVerification}, nil
 }
 
 // validatePasskeyOrigin enforces that an allowed origin is a plain https (or

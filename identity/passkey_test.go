@@ -172,6 +172,9 @@ func TestPasskeyConfigValidation(t *testing.T) {
 	store := openTestStore(t)
 
 	valid := PasskeyConfig{RPID: "login.example.com", Origins: []string{"https://login.example.com"}}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Validate(valid): %v", err)
+	}
 	if _, err := NewPasskeyService(store, valid); err != nil {
 		t.Fatalf("NewPasskeyService(valid): %v", err)
 	}
@@ -202,6 +205,9 @@ func TestPasskeyConfigValidation(t *testing.T) {
 
 	// http is allowed for loopback, where browsers accept it.
 	loopback := PasskeyConfig{RPID: "localhost", Origins: []string{"http://localhost:8080"}}
+	if err := loopback.Validate(); err != nil {
+		t.Errorf("Validate(loopback): %v", err)
+	}
 	if _, err := NewPasskeyService(store, loopback); err != nil {
 		t.Errorf("NewPasskeyService(loopback): %v", err)
 	}

@@ -43,6 +43,12 @@ func main() {
 			"comma-separated OIDC scopes (default openid,profile,email)")
 		allowLocalLogin = flag.Bool("allow-local-login", false,
 			"offer the built-in local login even when OIDC is configured")
+		passkey = flag.Bool("passkey", true,
+			"enable passkey (WebAuthn) sign-in; RP ID and origin default to -server-url")
+		passkeyRPID = flag.String("passkey-rpid", "",
+			"WebAuthn relying party ID (bare domain, e.g. login.example.com); empty derives it from -server-url")
+		passkeyDisplayName = flag.String("passkey-display-name", "",
+			"relying party name authenticators show (defaults to the RP ID)")
 		dnsWebhook = flag.String("dns-webhook-url", "",
 			"HTTPS endpoint that applies DNS record changes for ACME DNS-01 (enables certificates)")
 		dnsWebhookTokenEnv = flag.String("dns-webhook-token-env", "XUNARA_DNS_WEBHOOK_TOKEN",
@@ -66,13 +72,15 @@ func main() {
 			"comma-separated audit action globs to deliver (default all events)")
 	)
 	var (
-		nameservers stringListFlag
-		dnsRoutes   stringListFlag
-		certDomains stringListFlag
+		nameservers    stringListFlag
+		dnsRoutes      stringListFlag
+		certDomains    stringListFlag
+		passkeyOrigins stringListFlag
 	)
 	flag.Var(&nameservers, "nameserver", "global DNS resolver (IP or IP:port); repeatable")
 	flag.Var(&dnsRoutes, "dns-route", "split-DNS entry suffix=resolver[,resolver]; repeatable")
 	flag.Var(&certDomains, "cert-domain", "extra DNS name clients may obtain TLS certificates for; repeatable")
+	flag.Var(&passkeyOrigins, "passkey-origin", "allowed WebAuthn origin (repeatable); empty derives it from -server-url")
 	flag.Parse()
 
 	logger := newLogger(*logLevel)
@@ -152,6 +160,15 @@ func main() {
 		os.Exit(1)
 	}
 
+	passkeyCfg, err := buildPasskeyConfig(*passkey, *serverURL, *passkeyRPID, *passkeyDisplayName, passkeyOrigins)
+	if err != nil {
+		logger.Error("invalid passkey configuration", "err", err)
+		os.Exit(1)
+	}
+	if *passkey && passkeyCfg == nil {
+		logger.Warn("passkey sign-in is disabled: -server-url cannot serve as a WebAuthn relying party (use -passkey-rpid/-passkey-origin, or -passkey=false to silence this)")
+	}
+
 	srv, err := control.New(control.Config{
 		ServerURL:           *serverURL,
 		ListenAddr:          *listen,
@@ -167,6 +184,7 @@ func main() {
 		ClientVersionURL:    *clientVerURL,
 		OIDCProviders:       oidcProviders,
 		AllowLocalLogin:     *allowLocalLogin,
+		Passkeys:            passkeyCfg,
 		CertDomains:         certDomains,
 		DNSProvider:         dnsProvider,
 		Webhooks:            webhooks,
@@ -194,6 +212,7 @@ var orgScopedFlags = []string{
 	"derp-map", "derp-policy", "derp-regions", "client-version", "client-version-url",
 	"oidc-issuer", "oidc-id", "oidc-client-id", "oidc-redirect-url", "oidc-scopes",
 	"allow-local-login", "cert-domain",
+	"passkey", "passkey-rpid", "passkey-origin", "passkey-display-name",
 	"dns-webhook-url", "dns-webhook-token-env",
 	"dns-cloudflare-zone", "dns-cloudflare-token-env",
 	"webhook-url", "webhook-secret-env", "webhook-events",

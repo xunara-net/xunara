@@ -246,7 +246,12 @@ func (o orgConfig) controlConfig(logger *slog.Logger) (control.Config, error) {
 		OIDCProviders:       oidcProviders,
 		Webhooks:            webhooks,
 		AllowLocalLogin:     o.AllowLocalLogin,
-		Logger:              logger,
+		// Each organization is served from its own server_url, so passkey
+		// sign-in is derived per organization. A URL that cannot be a
+		// relying party leaves the feature off rather than failing the
+		// organization at startup.
+		Passkeys: derivePasskeyConfig(o.ServerURL),
+		Logger:   logger,
 	}, nil
 }
 

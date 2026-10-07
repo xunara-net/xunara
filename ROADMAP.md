@@ -1129,7 +1129,7 @@ Update}`（`AttrUpdate` = `map[string]any`，值可为 string / float64 / bool�
 
 ---
 
-## M17 — Passkey / WebAuthn 登录（进行中）
+## M17 — Passkey / WebAuthn 登录（已完成）
 
 目标：Human Identity 增加 passkey（WebAuthn）注册与登录。Passkey 只登录人类
 用户，永远不授权机器；ceremony 与 OAuth transaction/session/device
@@ -1146,14 +1146,22 @@ authorization 分离（AGENTS §5/§10）。规格见
   5 分钟、浏览器绑定 secret（库里只存 SHA-256）、SQLite 事务内单次消费、
   sign counter/LastUsedAt 回写。测试覆盖配置校验、注册+登录端到端、错误绑定
   不产生消费以外的副作用、重放、跨 RPID/origin、handle 稳定、级联删除。
-- 控制面接线（M17b，进行中）：`control.Config.Passkeys`（nil 关闭）；
-  登录页 passkey 按钮 + `POST /passkey/login/begin|finish`（HttpOnly ceremony
-  cookie，成功走既有 session 创建路径）；Console `/console/passkeys`（列表/
-  注册/删除自己的，CSRF）；审计 `passkey.registered`/`passkey.deleted` 与
-  `login.succeeded`（method=passkey）；janitor 清理过期 ceremony；
-  cmd/xunarad flags（未显式配置时从 `-server-url` 推导，推导失败告警并关闭）。
-- 收尾（M17c）：console 页面与浏览器流测试、文档、全量验证
-  （gofmt/vet/test，并发/Identity 变更跑 -race）。
+- 控制面接线（M17b，已完成）：`control.Config.Passkeys`（nil 关闭，配置错误
+  启动失败）；登录页在启用时改为选择页（不再自动选中唯一 provider）并渲染
+  passkey 按钮，`POST /passkey/login/begin|finish`（HttpOnly ceremony cookie，
+  成功走既有 `CreateSession`，审计 `login.succeeded` detail=method=passkey）。
+  Console `/console/passkeys`：任意角色管理自己的凭据（列表/添加/删除，
+  JSON 端点用 CSRF header，删除仅限本人）；审计 `passkey.registered`/
+  `passkey.deleted`。janitor 清理过期 ceremony。cmd/xunarad：
+  `-passkey`（默认开）/`-passkey-rpid`/`-passkey-origin`/
+  `-passkey-display-name`，未显式配置时从 `-server-url` 推导（不可用时告警
+  并关闭，不阻塞启动）；显式配置错误启动失败；多租户 org config 按各
+  `server_url` 推导。
+- 收尾（M17c，已完成）：控制面浏览器流测试（software authenticator 手工
+  attestation/assertion：注册+登录往返、单次消费重放 400、跨浏览器绑定、
+  未配置 404/页面提示、跨账号删除拒绝、janitor 回收、审计断言）、
+  cmd/xunarad 推导测试、`IDENTITY_LOGIN.md` §20 状态说明；全量
+  gofmt/vet/test 与 `-race`（control/state/identity/idtoken/cmd/xunarad）通过。
 - 明确不做（v1）：账号恢复、attestation 策略/AAGUID 白名单、conditional UI、
   管理员代管 passkey、登录 begin 限速（反向代理负责）。
 

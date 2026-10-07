@@ -73,6 +73,7 @@ footer { text-align: center; color: #5b616e; font-size: .8rem; }
 <a href="/console/services"{{if eq .Nav "services"}} class="active"{{end}}>Services</a>
 <a href="/console/devices"{{if eq .Nav "devices"}} class="active"{{end}}>Devices</a>
 <a href="/console/users"{{if eq .Nav "users"}} class="active"{{end}}>Users</a>
+<a href="/console/passkeys"{{if eq .Nav "passkeys"}} class="active"{{end}}>Passkeys</a>
 <a href="/console/dns"{{if eq .Nav "dns"}} class="active"{{end}}>DNS</a>
 <a href="/console/auth-keys"{{if eq .Nav "auth-keys"}} class="active"{{end}}>Auth keys</a>
 <a href="/console/agents"{{if eq .Nav "agents"}} class="active"{{end}}>Agents</a>
@@ -101,6 +102,7 @@ var consoleTitles = map[string]string{
 	"services":  "Services",
 	"devices":   "Devices",
 	"users":     "Users",
+	"passkeys":  "Passkeys",
 	"dns":       "DNS",
 	"auth-keys": "Auth keys",
 	"agents":    "Agents",
@@ -401,6 +403,65 @@ immediately; the device keeps its node identity and can enroll again.</p>
 <p>No agent credentials. A device creates one when it enrolls with
 <code>/api/agent/v1/enroll</code>.</p>
 {{end}}
+`)
+
+	consolePasskeysTemplate = consolePage("passkeys", `
+<h2>Passkeys</h2>
+<p>Passkeys sign you in without a password and never authorize a machine. The
+private key stays on your device; the server stores only its public key.</p>
+{{if .PasskeyEnabled}}
+<div class="field">
+<label for="passkey-name">Name</label>
+<input id="passkey-name" type="text" maxlength="64" placeholder="Laptop Touch ID">
+<button id="passkey-add" type="button" data-csrf="{{.CSRF}}">Add passkey</button>
+</div>
+<p id="passkey-status" role="status"></p>
+{{else}}
+<p class="notice">Passkey sign-in is not configured on this server.</p>
+{{end}}
+{{if .Passkeys}}
+<table>
+<thead><tr><th>Name</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+<tbody>
+{{range .Passkeys}}
+<tr>
+<td>{{.Name}}</td>
+<td>{{fmtTime .Created}}</td>
+<td>{{fmtTime .LastUsed}}</td>
+<td>
+<form method="post" action="/console/passkeys/{{.ID}}/delete">
+<input type="hidden" name="csrf" value="{{$.CSRF}}">
+<button class="danger" type="submit">Delete</button>
+</form>
+</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>No passkeys registered on this account.</p>
+{{end}}
+{{if .PasskeyEnabled}}<script>`+passkeyBrowserJS+`
+(function () {
+  const button = document.getElementById("passkey-add");
+  const nameInput = document.getElementById("passkey-name");
+  const status = document.getElementById("passkey-status");
+  const csrf = button.dataset.csrf;
+  button.addEventListener("click", async function () {
+    button.disabled = true;
+    status.textContent = "";
+    try {
+      const begin = await passkeyPost("/console/passkeys/begin", {}, csrf);
+      const credential = await navigator.credentials.create({ publicKey: decodeCreationOptions(begin.options.publicKey) });
+      await passkeyPost("/console/passkeys/finish", { name: nameInput.value, credential: encodeAttestation(credential) }, csrf);
+      window.location.reload();
+    } catch (err) {
+      status.textContent = err.message || "Adding the passkey failed.";
+      button.disabled = false;
+    }
+  });
+})();
+</script>{{end}}
 `)
 
 	consoleServicesTemplate = consolePage("services", `

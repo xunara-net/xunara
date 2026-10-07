@@ -496,3 +496,22 @@ Trust Engine
    ↓
 Policy Engine
 ```
+
+## 20. Passkey 实现状态（v1）
+
+Passkey/WebAuthn 已按 `PROJECT_SPEC.md` §24 实现（与 Mirage 的
+`mirage-authstate2`/server-local cache 无关）：
+
+- 身份层：`identity.PasskeyStore` / `PasskeyCeremonyStore`（SQLite 迁移 v10，
+  ceremony 持久化 + 单次消费 + 浏览器绑定 secret 只存 SHA-256），
+  `identity.PasskeyService`（RP 配置 startup fail-closed、usernameless
+  discoverable credential 登录、sign counter 回写）。
+- 控制面：`POST /passkey/login/begin|finish`（公开，HttpOnly ceremony cookie，
+  成功后走既有 `CreateSession`）；Console `/console/passkeys`（登录用户管理
+  自己的凭据，CSRF header）；审计 `passkey.registered` / `passkey.deleted`、
+  `login.succeeded`（`method=passkey`）。
+- 配置：`control.Config.Passkeys`（nil 关闭）；cmd/xunarad `-passkey`
+  （默认开）、`-passkey-rpid`、`-passkey-origin`、`-passkey-display-name`，
+  未显式配置时从 `-server-url` 推导（不能作为 RP 的 URL 只告警并关闭）。
+- 身份键仍是 `(provider_id, subject)`；passkey 只解析到 User，永不进入
+  Machine Identity。

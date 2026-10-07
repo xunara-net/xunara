@@ -197,4 +197,9 @@ const (
 	// advertises (Xunara Atlas). The detail lists names, protocols and ports,
 	// never metadata values.
 	AuditServicesUpdated = "node.services_updated"
+	// AuditPasskeyRegistered and AuditPasskeyDeleted record a user adding or
+	// removing a WebAuthn credential. The detail names the user-chosen label,
+	// never the credential ID, public key or challenge.
+	AuditPasskeyRegistered = "passkey.registered"
+	AuditPasskeyDeleted    = "passkey.deleted"
 )

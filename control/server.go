@@ -88,6 +88,10 @@ type Config struct {
 	// Providers are additional identity providers registered as-is (custom
 	// adapters and tests). Prefer OIDCProviders for OIDC issuers.
 	Providers []identity.IdentityProvider
+	// Passkeys enables passkey (WebAuthn) sign-in and console credential
+	// management. Nil disables the feature: the endpoints answer 404 and the
+	// sign-in page offers no passkey button.
+	Passkeys *identity.PasskeyConfig
 	// CertDomains are extra DNS names for which clients may obtain TLS
 	// certificates, on top of each node's own MagicDNS FQDN. They only take
 	// effect when DNSProvider is set: cert issuance needs a public zone the
@@ -132,6 +136,10 @@ type Server struct {
 	// providerRedirects maps a provider to its registered callback URL.
 	providers         *identity.Registry
 	providerRedirects map[string]string
+
+	// passkeys performs WebAuthn registration and login, or nil when the
+	// feature is not configured.
+	passkeys *identity.PasskeyService
 
 	// secureCookies marks cookies Secure; sessionTTL bounds browser sessions;
 	// authTTL bounds pending login transactions.
@@ -283,6 +291,18 @@ func New(cfg Config) (*Server, error) {
 		sessionTTL = identity.DefaultSessionTTL
 	}
 
+	// A passkey configuration that cannot serve ceremonies must stop the
+	// server: silently disabling the feature would leave operators guessing
+	// why no browser can register.
+	var passkeys *identity.PasskeyService
+	if cfg.Passkeys != nil {
+		passkeys, err = identity.NewPasskeyService(identityStore, *cfg.Passkeys)
+		if err != nil {
+			store.Close()
+			return nil, fmt.Errorf("control: passkey sign-in: %w", err)
+		}
+	}
+
 	resolvers, err := parseResolvers(cfg.Nameservers)
 	if err != nil {
 		store.Close()
@@ -317,6 +337,7 @@ func New(cfg Config) (*Server, error) {
 		identity:          identityStore,
 		providers:         providers,
 		providerRedirects: redirects,
+		passkeys:          passkeys,
 		secureCookies:     strings.HasPrefix(strings.ToLower(cfg.ServerURL), "https://"),
 		sessionTTL:        sessionTTL,
 		authTTL:           identity.DefaultAuthTransactionTTL,
@@ -332,6 +353,10 @@ func New(cfg Config) (*Server, error) {
 	if cfg.ServerURL != "" {
 		srv.tokens = idtoken.NewKeyring(cfg.StateDir, cfg.Logger)
 		cfg.Logger.Info("identity-token issuer enabled", "issuer", idtoken.TrimIssuer(cfg.ServerURL))
+	}
+
+	if passkeys != nil {
+		cfg.Logger.Info("passkey sign-in enabled", "rp_id", cfg.Passkeys.RPID)
 	}
 
 	// The DERP policy decides what clients are served; a policy that names a
@@ -576,6 +601,10 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/.well-known/openid-configuration", s.handleOpenIDConfiguration)
 	r.Get("/login", s.handleLogin)
 	r.Post("/logout", s.handleLogout)
+	if s.passkeys != nil {
+		r.Post("/passkey/login/begin", s.handlePasskeyLoginBegin)
+		r.Post("/passkey/login/finish", s.handlePasskeyLoginFinish)
+	}
 	r.Get("/oidc/callback/{providerID}", s.handleCallback)
 	r.Get("/register/{authID}", s.handleRegisterPage)
 	r.Post("/register/{authID}/approve", s.handleApproveDevice)

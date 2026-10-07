@@ -23,6 +23,7 @@ func (s *Server) runJanitor(ctx context.Context) {
 			s.ReapEphemeral(now)
 			s.reapSSHChecks(now)
 			s.reapACMEChallenges(now)
+			s.reapPasskeyCeremonies(now)
 		}
 	}
 }
@@ -63,6 +64,20 @@ func (s *Server) reapSSHChecks(now time.Time) {
 	}
 	if deleted > 0 {
 		s.log.Info("reaped expired ssh check sessions", "count", deleted)
+	}
+}
+
+// reapPasskeyCeremonies removes WebAuthn challenges past their TTL. A
+// ceremony is answered within seconds; keeping the rows for their five-minute
+// TTL leaves slack for a slow user gesture without letting challenges pile up.
+func (s *Server) reapPasskeyCeremonies(now time.Time) {
+	deleted, err := s.identity.DeleteExpiredPasskeyCeremonies(now)
+	if err != nil {
+		s.log.Warn("reaping passkey ceremonies", "err", err)
+		return
+	}
+	if deleted > 0 {
+		s.log.Info("reaped expired passkey ceremonies", "count", deleted)
 	}
 }
 

@@ -29,16 +29,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	returnTo := safeReturnTo(r.URL.Query().Get("return_to"))
 
 	ids := s.providers.IDs()
-	if len(ids) == 0 {
+	if len(ids) == 0 && s.passkeys == nil {
 		s.renderError(w, http.StatusServiceUnavailable, "Sign-in unavailable",
 			"No identity provider is configured on this server.")
 		return
 	}
 
 	// An explicit provider must exist: falling back to another provider would
-	// silently send the user somewhere they did not choose.
+	// silently send the user somewhere they did not choose. A single provider
+	// is pre-selected, except when passkey sign-in must be offered too:
+	// choosing for the user would hide the passkey button.
 	providerID := r.URL.Query().Get("provider")
-	if providerID == "" && len(ids) == 1 {
+	if providerID == "" && len(ids) == 1 && s.passkeys == nil {
 		providerID = ids[0]
 	}
 	if providerID == "" {
@@ -50,7 +52,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				URL:  "/login?provider=" + url.QueryEscape(id) + "&return_to=" + url.QueryEscape(returnTo),
 			})
 		}
-		s.renderLoginPage(w, views)
+		s.renderLoginPage(w, views, s.passkeys != nil)
 		return
 	}
 

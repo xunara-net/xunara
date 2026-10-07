@@ -13,10 +13,12 @@ import (
 )
 
 // Cookie names. The session cookie is the browser's bearer token; the auth
-// cookie only binds a pending login to the browser that started it.
+// cookie only binds a pending login to the browser that started it, and the
+// passkey cookie does the same for a WebAuthn ceremony.
 const (
 	sessionCookieName = "xunara_session"
 	authCookieName    = "xunara_auth"
+	passkeyCookieName = "xunara_passkey"
 )
 
 // setSessionCookie hands the session token to the browser. The cookie is
@@ -78,7 +80,47 @@ func (s *Server) clearAuthCookie(w http.ResponseWriter) {
 // authCookieValue splits the transaction cookie into its identifier and
 // browser secret.
 func authCookieValue(r *http.Request) (id, secret string, ok bool) {
-	c, err := r.Cookie(authCookieName)
+	return splitBrowserBinding(r, authCookieName)
+}
+
+// setPasskeyCookie binds a WebAuthn ceremony to this browser. The cookie value
+// is the ceremony identifier plus the binding secret; the secret is never
+// echoed in a response body.
+func (s *Server) setPasskeyCookie(w http.ResponseWriter, ceremonyID, browserSecret string, expires time.Time) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     passkeyCookieName,
+		Value:    ceremonyID + "." + browserSecret,
+		Path:     "/",
+		Expires:  expires,
+		MaxAge:   int(time.Until(expires).Seconds()),
+		HttpOnly: true,
+		Secure:   s.secureCookies,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// clearPasskeyCookie removes the ceremony cookie (single-use challenges).
+func (s *Server) clearPasskeyCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     passkeyCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   s.secureCookies,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+// passkeyCookieValue splits the ceremony cookie into its identifier and
+// browser secret.
+func passkeyCookieValue(r *http.Request) (id, secret string, ok bool) {
+	return splitBrowserBinding(r, passkeyCookieName)
+}
+
+// splitBrowserBinding reads an "identifier.secret" binding cookie.
+func splitBrowserBinding(r *http.Request, name string) (id, secret string, ok bool) {
+	c, err := r.Cookie(name)
 	if err != nil {
 		return "", "", false
 	}
@@ -124,6 +166,14 @@ func csrfTokenFor(token string) string {
 // checkCSRF verifies the form's CSRF token against the request's session.
 func checkCSRF(r *http.Request, token string) bool {
 	got := r.PostFormValue("csrf")
+	want := csrfTokenFor(token)
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
+// checkCSRFHeader verifies the CSRF token of a JSON request, where the token
+// travels in a header instead of a form field.
+func checkCSRFHeader(r *http.Request, token string) bool {
+	got := r.Header.Get("X-CSRF-Token")
 	want := csrfTokenFor(token)
 	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }

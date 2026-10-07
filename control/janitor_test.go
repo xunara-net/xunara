@@ -8,6 +8,7 @@ import (
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 
+	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/state"
 )
 
@@ -140,5 +141,37 @@ func TestReapEphemeralSparesOnlineNodes(t *testing.T) {
 	}
 	if _, ok := s.store.GetNodeByID(node.ID); !ok {
 		t.Error("online ephemeral node was reaped")
+	}
+}
+
+// TestReapPasskeyCeremonies checks that expired WebAuthn challenges are
+// removed while live ones survive.
+func TestReapPasskeyCeremonies(t *testing.T) {
+	s := newTestServer(t)
+
+	expired, _, err := s.identity.CreatePasskeyCeremony(identity.NewPasskeyCeremonyOptions{
+		Kind:      identity.PasskeyCeremonyLogin,
+		Session:   []byte("{}"),
+		ExpiresAt: time.Now().Add(-time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreatePasskeyCeremony: %v", err)
+	}
+	live, _, err := s.identity.CreatePasskeyCeremony(identity.NewPasskeyCeremonyOptions{
+		Kind:      identity.PasskeyCeremonyLogin,
+		Session:   []byte("{}"),
+		ExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatalf("CreatePasskeyCeremony: %v", err)
+	}
+
+	s.reapPasskeyCeremonies(time.Now())
+
+	if _, ok := s.identity.GetPasskeyCeremony(expired.ID); ok {
+		t.Error("expired passkey ceremony survived the janitor")
+	}
+	if _, ok := s.identity.GetPasskeyCeremony(live.ID); !ok {
+		t.Error("live passkey ceremony was reaped")
 	}
 }

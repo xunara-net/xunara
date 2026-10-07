@@ -43,7 +43,31 @@ var (
 <h1>Sign in</h1>
 <p>Choose an identity provider to continue.</p>
 {{range .Providers}}<a class="provider" href="{{.URL}}">{{.Name}}</a>{{end}}
-` + `</main></body></html>`))
+{{if .Passkey}}
+<p><button id="passkey-signin" type="button">Sign in with a passkey</button></p>
+<p id="passkey-status" class="status" role="status"></p>
+{{end}}
+` + `{{if .Passkey}}<script>` + passkeyBrowserJS + `
+(function () {
+  const button = document.getElementById("passkey-signin");
+  const status = document.getElementById("passkey-status");
+  button.addEventListener("click", async function () {
+    button.disabled = true;
+    status.textContent = "";
+    try {
+      const begin = await passkeyPost("/passkey/login/begin", {});
+      const credential = await navigator.credentials.get({ publicKey: decodeRequestOptions(begin.options.publicKey) });
+      const returnTo = new URLSearchParams(window.location.search).get("return_to");
+      const url = "/passkey/login/finish" + (returnTo ? "?return_to=" + encodeURIComponent(returnTo) : "");
+      const finish = await passkeyPost(url, encodeAssertion(credential));
+      window.location = finish.redirect || "/";
+    } catch (err) {
+      status.textContent = err.message || "Passkey sign-in failed.";
+      button.disabled = false;
+    }
+  });
+})();
+</script>{{end}}` + `</main></body></html>`))
 
 	errorPageTemplate = template.Must(template.New("error").Parse(pageHead + `
 <h1>{{.Title}}</h1>
@@ -116,10 +140,13 @@ proceed; the decision is recorded in the audit log.</p>
 ` + `</main></body></html>`))
 )
 
-// renderLoginPage lists the configured providers.
-func (s *Server) renderLoginPage(w http.ResponseWriter, providers []providerView) {
+// renderLoginPage lists the configured providers, and the passkey button when
+// passkey sign-in is enabled.
+func (s *Server) renderLoginPage(w http.ResponseWriter, providers []providerView, passkey bool) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := loginPageTemplate.Execute(w, map[string]any{"Title": "Sign in", "Providers": providers}); err != nil {
+	if err := loginPageTemplate.Execute(w, map[string]any{
+		"Title": "Sign in", "Providers": providers, "Passkey": passkey,
+	}); err != nil {
 		s.log.Error("rendering login page", "err", err)
 	}
 }

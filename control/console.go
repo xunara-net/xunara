@@ -81,6 +81,13 @@ func (s *Server) consoleRouter() http.Handler {
 	r.Get("/webhooks", s.handleConsoleWebhooks)
 	r.Get("/policy", s.handleConsolePolicy)
 	r.Get("/audit", s.handleConsoleAudit)
+	r.Get("/passkeys", s.handleConsolePasskeys)
+
+	// Passkeys belong to the signed-in user, not to the tailnet, so any role
+	// may manage its own; the handlers enforce session + CSRF themselves.
+	r.Post("/passkeys/begin", s.handleConsolePasskeyBegin)
+	r.Post("/passkeys/finish", s.handleConsolePasskeyFinish)
+	r.Post("/passkeys/{id}/delete", s.handleConsoleDeletePasskey)
 
 	// Every write goes through the role guard: members may look at the
 	// tailnet, admins and owners may change it.
