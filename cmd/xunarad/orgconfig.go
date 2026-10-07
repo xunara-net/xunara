@@ -1,0 +1,226 @@
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/xunara/xunara/control"
+	"github.com/xunara/xunara/identity"
+)
+
+// This file loads the multi-tenant organization table. One xunarad process can
+// host several organizations; each gets its own state directory, policy, DNS
+// domain and identity store, and requests are routed to it by Host. Tenant
+// isolation therefore does not depend on query filters (AGENTS.md section 12).
+
+// orgConfigFile is the JSON document accepted by -org-config.
+type orgConfigFile struct {
+	Organizations []orgConfig `json:"organizations"`
+}
+
+// orgConfig describes one organization. Secrets are never read from the file:
+// each secret field names the environment variable that holds it (AGENTS.md
+// section 8).
+type orgConfig struct {
+	ID                  string              `json:"id"`
+	Name                string              `json:"name"`
+	Domains             []string            `json:"domains"`
+	ServerURL           string              `json:"server_url"`
+	StateDir            string              `json:"state_dir"`
+	Domain              string              `json:"domain"`
+	Policy              string              `json:"policy"`
+	Nameservers         []string            `json:"nameservers"`
+	DNSRoutes           map[string][]string `json:"dns_routes"`
+	DERPMapFile         string              `json:"derp_map"`
+	LatestClientVersion string              `json:"client_version"`
+	ClientVersionURL    string              `json:"client_version_url"`
+	NodeKeyExpiry       string              `json:"node_key_expiry"`
+	CertDomains         []string            `json:"cert_domains"`
+	DNS                 *orgDNSConfig       `json:"dns"`
+	OIDC                *orgOIDCConfig      `json:"oidc"`
+	AllowLocalLogin     bool                `json:"allow_local_login"`
+}
+
+// orgDNSConfig names the public-zone writer for ACME DNS-01.
+type orgDNSConfig struct {
+	WebhookURL         string `json:"webhook_url"`
+	WebhookTokenEnv    string `json:"webhook_token_env"`
+	CloudflareZone     string `json:"cloudflare_zone"`
+	CloudflareTokenEnv string `json:"cloudflare_token_env"`
+}
+
+// orgOIDCConfig names the organization's OIDC provider. ClientSecretEnv
+// defaults to XUNARA_OIDC_CLIENT_SECRET.
+type orgOIDCConfig struct {
+	ID              string   `json:"id"`
+	DisplayName     string   `json:"display_name"`
+	Issuer          string   `json:"issuer"`
+	ClientID        string   `json:"client_id"`
+	ClientSecretEnv string   `json:"client_secret_env"`
+	RedirectURL     string   `json:"redirect_url"`
+	Scopes          []string `json:"scopes"`
+}
+
+// loadOrgSites parses the organization table and builds one control-plane
+// server per organization. Any partly built server is closed when a later one
+// fails, so a broken row cannot leak resources.
+func loadOrgSites(path string, logger *slog.Logger) ([]control.OrgSite, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+
+	var doc orgConfigFile
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&doc); err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	if len(doc.Organizations) == 0 {
+		return nil, fmt.Errorf("%s lists no organizations", path)
+	}
+
+	sites := make([]control.OrgSite, 0, len(doc.Organizations))
+	stateDirs := make(map[string]string, len(doc.Organizations))
+	closeAll := func() {
+		for _, site := range sites {
+			_ = site.Server.Close()
+		}
+	}
+
+	for i, org := range doc.Organizations {
+		// Two organizations sharing a state directory would share the same
+		// SQLite database and Noise key: a tenant-boundary violation by
+		// configuration. Refuse it.
+		if other, dup := stateDirs[org.StateDir]; dup {
+			closeAll()
+			return nil, fmt.Errorf("%s: organizations[%d] (%s): state_dir %q is already used by organization %q",
+				path, i, org.ID, org.StateDir, other)
+		}
+		stateDirs[org.StateDir] = org.ID
+
+		cfg, err := org.controlConfig(logger)
+		if err != nil {
+			closeAll()
+			return nil, fmt.Errorf("%s: organizations[%d] (%s): %w", path, i, org.ID, err)
+		}
+		server, err := control.New(cfg)
+		if err != nil {
+			closeAll()
+			return nil, fmt.Errorf("%s: organizations[%d] (%s): %w", path, i, org.ID, err)
+		}
+		sites = append(sites, control.OrgSite{
+			ID:      org.ID,
+			Name:    org.Name,
+			Domains: org.Domains,
+			Server:  server,
+		})
+	}
+	return sites, nil
+}
+
+// controlConfig turns one organization row into a [control.Config].
+func (o orgConfig) controlConfig(logger *slog.Logger) (control.Config, error) {
+	if strings.TrimSpace(o.ID) == "" {
+		return control.Config{}, fmt.Errorf("id is required")
+	}
+	if o.StateDir == "" {
+		return control.Config{}, fmt.Errorf("state_dir is required (organizations must not share state)")
+	}
+	if o.ServerURL == "" {
+		return control.Config{}, fmt.Errorf("server_url is required (it is what clients are configured with)")
+	}
+
+	derpMap, err := loadDERPMap(o.DERPMapFile)
+	if err != nil {
+		return control.Config{}, err
+	}
+
+	nodeKeyExpiry, err := parseNodeKeyExpiry(o.NodeKeyExpiry)
+	if err != nil {
+		return control.Config{}, err
+	}
+
+	var dnsProvider control.DNSProvider
+	if o.DNS != nil {
+		webhookTokenEnv := o.DNS.WebhookTokenEnv
+		if webhookTokenEnv == "" {
+			webhookTokenEnv = "XUNARA_DNS_WEBHOOK_TOKEN"
+		}
+		cfTokenEnv := o.DNS.CloudflareTokenEnv
+		if cfTokenEnv == "" {
+			cfTokenEnv = "XUNARA_CLOUDFLARE_API_TOKEN"
+		}
+		dnsProvider, err = buildDNSProvider(o.DNS.WebhookURL, webhookTokenEnv, o.DNS.CloudflareZone, cfTokenEnv)
+		if err != nil {
+			return control.Config{}, err
+		}
+	}
+
+	var oidcProviders []identity.OIDCConfig
+	if o.OIDC != nil {
+		secretEnv := o.OIDC.ClientSecretEnv
+		if secretEnv == "" {
+			secretEnv = "XUNARA_OIDC_CLIENT_SECRET"
+		}
+		oidcProviders = append(oidcProviders, identity.OIDCConfig{
+			ID:           o.OIDC.ID,
+			DisplayName:  o.OIDC.DisplayName,
+			Issuer:       o.OIDC.Issuer,
+			ClientID:     o.OIDC.ClientID,
+			ClientSecret: os.Getenv(secretEnv),
+			RedirectURL:  o.OIDC.RedirectURL,
+			Scopes:       o.OIDC.Scopes,
+		})
+	}
+
+	return control.Config{
+		ServerURL:           o.ServerURL,
+		StateDir:            o.StateDir,
+		Domain:              o.Domain,
+		Nameservers:         o.Nameservers,
+		DNSRoutes:           o.DNSRoutes,
+		PolicyPath:          o.Policy,
+		DERPMap:             derpMap,
+		LatestClientVersion: o.LatestClientVersion,
+		ClientVersionURL:    o.ClientVersionURL,
+		NodeKeyExpiry:       nodeKeyExpiry,
+		CertDomains:         o.CertDomains,
+		DNSProvider:         dnsProvider,
+		OIDCProviders:       oidcProviders,
+		AllowLocalLogin:     o.AllowLocalLogin,
+		Logger:              logger,
+	}, nil
+}
+
+// parseNodeKeyExpiry accepts a Go duration ("4320h") or a day count ("180d").
+func parseNodeKeyExpiry(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	if days, ok := strings.CutSuffix(raw, "d"); ok {
+		n, err := time.ParseDuration(days + "h")
+		if err != nil {
+			return 0, fmt.Errorf("invalid node_key_expiry %q", raw)
+		}
+		n *= 24
+		if n < 0 {
+			return 0, fmt.Errorf("invalid node_key_expiry %q: must not be negative", raw)
+		}
+		return n, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid node_key_expiry %q: %w", raw, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("invalid node_key_expiry %q: must not be negative", raw)
+	}
+	return d, nil
+}

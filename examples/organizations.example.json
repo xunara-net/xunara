@@ -1,0 +1,35 @@
+{
+  "organizations": [
+    {
+      "id": "acme",
+      "name": "Acme Inc",
+      "domains": ["login.acme.example.com"],
+      "server_url": "https://login.acme.example.com",
+      "state_dir": "/var/lib/xunara/acme",
+      "domain": "acme.example.com",
+      "policy": "/etc/xunara/acme.hujson",
+      "nameservers": ["1.1.1.1"],
+      "dns_routes": {"corp.acme.example.com": ["10.0.0.53"]},
+      "node_key_expiry": "180d",
+      "cert_domains": ["acme.example.com"],
+      "dns": {
+        "cloudflare_zone": "acme.example.com",
+        "cloudflare_token_env": "ACME_CLOUDFLARE_API_TOKEN"
+      },
+      "oidc": {
+        "issuer": "https://idp.example.com",
+        "client_id": "xunara-acme",
+        "client_secret_env": "ACME_OIDC_CLIENT_SECRET"
+      }
+    },
+    {
+      "id": "globex",
+      "name": "Globex",
+      "domains": ["login.globex.example.com", "*.globex.example.com"],
+      "server_url": "https://login.globex.example.com",
+      "state_dir": "/var/lib/xunara/globex",
+      "domain": "globex.example.com",
+      "allow_local_login": true
+    }
+  ]
+}

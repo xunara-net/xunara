@@ -46,6 +46,10 @@ func main() {
 		cfZone     = flag.String("dns-cloudflare-zone", "", "Cloudflare zone for ACME DNS-01 (enables certificates)")
 		cfTokenEnv = flag.String("dns-cloudflare-token-env", "XUNARA_CLOUDFLARE_API_TOKEN",
 			"environment variable holding the Cloudflare API token")
+		orgConfigPath = flag.String("org-config", "",
+			"JSON file listing organizations to host (multi-tenant mode; mutually exclusive with the per-organization flags)")
+		platformTokenEnv = flag.String("platform-token-env", "XUNARA_PLATFORM_ADMIN_TOKEN",
+			"environment variable holding the /api/platform bearer token (multi-tenant mode)")
 	)
 	var (
 		nameservers stringListFlag
@@ -58,6 +62,18 @@ func main() {
 	flag.Parse()
 
 	logger := newLogger(*logLevel)
+
+	// Multi-tenant mode routes by Host and takes every organization-level
+	// setting from the config file, so mixing in the single-tenant flags would
+	// be ambiguous. Refuse instead of guessing.
+	if *orgConfigPath != "" {
+		if err := rejectOrgScopedFlags(); err != nil {
+			logger.Error("invalid configuration", "err", err)
+			os.Exit(1)
+		}
+		runRouter(*orgConfigPath, *listen, *platformTokenEnv, logger)
+		return
+	}
 
 	if *serverURL == "" {
 		*serverURL = "http://" + *listen
@@ -124,6 +140,85 @@ func main() {
 	defer stop()
 
 	if err := srv.Serve(ctx); err != nil {
+		logger.Error("server error", "err", err)
+		os.Exit(1)
+	}
+}
+
+// orgScopedFlags are the flags that describe a single organization. They are
+// rejected in -org-config mode, where the config file owns them.
+var orgScopedFlags = []string{
+	"state-dir", "server-url", "domain", "policy", "nameserver", "dns-route",
+	"derp-map", "client-version", "client-version-url",
+	"oidc-issuer", "oidc-id", "oidc-client-id", "oidc-redirect-url", "oidc-scopes",
+	"allow-local-login", "cert-domain",
+	"dns-webhook-url", "dns-webhook-token-env",
+	"dns-cloudflare-zone", "dns-cloudflare-token-env",
+}
+
+// rejectOrgScopedFlags fails when the operator combined -org-config with a
+// flag that belongs to the single-organization configuration.
+func rejectOrgScopedFlags() error {
+	var visited []string
+	flag.Visit(func(f *flag.Flag) { visited = append(visited, f.Name) })
+	return checkOrgScopedFlags(visited)
+}
+
+// checkOrgScopedFlags is the pure part of [rejectOrgScopedFlags].
+func checkOrgScopedFlags(visited []string) error {
+	var offending []string
+	for _, name := range visited {
+		for _, scoped := range orgScopedFlags {
+			if name == scoped {
+				offending = append(offending, "-"+name)
+			}
+		}
+	}
+	if len(offending) == 0 {
+		return nil
+	}
+	return fmt.Errorf("-org-config cannot be combined with %s; move them into the config file",
+		strings.Join(offending, ", "))
+}
+
+// runRouter serves a multi-tenant deployment until the process is signalled.
+func runRouter(path, listen, platformTokenEnv string, logger *slog.Logger) {
+	sites, err := loadOrgSites(path, logger)
+	if err != nil {
+		logger.Error("loading the organization table", "err", err)
+		os.Exit(1)
+	}
+
+	platformToken := os.Getenv(platformTokenEnv)
+	if platformToken == "" {
+		logger.Warn("platform API disabled: environment variable is empty",
+			"env", platformTokenEnv)
+	}
+
+	router, err := control.NewRouter(control.RouterConfig{
+		ListenAddr:         listen,
+		Orgs:               sites,
+		PlatformAdminToken: platformToken,
+		Logger:             logger,
+	})
+	if err != nil {
+		for _, site := range sites {
+			_ = site.Server.Close()
+		}
+		logger.Error("initializing the organization router", "err", err)
+		os.Exit(1)
+	}
+	defer router.Close()
+
+	for _, site := range sites {
+		logger.Info("organization hosted",
+			"id", site.ID, "name", site.Name, "domains", strings.Join(site.Domains, ","))
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := router.Serve(ctx); err != nil {
 		logger.Error("server error", "err", err)
 		os.Exit(1)
 	}

@@ -328,7 +328,8 @@ reference/{go-oidc,oauth2,dex,webauthn}
   - CLI：`xunara apikey create|list|revoke`（bootstrap 第一把管理员 key）。
   - 测试：`control/api_test.go`（401/403/scope、密钥不泄漏、注册/路由/删除、
     用户改名冲突、auth-key 一次性 secret、设备审批归属、key 吊销即时生效）。
-- 待办（M5 剩余）：`api/v2`、`api/platform`（组织/多租户）、gRPC/Webhook。
+- `api/platform` 已完成（M7a）：组织表 + `/api/platform/v1`（见 M7 段）。
+- 待办（M5 剩余）：`api/v2`、gRPC/Webhook。
 
 - M5b 已完成：Web Console（`/console/`，浏览器会话 + 每会话 CSRF）。
   - 页面：Overview（在线/离线、待审批设备、DNS、auth key、策略摘要）、Machines
@@ -490,6 +491,39 @@ reference/{go-oidc,oauth2,dex,webauthn}
 - `services/` 其余：Funnel（明确不支持）；Discovery。
 - `client/`：Xunara Agent（自研客户端，独立协议，不侵入 TS2021）。
 - ACL/Zero Trust（`Xunara Warden`）。
+
+---
+
+## M7 — 多租户（Organizations）—— 进行中
+
+- M7a 已完成：组织表与按 Host 路由的多租户控制面。
+  - `control.Router`（`control/router.go`）：一个监听器承载多个组织，按请求
+    Host 分发到各自的 `*Server`；精确域与单层通配域（`*.example.com`，只匹配
+    一个 label，DNS 通配语义），最长模式优先。唯一组织且未配置域时退化为
+    全 Host 兜底，单租户行为不变。
+  - 隔离是结构性的：每个组织一个独立 `Server`，即独立 state 目录、SQLite、
+    Noise key、策略、DNS provider 与身份库（对应 AGENTS.md §12 的租户边界，
+    不靠查询过滤）。
+  - 启动校验 fail-closed：组织 ID 必填且唯一、域不得重复、多组织时不得有
+    无域组织、域格式校验（拒绝 scheme/空格/裸主机名/多级通配）。
+  - `/health` `/version` 由 Router 回答（进程级，不落到某个组织）；未知 Host
+    返回不泄漏组织列表的 404（`Cache-Control: no-store`）。
+  - `/api/platform/v1/organizations[/{id}]`（`control/platform.go`）：只读跨
+    组织视图（id/name/domains + 节点/在线/用户/待审批设备/策略状态）。
+    认证只接受进程环境变量里的平台令牌（Bearer、SHA-256 后常量时间比较、
+    `Cache-Control: no-store`）；未配置令牌时整个 API 403 关闭；组织自己的
+    session cookie 或 API key 不能访问（租户凭据不外溢）。
+  - `cmd/xunarad -org-config <json> -platform-token-env <env>`：组织表 JSON
+    （`examples/organizations.example.json`；`DisallowUnknownFields`）、每组织
+    独立 state 目录（重复即拒绝，防止共享 SQLite）、可选 per-org OIDC/DNS
+    provider（secret 只从环境变量读取）、`node_key_expiry` 支持 `180d`。
+    与单组织 flag 互斥（`flag.Visit` 检查，拒绝歧义配置）。
+  - 测试：`control/router_test.go`（真实 TS2021 端到端经 Host 路由注册、跨组织
+    不可见、通配域、未知 Host 404、单组织兜底、校验表、域匹配表、
+    平台 API 认证/禁用/统计/组织凭据拒绝）、`cmd/xunarad/orgconfig_test.go`
+    （构建、共享 state 目录拒绝、坏配置表、expiry 解析、flag 互斥）。
+- 待办（M7 剩余）：组织 CRUD（当前 org 表来自进程配置，改配置需重启）、
+  `api/v2` 组织级 API 版本、组织级 DERP 策略、跨组织审计导出。
 
 ---
 
