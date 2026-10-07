@@ -303,7 +303,19 @@ reference/{go-oidc,oauth2,dex,webauthn}
 
 ## M6 — 服务与客户端
 
-- `services/`：Serve / Funnel / SSH check / Discovery。
+- M6a 已完成：Tailscale SSH（accept 模式）。
+  - `policy`：解析/校验文档 `ssh` 段（原为 unsupported）；`CompileSSHPolicy`
+    为“作为目的端的节点”编译 `tailcfg.SSHPolicy`（principals 按源地址展开，
+    `users` → wire SSHUsers 映射，`dst: autogroup:self` 仅限同用户设备）。
+  - `Engine.SSHDestinations`：被 ssh 规则点名为目的端的节点获得
+    `tailscale.com/cap/ssh`（写入 `tailcfg.Node.CapMap`），客户端才能
+    `tailscale up --ssh` 启动 SSH server。
+  - `mapper.Config.SSHPolicyFor` / `SSHDestination`，Full/Update 均下发 SSHPolicy。
+  - `action: "check"` 目前编译为空并给出 warning（不静默当作 accept）。
+  - 顺带修复：`Engine.warnf` 去重，避免每次 netmap 构建重复累积同一 warning。
+  - 测试：`policy/ssh_test.go`、`control/ssh_test.go`。
+- `services/` 其余：Serve / Funnel（需 nodeAttrs/CapMap 授权面）、SSH check
+  （需 /machine/ssh/action 长轮询与会话审批）、Discovery。
 - `client/`：Xunara Agent（自研客户端，独立协议，不侵入 TS2021）。
 - DERP（`Xunara Veil`）、ACL/Zero Trust（`Xunara Warden`）。
 

@@ -34,15 +34,39 @@ type Document struct {
 	// keys.
 	TagOwners map[string][]string `json:"tagOwners,omitempty"`
 
+	// SSH are the Tailscale SSH rules: which principals may open an SSH
+	// session to which devices, as which local users.
+	SSH []SSHRow `json:"ssh,omitempty"`
+
 	// Tests are assertions about the compiled policy, as in the official ACL
 	// file format.
 	Tests []Test `json:"tests,omitempty"`
 
 	// Unsupported lists top-level fields present in the document that this
-	// build does not implement (for example "ssh" or "grants"). They are never
+	// build does not implement (for example "grants" or "autoApprovers"). They are never
 	// silently treated as granting access: a policy that relies on them denies
 	// more than its author intended, and the server logs them at load time.
 	Unsupported []string `json:"-"`
+}
+
+// SSHRow is one rule of the document's "ssh" section.
+type SSHRow struct {
+	// Action is "accept" (grant immediately) or "check" (ask the control
+	// plane per session; not implemented by this build).
+	Action string `json:"action"`
+
+	// Src are the source selectors (users, groups, tags, hosts, prefixes).
+	Src []string `json:"src,omitempty"`
+
+	// Dst are the destination host selectors (no ports).
+	Dst []string `json:"dst,omitempty"`
+
+	// Users are the local users the session may run as: "root",
+	// "autogroup:nonroot", or a plain user name.
+	Users []string `json:"users,omitempty"`
+
+	// AcceptEnv allowlists environment variables the client may forward.
+	AcceptEnv []string `json:"acceptEnv,omitempty"`
 }
 
 // ACLRow is one traffic rule.
@@ -97,6 +121,7 @@ func Parse(raw []byte) (*Document, error) {
 		"hosts":     &doc.Hosts,
 		"tagOwners": &doc.TagOwners,
 		"tests":     &doc.Tests,
+		"ssh":       &doc.SSH,
 	}
 
 	keys := make([]string, 0, len(fields))

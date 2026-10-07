@@ -56,6 +56,15 @@ type Config struct {
 	// empty rule set is a meaningful policy, not a missing one.
 	FilterFor func(self state.Node) []tailcfg.FilterRule
 
+	// SSHPolicyFor returns the SSH policy a node receives as the destination
+	// of incoming SSH connections, or nil when no SSH rule applies to it.
+	SSHPolicyFor func(self state.Node) *tailcfg.SSHPolicy
+
+	// SSHDestination reports whether a node is named as an SSH destination by
+	// the policy. Such nodes advertise the tailscale.com/cap/ssh capability,
+	// which is what allows them to run the Tailscale SSH server.
+	SSHDestination func(state.Node) bool
+
 	// DERPMap is advertised to clients when non-nil.
 	DERPMap *tailcfg.DERPMap
 }
@@ -73,6 +82,7 @@ func Full(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc, ca
 		DNSConfig:    DNSConfig(cfg),
 		DERPMap:      cfg.DERPMap,
 		UserProfiles: userProfiles(self, nodes, cfg),
+		SSHPolicy:    sshPolicyFor(cfg, self),
 	}
 	SetPacketFilters(resp, capVer, packetFilterFor(cfg, self))
 	return resp
@@ -88,7 +98,16 @@ func Update(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc) 
 		Node:         Node(self, true, online, routes, cfg),
 		Peers:        peerNodes(self, nodes, online, routes, cfg),
 		UserProfiles: userProfiles(self, nodes, cfg),
+		SSHPolicy:    sshPolicyFor(cfg, self),
 	}
+}
+
+// sshPolicyFor builds a node's SSH policy, tolerating a nil hook.
+func sshPolicyFor(cfg Config, self state.Node) *tailcfg.SSHPolicy {
+	if cfg.SSHPolicyFor == nil {
+		return nil
+	}
+	return cfg.SSHPolicyFor(self)
 }
 
 // RouteTable maps a served route prefix to the node elected to serve it.
@@ -166,6 +185,12 @@ func Node(n state.Node, self bool, online OnlineFunc, routes RouteTable, cfg Con
 
 	if n.Hostinfo != nil {
 		out.Hostinfo = n.Hostinfo.View()
+	}
+
+	// A node that the SSH policy names as a destination advertises the
+	// capability that lets it run the Tailscale SSH server.
+	if cfg.SSHDestination != nil && cfg.SSHDestination(n) {
+		out.CapMap = tailcfg.NodeCapMap{tailcfg.CapabilitySSH: nil}
 	}
 
 	// The requesting node is online by construction; peers are online when they

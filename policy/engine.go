@@ -32,6 +32,9 @@ type Engine struct {
 
 	rules    []compiledRule
 	warnings []string
+
+	// ssh are the compiled "ssh" rows.
+	ssh []compiledSSHRule
 }
 
 // compiledRule keeps selectors unresolved: user, tag and autogroup selectors
@@ -97,6 +100,9 @@ func NewEngine(doc *Document, opts Options) (*Engine, error) {
 		return nil, err
 	}
 	if err := e.compileACLs(); err != nil {
+		return nil, err
+	}
+	if err := e.compileSSHRules(); err != nil {
 		return nil, err
 	}
 	for _, field := range doc.Unsupported {
@@ -204,7 +210,13 @@ func loginNameMatches(selector, loginName string) bool {
 }
 
 func (e *Engine) warnf(format string, args ...any) {
-	e.warnings = append(e.warnings, fmt.Sprintf(format, args...))
+	msg := fmt.Sprintf(format, args...)
+	// Warnings are recomputed on every netmap build, so the same note must not
+	// accumulate (nor be reported twice in the console).
+	if slices.Contains(e.warnings, msg) {
+		return
+	}
+	e.warnings = append(e.warnings, msg)
 }
 
 func (e *Engine) validateGroups() error {

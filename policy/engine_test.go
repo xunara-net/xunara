@@ -56,7 +56,8 @@ func TestParseHuJSON(t *testing.T) {
 		"acls": [
 			{"action": "accept", "src": ["*"], "dst": ["*:*"]},
 		],
-		"ssh": [{"action": "check", "src": ["*"], "dst": ["*"], "users": ["root"]}],
+		"ssh": [{"action": "accept", "src": ["*"], "dst": ["*"], "users": ["root"]}],
+		"grants": [{"src": ["*"], "dst": ["*"], "app": {"example.com/cap/x": []}}],
 	}`)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -64,8 +65,11 @@ func TestParseHuJSON(t *testing.T) {
 	if len(doc.ACLs) != 1 {
 		t.Fatalf("acls = %d, want 1", len(doc.ACLs))
 	}
-	if len(doc.Unsupported) != 1 || doc.Unsupported[0] != "ssh" {
-		t.Errorf("Unsupported = %v, want [ssh]", doc.Unsupported)
+	if len(doc.SSH) != 1 || doc.SSH[0].Action != "accept" {
+		t.Errorf("SSH = %+v, want one accept rule", doc.SSH)
+	}
+	if len(doc.Unsupported) != 1 || doc.Unsupported[0] != "grants" {
+		t.Errorf("Unsupported = %v, want [grants]", doc.Unsupported)
 	}
 }
 

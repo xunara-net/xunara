@@ -192,14 +192,39 @@ func (s *Server) updateMap(self state.Node) *tailcfg.MapResponse {
 // mapperConfig snapshots the tailnet-wide configuration for one netmap build.
 func (s *Server) mapperConfig() mapper.Config {
 	return mapper.Config{
-		Domain:       s.cfg.Domain,
-		Resolvers:    s.resolvers,
-		Routes:       s.dnsRoutes,
-		ExtraRecords: s.store.ListDNSRecords(),
-		DERPMap:      s.cfg.DERPMap,
-		FilterFor:    s.packetFilterFor,
-		UserProfile:  s.UserProfile,
+		Domain:         s.cfg.Domain,
+		Resolvers:      s.resolvers,
+		Routes:         s.dnsRoutes,
+		ExtraRecords:   s.store.ListDNSRecords(),
+		DERPMap:        s.cfg.DERPMap,
+		FilterFor:      s.packetFilterFor,
+		UserProfile:    s.UserProfile,
+		SSHPolicyFor:   s.sshPolicyFor,
+		SSHDestination: s.sshDestinationFunc(),
 	}
+}
+
+// sshPolicyFor compiles the SSH policy for a node as an SSH destination.
+func (s *Server) sshPolicyFor(self state.Node) *tailcfg.SSHPolicy {
+	engine := s.policy.Load()
+	if engine == nil {
+		return nil
+	}
+	return engine.CompileSSHPolicy(self, s.store.ListNodes())
+}
+
+// sshDestinationFunc snapshots which nodes the SSH policy names as
+// destinations, or nil when the tailnet has no SSH rules.
+func (s *Server) sshDestinationFunc() func(state.Node) bool {
+	engine := s.policy.Load()
+	if engine == nil {
+		return nil
+	}
+	dests := engine.SSHDestinations(s.store.ListNodes())
+	if len(dests) == 0 {
+		return nil
+	}
+	return func(n state.Node) bool { return dests[n.ID] }
 }
 
 // getAndValidateNode looks the node up by node key and confirms the Noise
