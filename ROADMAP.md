@@ -818,9 +818,13 @@ in-place re-registration 与 `HandleNodeFromAuthPath` 的 reauth/convert 语义�
 让客户端之间互相验证 node key 而不是信任控制面。协议形状以官方客户端为准
 （`reference/tailscale/ipn/ipnlocal/tailnet-lock.go`），不改变 TS2021/Noise/MapRequest。
 
-- `state`（迁移 v7，向后兼容的新列/新表）：
+- `state`（迁移 v7/v8，向后兼容的新列/新表）：
   - `Node.KeySignature`（`tkatype.MarshaledSignature`，BLOB，可空）——netmap 广播的
     node-key signature。
+  - `Node.NLKey`（`key.NLPublic`，TEXT，迁移 v8）——注册时上报的 tailnet-lock 公钥。
+    它是"节点可自行轮换 node key"的前提：管理员签名时把 `NLKey.Verifier()`（raw
+    ed25519）作为 `TKASignInfo.RotationPubkey` 包进签名，节点之后就能用自己的 NL
+    私钥把旧签名链成 rotation 签名，无需再次联系管理员。
   - `tka_meta` 单行表 + `TKAStore`（`TKAMeta`/`SetTKAMeta`）：`EverEnabled`、
     `Enabled`（init/finish 之后才为真）、`Disabled`、密封后的 support disablement
     secret。`Store` 接口内嵌 `TKAStore`，内存与 SQLite 实现同步更新
@@ -848,8 +852,21 @@ in-place re-registration 与 `HandleNodeFromAuthPath` 的 reauth/convert 语义�
   地址与它们服务的路由；显式命中未签名地址的规则整条丢弃（不做部分相减）。
 - 注册路径：`RegisterRequest.NodeKeySignature` 在启用状态下必须通过
   `NodeKeyAuthorized` 校验，否则整个注册被拒（401），避免把无法验证的授权声明静默
-  降级成"未签名节点"；校验通过的签名随注册落库并广播。`RegisterResponse.NodeKeySignature`
-  （控制面要求客户端换 node key 后重签的路径）未实现——见已知限制。
+  降级成"未签名节点"；未启用（或已禁用）的 tailnet 上签名不具权威，直接丢弃，绝不
+  落库（真正有效的签名由 init/finish 重新签发）。校验通过的签名随注册落库并广播。
+  交互式登录时签名与 `NLKey` 先随设备授权元数据持久化（跨实例、跨审批可用），审批
+  建节点/原地轮换时一并生效；`req` 里为零值的 `NLKey` 不会清空已存的值。
+- node key 轮换（对齐上游 `doLoginOrRegen` / `RegisterResponse.NodeKeySignature` 语义）：
+  - 客户端换 node key（key 过期、`tailscale up` 重新认证——两者客户端都本地判定，
+    控制面只负责答复）时在 `OldNodeKey` 里带上旧 key。若旧节点持有签名，控制面在
+    `RegisterResponse.NodeKeySignature` 里回传旧签名，客户端用 `tka.ResignNKS` 自行
+    生成 rotation 签名后重试注册；该响应不建节点、不开始登录，客户端据此只做一次重试。
+  - 只有带 `WrappingPubkey`（即管理员按 `RotationPubkey` 签过）的签名会被回传，且
+    请求上报的 `NLKey` 必须与该 wrapping key 一致：否则节点根本无法链签，回传只会
+    换来一次注定失败的校验，此时直接走普通注册/登录路径。
+  - logout、follow-up 轮询、新 node key 已注册、machine key 不匹配的请求都不回传。
+  - 轮换时 `KeySignature` 随 node key 一起替换（旧签名的 Pubkey 指向旧 key，留着会让
+    peer 把节点判成未签名）；`NLKey` 属于机器、跨轮换保留。
 - 审计：`tailnet_lock.enabled` / `tailnet_lock.disabled` / `tailnet_lock.node_signed`。
 - 测试：
   - `control/tka_test.go`：manager 生命周期（init 未生效 → enable → 重启恢复 →
@@ -859,15 +876,21 @@ in-place re-registration 与 `HandleNodeFromAuthPath` 的 reauth/convert 语义�
     netmap 广播 head/capability/signature → 未签名节点被标记并收窄防火墙 →
     sync pull → `/tka/sign` 解禁 → `affected-sigs` → disable 后 `TKAInfo.Disabled`
     与 bootstrap 返回 secret）；流式会话收到显式的启用/禁用帧；注册携带可信/不可信
-    signature 的接受与拒绝。
+    signature 的接受与拒绝；未启用 tailnet 上提交的签名不落库。
+  - node key 轮换全链路：`init/begin` 下发 `RotationPubkey`（等于节点上报的
+    `NLKey.Verifier()`）→ 管理员按它签名 → 换 key 注册先拿到旧签名（hint）→
+    `tka.ResignNKS` 生成的 rotation 签名通过校验并随设备审批落库 → 节点原地轮换
+    （ID/StableID/地址不变、旧 key 注销、netmap 广播新签名、重复注册幂等）；无
+    rotation key 的签名不回传 hint。
   - `control/tka_netmap_test.go`：防火墙收窄规则（通配展开、未签名源丢弃、exit route
     不得回流）。
-  - `state`：`TKAStore` 一致性（内存/SQLite）、`KeySignature` 往返、SQLite 重启后
-    meta 保留。
+  - `state`：`TKAStore` 一致性（内存/SQLite）、`KeySignature`/`NLKey` 往返、SQLite
+    重启后 meta 保留、v7 → v8 迁移（旧库缺少 `nl_key` 列时能直接升级）。
 - 已知限制（后续里程碑）：
-  - `TKASignInfo.RotationPubkey` 未下发（未持久化节点的 `NLKey`），因此客户端换
-    node key 时需要管理员重新 `lock sign`；`RegisterResponse.NodeKeySignature`
-    的"控制面要求重签"路径未实现。
+  - 控制面从不代替管理员重签 node key：rotation 签名必须由节点自己的 NL 私钥生成，
+    控制面只保管公钥（TKA 威胁模型不允许把管理员/节点的 NL 私钥交给控制面）。
+  - 控制面尚未返回 `RegisterResponse.NodeKeyExpired`；官方客户端会从 netmap 的
+    `KeyExpiry` 自行判定过期并主动换 key，因此轮换路径已可用。
   - 未提供 CLI/Platform API 的 TKA 状态与初始化入口（协议面已完整，官方客户端
     可直接使用 `tailscale lock ...`）。
 

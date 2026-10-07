@@ -3,8 +3,11 @@ package control
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
+	"path"
 	"slices"
 	"testing"
 
@@ -38,6 +41,17 @@ func tkaJSON[T any](t *testing.T, client *http.Client, path string, req any, wan
 		t.Fatalf("decoding %s response: %v", path, err)
 	}
 	return out
+}
+
+// storedNode returns the stored node for a node key.
+func storedNode(t *testing.T, s *Server, nodeKey key.NodePublic) state.Node {
+	t.Helper()
+
+	node, ok := s.store.GetNodeByNodeKey(nodeKey)
+	if !ok {
+		t.Fatalf("node %v is not registered", nodeKey.ShortString())
+	}
+	return node
 }
 
 // nodeIDOf returns the stored node ID for a node key.
@@ -446,5 +460,295 @@ func TestTailnetLockRegistrationSignatures(t *testing.T) {
 	}
 	if _, ok := s.store.GetNodeByNodeKey(nodeKeyE.Public()); ok {
 		t.Error("a rejected registration still created a node")
+	}
+}
+
+// registerNodeWithNLKey registers a node through the interactive flow with the
+// registration reporting a tailnet-lock public key, as an official client does
+// while the tailnet has a key authority.
+func registerNodeWithNLKey(t *testing.T, s *Server, hs *httptest.Server, hostname string, nlPub key.NLPublic) (net.Conn, *http.Client, key.NodePrivate) {
+	t.Helper()
+
+	machineKey := key.NewMachine()
+	nodeKey := key.NewNode()
+
+	conn := dialNoise(t, hs, machineKey)
+	client := h2Client(conn)
+
+	reg := decodeJSON[tailcfg.RegisterResponse](t, postRaw(t, client, "/machine/register", tailcfg.RegisterRequest{
+		Version:  tailcfg.CurrentCapabilityVersion,
+		NodeKey:  nodeKey.Public(),
+		NLKey:    nlPub,
+		Hostinfo: &tailcfg.Hostinfo{Hostname: hostname},
+	}))
+	if reg.AuthURL == "" {
+		t.Fatalf("first registration returned no AuthURL: %+v", reg)
+	}
+	authID := path.Base(reg.AuthURL)
+	if err := s.ApproveRegistration(authID); err != nil {
+		t.Fatalf("ApproveRegistration: %v", err)
+	}
+
+	final := decodeJSON[tailcfg.RegisterResponse](t, postRaw(t, client, "/machine/register", tailcfg.RegisterRequest{
+		Version:  tailcfg.CurrentCapabilityVersion,
+		NodeKey:  nodeKey.Public(),
+		Followup: s.authURL(authID),
+	}))
+	if !final.MachineAuthorized {
+		t.Fatalf("registration not authorized: %+v", final)
+	}
+	return conn, client, nodeKey
+}
+
+// signInfoFor picks a node out of an init/begin response.
+func signInfoFor(t *testing.T, resp tailcfg.TKAInitBeginResponse, nodeKey key.NodePublic) tailcfg.TKASignInfo {
+	t.Helper()
+
+	for _, info := range resp.NeedSignatures {
+		if info.NodePublic == nodeKey {
+			return info
+		}
+	}
+	t.Fatalf("no signature request for node %v in %+v", nodeKey.ShortString(), resp.NeedSignatures)
+	return tailcfg.TKASignInfo{}
+}
+
+// TestTailnetLockNodeKeyRotation drives the rotation protocol end to end: a
+// client that regenerated its node key asks for the new key to be authorized,
+// control answers with the old signature ("resign and retry"), the client
+// chain-signs with its own network-lock key (tka.ResignNKS), and the node
+// rotates in place.
+func TestTailnetLockNodeKeyRotation(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+
+	adminKey, genesis := newTestTKAKey(t)
+	nlPriv := key.NewNLPrivate()
+
+	conn, client, oldKey := registerNodeWithNLKey(t, s, hs, "lock-rotate", nlPriv.Public())
+	defer conn.Close()
+
+	// A node signed without a rotation key cannot be rotated by its client, so
+	// it is the negative case for the hint below.
+	connB, clientB, plainKey := registerNode(t, s, hs, "lock-plain")
+	defer connB.Close()
+
+	stored := storedNode(t, s, oldKey.Public())
+	if stored.NLKey != nlPriv.Public() {
+		t.Fatalf("stored NLKey = %v, want the reported key", stored.NLKey)
+	}
+
+	// Enablement: control tells the administrator which raw ed25519 key may
+	// wrap the signature, so the node can rotate its node key on its own.
+	begin := tkaJSON[tailcfg.TKAInitBeginResponse](t, client, "/machine/tka/init/begin", tailcfg.TKAInitBeginRequest{
+		Version:    tailcfg.CurrentCapabilityVersion,
+		NodeKey:    oldKey.Public(),
+		GenesisAUM: genesis.Serialize(),
+	}, http.StatusOK)
+	info := signInfoFor(t, begin, oldKey.Public())
+	if !bytes.Equal(info.RotationPubkey, nlPriv.Public().Verifier()) {
+		t.Fatalf("RotationPubkey = %x, want the node's network-lock key", info.RotationPubkey)
+	}
+	sig := signTestNodeKeyWithRotation(t, adminKey, oldKey.Public(), info.RotationPubkey)
+	tkaRPC(t, client, "/machine/tka/init/finish", tailcfg.TKAInitFinishRequest{
+		Version: tailcfg.CurrentCapabilityVersion,
+		NodeKey: oldKey.Public(),
+		Signatures: map[tailcfg.NodeID]tkatype.MarshaledSignature{
+			nodeIDOf(t, s, oldKey.Public()):   sig,
+			nodeIDOf(t, s, plainKey.Public()): signTestNodeKey(t, adminKey, plainKey.Public()),
+		},
+		SupportDisablement: testDisablementSecret,
+	}, http.StatusOK)
+
+	// The node signed without a rotation key is not offered a rotation: the
+	// client could not chain the signature, so the registration falls through
+	// to the ordinary interactive path instead.
+	plainRotate := tailcfg.RegisterRequest{
+		Version:    tailcfg.CurrentCapabilityVersion,
+		OldNodeKey: plainKey.Public(),
+		NodeKey:    key.NewNode().Public(),
+	}
+	plainResp := decodeJSON[tailcfg.RegisterResponse](t, postRaw(t, clientB, "/machine/register", plainRotate))
+	if len(plainResp.NodeKeySignature) != 0 {
+		t.Error("control offered a rotation signature without a rotation key")
+	}
+	if plainResp.AuthURL == "" {
+		t.Errorf("registration without a rotatable signature = %+v, want the interactive path", plainResp)
+	}
+
+	// A client whose network-lock key no longer matches the signature it was
+	// issued cannot chain it either; control falls back to the ordinary path
+	// instead of a retry that would fail verification.
+	mismatch := decodeJSON[tailcfg.RegisterResponse](t, postRaw(t, client, "/machine/register", tailcfg.RegisterRequest{
+		Version:    tailcfg.CurrentCapabilityVersion,
+		OldNodeKey: oldKey.Public(),
+		NodeKey:    key.NewNode().Public(),
+		NLKey:      key.NewNLPrivate().Public(),
+		Hostinfo:   &tailcfg.Hostinfo{Hostname: "lock-rotate"},
+	}))
+	if len(mismatch.NodeKeySignature) != 0 {
+		t.Error("control offered a rotation signature for a different network-lock key")
+	}
+	if mismatch.AuthURL == "" {
+		t.Errorf("mismatched network-lock key registration = %+v, want the interactive path", mismatch)
+	}
+
+	newKey := key.NewNode()
+	rotateReq := tailcfg.RegisterRequest{
+		Version:    tailcfg.CurrentCapabilityVersion,
+		OldNodeKey: oldKey.Public(),
+		NodeKey:    newKey.Public(),
+		NLKey:      nlPriv.Public(),
+		Hostinfo:   &tailcfg.Hostinfo{Hostname: "lock-rotate"},
+	}
+
+	// First attempt: control refuses to register the new key and hands the old
+	// signature back instead of authorizing anything.
+	hint := decodeJSON[tailcfg.RegisterResponse](t, postRaw(t, client, "/machine/register", rotateReq))
+	if !bytes.Equal(hint.NodeKeySignature, sig) {
+		t.Fatalf("rotation hint = %d bytes, want the old signature", len(hint.NodeKeySignature))
+	}
+	if hint.MachineAuthorized || hint.AuthURL != "" {
+		t.Errorf("the hint response must neither authorize nor start a login: %+v", hint)
+	}
+	if _, ok := s.store.GetNodeByNodeKey(newKey.Public()); ok {
+		t.Fatal("the hint registered the new node key")
+	}
+
+	// Second attempt: the client nests the old signature in a rotation
+	// signature signed by its own network-lock key.
+	rotation, err := tka.ResignNKS(nlPriv, newKey.Public(), hint.NodeKeySignature)
+	if err != nil {
+		t.Fatalf("ResignNKS: %v", err)
+	}
+	if got, err := s.tka.verifyNodeSignature(rotation); err != nil || got != newKey.Public() {
+		t.Fatalf("rotation signature does not verify for the new key: %v", err)
+	}
+	rotateReq.NodeKeySignature = rotation
+
+	// The machine still has to re-authorize interactively; the verified
+	// signature travels with the pending registration.
+	pending := decodeJSON[tailcfg.RegisterResponse](t, postRaw(t, client, "/machine/register", rotateReq))
+	if pending.AuthURL == "" {
+		t.Fatalf("no AuthURL for the rotated key: %+v", pending)
+	}
+	authID := path.Base(pending.AuthURL)
+	if err := s.ApproveRegistration(authID); err != nil {
+		t.Fatalf("ApproveRegistration: %v", err)
+	}
+
+	// The follow-up poll carries no signature of its own: the node must have
+	// been created with the one the pending registration validated.
+	final := decodeJSON[tailcfg.RegisterResponse](t, postRaw(t, client, "/machine/register", tailcfg.RegisterRequest{
+		Version:  tailcfg.CurrentCapabilityVersion,
+		NodeKey:  newKey.Public(),
+		Followup: s.authURL(authID),
+	}))
+	if !final.MachineAuthorized {
+		t.Fatalf("registration not authorized: %+v", final)
+	}
+
+	rotated := storedNode(t, s, newKey.Public())
+	if rotated.ID != stored.ID || rotated.StableID != stored.StableID {
+		t.Errorf("rotation replaced the node: id %d -> %d, stable %q -> %q",
+			stored.ID, rotated.ID, stored.StableID, rotated.StableID)
+	}
+	if !bytes.Equal(rotated.KeySignature, rotation) {
+		t.Error("the rotated node does not carry the rotation signature")
+	}
+	if rotated.NLKey != nlPriv.Public() {
+		t.Error("the rotated node lost its network-lock key")
+	}
+	if _, ok := s.store.GetNodeByNodeKey(oldKey.Public()); ok {
+		t.Error("the old node key is still registered")
+	}
+
+	// The netmap publishes the rotated signature, so peers keep trusting the
+	// node without a further administrator action.
+	if got := fullMapFor(t, client, newKey.Public()).Node.KeySignature; !bytes.Equal(got, rotation) {
+		t.Error("the netmap does not publish the rotation signature")
+	}
+
+	// Re-registering the current key is an ordinary registration: no hint and
+	// no further rotation.
+	again := decodeJSON[tailcfg.RegisterResponse](t, postRaw(t, client, "/machine/register", rotateReq))
+	if !again.MachineAuthorized || len(again.NodeKeySignature) != 0 {
+		t.Errorf("re-registration = %+v, want a plain authorized response", again)
+	}
+	if got := storedNode(t, s, newKey.Public()); got.ID != stored.ID {
+		t.Errorf("re-registration changed the node id to %d, want %d", got.ID, stored.ID)
+	}
+}
+
+// TestRegistrationRecordsNetworkLockKey checks the persistence half of
+// RegisterRequest.NLKey: a node that reports its tailnet-lock public key keeps
+// it across registrations, and a client that stops reporting one does not clear
+// it.
+func TestRegistrationRecordsNetworkLockKey(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+
+	conn, client, nodeKey := registerNode(t, s, hs, "nl-key")
+	defer conn.Close()
+
+	if got := storedNode(t, s, nodeKey.Public()).NLKey; !got.IsZero() {
+		t.Fatalf("NLKey = %v, want the zero value before a client reports one", got)
+	}
+
+	nlPriv := key.NewNLPrivate()
+	reg := decodeJSON[tailcfg.RegisterResponse](t, postRaw(t, client, "/machine/register", tailcfg.RegisterRequest{
+		Version: tailcfg.CurrentCapabilityVersion,
+		NodeKey: nodeKey.Public(),
+		NLKey:   nlPriv.Public(),
+	}))
+	if !reg.MachineAuthorized {
+		t.Fatalf("re-registration failed: %+v", reg)
+	}
+	if got := storedNode(t, s, nodeKey.Public()).NLKey; got != nlPriv.Public() {
+		t.Fatalf("stored NLKey = %v, want the reported key", got)
+	}
+
+	// Older clients omit the field; the stored key must survive.
+	reg = decodeJSON[tailcfg.RegisterResponse](t, postRaw(t, client, "/machine/register", tailcfg.RegisterRequest{
+		Version: tailcfg.CurrentCapabilityVersion,
+		NodeKey: nodeKey.Public(),
+	}))
+	if !reg.MachineAuthorized {
+		t.Fatalf("re-registration without NLKey failed: %+v", reg)
+	}
+	if got := storedNode(t, s, nodeKey.Public()).NLKey; got != nlPriv.Public() {
+		t.Errorf("stored NLKey = %v after an older client registered, want %v", got, nlPriv.Public())
+	}
+}
+
+// TestUnlockedTailnetIgnoresNodeKeySignature checks that a node-key signature
+// presented while the tailnet is unlocked is neither verified nor stored: it
+// carries no authority, and TKA init/finish issues real signatures later.
+func TestUnlockedTailnetIgnoresNodeKeySignature(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+
+	secret := seedPreAuthKey(t, s, state.PreAuthKey{})
+	machineKey := key.NewMachine()
+	nodeKey := key.NewNode()
+	conn := dialNoise(t, hs, machineKey)
+	defer conn.Close()
+	client := h2Client(conn)
+
+	adminKey, _ := newTestTKAKey(t)
+	reg := decodeJSON[tailcfg.RegisterResponse](t, postRaw(t, client, "/machine/register", tailcfg.RegisterRequest{
+		Version:          tailcfg.CurrentCapabilityVersion,
+		NodeKey:          nodeKey.Public(),
+		NodeKeySignature: signTestNodeKey(t, adminKey, nodeKey.Public()),
+		Auth:             &tailcfg.RegisterResponseAuth{AuthKey: secret},
+	}))
+	if !reg.MachineAuthorized {
+		t.Fatalf("registration failed: %+v", reg)
+	}
+	if got := storedNode(t, s, nodeKey.Public()); len(got.KeySignature) != 0 {
+		t.Errorf("an unverified signature reached the store: %d bytes", len(got.KeySignature))
+	}
+	if got := fullMapFor(t, client, nodeKey.Public()).Node.KeySignature; len(got) != 0 {
+		t.Error("an unverified signature reached the netmap")
 	}
 }

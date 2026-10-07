@@ -1,7 +1,9 @@
 package control
 
 import (
+	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -15,7 +17,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"tailscale.com/tailcfg"
+	"tailscale.com/tka"
 	"tailscale.com/types/key"
+	"tailscale.com/types/tkatype"
 
 	"github.com/xunara/xunara/control/mapper"
 	"github.com/xunara/xunara/identity"
@@ -85,8 +89,15 @@ func (s *Server) handleRegister(ctx context.Context, req tailcfg.RegisterRequest
 	// claim before the request can create or rotate a node, so an
 	// unverifiable signature is never silently downgraded to an unsigned
 	// registration.
-	if len(req.NodeKeySignature) > 0 && s.tka.view().Enabled {
-		if err := s.tka.nodeKeyAuthorized(req.NodeKey, req.NodeKeySignature); err != nil {
+	//
+	// While the tailnet is unlocked a signature carries no authority: it is
+	// dropped from the request copy so it can never reach state. Once lock is
+	// enabled, init/finish issues signatures for every existing node, and a
+	// node that has not been signed is filtered out of the netmap instead.
+	if len(req.NodeKeySignature) > 0 {
+		if !s.tka.view().Enabled {
+			req.NodeKeySignature = nil
+		} else if err := s.tka.nodeKeyAuthorized(req.NodeKey, req.NodeKeySignature); err != nil {
 			s.log.Warn("rejecting registration with an unauthorized node key signature",
 				"node.key", req.NodeKey.ShortString(),
 				"machine.key", machineKey.ShortString(),
@@ -95,32 +106,128 @@ func (s *Server) handleRegister(ctx context.Context, req tailcfg.RegisterRequest
 		}
 	}
 
+	// Tailnet lock: a client that regenerates its node key (expired key,
+	// `tailscale up` re-auth) can carry the old key's signature forward by
+	// re-signing it locally with the node's network-lock key, producing a
+	// rotation signature. It cannot do that until it has the old signature, so
+	// a non-empty RegisterResponse.NodeKeySignature means "resign and retry"
+	// (upstream control/controlclient doLoginOrRegen).
+	if resp, ok := s.rotationSignatureHint(req, machineKey); ok {
+		return resp, nil
+	}
+
 	resp, err := s.decideRegistration(ctx, req, machineKey)
 	if err != nil {
 		return nil, err
 	}
-	s.storeNodeKeySignature(req)
+	s.storeRegistrationKeys(req)
 	return resp, nil
 }
 
-// storeNodeKeySignature persists the node-key signature a registration
-// presented, so peers receive it in the netmap. Registrations that verify all
-// reach this point; those without a signature (or on an unlocked tailnet) are
-// left alone.
-func (s *Server) storeNodeKeySignature(req tailcfg.RegisterRequest) {
-	if len(req.NodeKeySignature) == 0 || !s.tka.view().Enabled {
+// rotationSignatureHint answers a registration that rotates a signed node key
+// with the signature the client must chain-resign.
+//
+// The client re-registers with a fresh node key while naming its previous key
+// in OldNodeKey. If that previous key's node carries a stored node-key
+// signature, the control plane hands the signature back: the client wraps it
+// in a rotation signature signed by its own network-lock key and retries. The
+// hint is deliberately narrow:
+//
+//   - only when tailnet lock is enabled (an unsigned tailnet needs no
+//     authorization for the new key),
+//   - only when the request brings no signature (a rotation signature is
+//     already the answer),
+//   - never for a logout, which must not be turned into a re-registration,
+//   - only when OldNodeKey names a signed node of the same machine, and
+//   - never for a follow-up poll, which belongs to a pending registration that
+//     already validated its own signature.
+func (s *Server) rotationSignatureHint(req tailcfg.RegisterRequest, machineKey key.MachinePublic) (*tailcfg.RegisterResponse, bool) {
+	if !s.tka.view().Enabled || len(req.NodeKeySignature) > 0 || req.Followup != "" {
+		return nil, false
+	}
+	// A request whose expiry is in the past is a logout (see
+	// decideRegistration); the client is leaving, not rotating a key.
+	if !req.Expiry.IsZero() && req.Expiry.Before(time.Now()) {
+		return nil, false
+	}
+	if req.OldNodeKey.IsZero() || req.OldNodeKey == req.NodeKey {
+		return nil, false
+	}
+	if _, ok := s.store.GetNodeByNodeKey(req.NodeKey); ok {
+		// The presented node key is already registered: this is an ordinary
+		// re-registration, not a rotation in flight.
+		return nil, false
+	}
+	old, ok := s.store.GetNodeByNodeKey(req.OldNodeKey)
+	if !ok || old.MachineKey != machineKey || len(old.KeySignature) == 0 {
+		return nil, false
+	}
+	// Only a signature issued against the node's RotationPubkey can be chained
+	// by the node itself, and only the matching network-lock key can do the
+	// chaining. Handing the signature back in any other case would cost the
+	// client a retry that can only fail verification.
+	var decoded tka.NodeKeySignature
+	if err := decoded.Unserialize(old.KeySignature); err != nil {
+		s.log.Warn("stored node key signature does not decode", "stable_id", old.StableID, "err", err)
+		return nil, false
+	}
+	wrapping, ok := decoded.UnverifiedWrappingPublic()
+	if !ok || len(wrapping) != ed25519.PublicKeySize {
+		s.log.Warn("node key signature has no rotation key, sign the node again to enable node-key rotation",
+			"stable_id", old.StableID, "node_key", old.NodeKey.ShortString())
+		return nil, false
+	}
+	if req.NLKey.IsZero() || !bytes.Equal(wrapping, req.NLKey.Verifier()) {
+		s.log.Warn("node reports a different network-lock key than its signature wraps, sign the node again",
+			"stable_id", old.StableID, "node_key", old.NodeKey.ShortString())
+		return nil, false
+	}
+
+	s.log.Info("asking node to rotate its node-key signature",
+		"stable_id", old.StableID,
+		"old_node_key", req.OldNodeKey.ShortString(),
+		"new_node_key", req.NodeKey.ShortString())
+	return &tailcfg.RegisterResponse{NodeKeySignature: slices.Clone(old.KeySignature)}, true
+}
+
+// storeRegistrationKeys persists what a successful registration reported about
+// the node's keys: its tailnet-lock public key (used to authorize later node
+// key rotations) and the node-key signature it presented.
+//
+// Signatures only reach this point when they were verified against the key
+// authority (handleRegister drops unverified ones), and they are only stored
+// once the node they belong to exists. A pending interactive registration
+// keeps them in its device authorization instead, and applies them at
+// approval.
+func (s *Server) storeRegistrationKeys(req tailcfg.RegisterRequest) {
+	if req.NLKey.IsZero() && len(req.NodeKeySignature) == 0 {
 		return
 	}
 	node, ok := s.store.GetNodeByNodeKey(req.NodeKey)
-	if !ok || slices.Equal(node.KeySignature, req.NodeKeySignature) {
+	if !ok {
 		return
 	}
-	node.KeySignature = slices.Clone(req.NodeKeySignature)
+
+	changed := false
+	if !req.NLKey.IsZero() && node.NLKey != req.NLKey {
+		node.NLKey = req.NLKey
+		changed = true
+	}
+	signed := len(req.NodeKeySignature) > 0 && !slices.Equal(node.KeySignature, req.NodeKeySignature)
+	if signed {
+		node.KeySignature = slices.Clone(req.NodeKeySignature)
+		changed = true
+	}
+	if !changed {
+		return
+	}
 	if err := s.store.UpdateNode(node); err != nil {
-		s.log.Error("storing node key signature", "node", node.StableID, "err", err)
+		s.log.Error("storing registration keys", "node", node.StableID, "err", err)
 		return
 	}
-	s.audit(nodeActor(node), identity.AuditTailnetLockNodeSigned, nodeTarget(node), "node key signed at registration")
+	if signed {
+		s.audit(nodeActor(node), identity.AuditTailnetLockNodeSigned, nodeTarget(node), "node key signed at registration")
+	}
 	s.notifyWatchers()
 }
 
@@ -324,6 +431,15 @@ type deviceMetadata struct {
 	Ephemeral       bool              `json:"ephemeral,omitempty"`
 	RequestedExpiry time.Time         `json:"requested_expiry,omitempty"`
 	Hostinfo        *tailcfg.Hostinfo `json:"hostinfo,omitempty"`
+
+	// NLKey is the device's tailnet-lock public key. It is captured here so
+	// that a node approved later (possibly on another instance) learns the
+	// key its administrator needs to sign a rotatable node key.
+	NLKey key.NLPublic `json:"nl_key,omitempty"`
+	// NodeKeySignature is the node-key signature the device presented when it
+	// started this registration. It is verified before it is recorded, and
+	// applied to the node at approval.
+	NodeKeySignature tkatype.MarshaledSignature `json:"node_key_signature,omitempty"`
 }
 
 // requestedTags are the ACL tags the client asked to claim during
@@ -384,7 +500,12 @@ func (s *Server) authorizedTags(userID tailcfg.UserID, requested []string, targe
 
 // encodeDeviceMetadata serialises the client-provided registration details.
 func encodeDeviceMetadata(req tailcfg.RegisterRequest) string {
-	meta := deviceMetadata{Ephemeral: req.Ephemeral, RequestedExpiry: req.Expiry}
+	meta := deviceMetadata{
+		Ephemeral:        req.Ephemeral,
+		RequestedExpiry:  req.Expiry,
+		NLKey:            req.NLKey,
+		NodeKeySignature: slices.Clone(req.NodeKeySignature),
+	}
 	if req.Hostinfo != nil {
 		meta.Hostname = req.Hostinfo.Hostname
 		meta.OS = req.Hostinfo.OS
@@ -611,6 +732,8 @@ func (s *Server) nodeForAuthorization(da identity.DeviceAuthorization, userID ta
 	node := state.Node{
 		MachineKey:      machineKey,
 		NodeKey:         nodeKey,
+		KeySignature:    meta.NodeKeySignature,
+		NLKey:           meta.NLKey,
 		UserID:          userID,
 		Hostname:        meta.Hostname,
 		Hostinfo:        meta.Hostinfo,

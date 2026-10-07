@@ -106,6 +106,12 @@ CREATE TABLE IF NOT EXISTS tka_meta (
 );
 INSERT OR IGNORE INTO tka_meta (id) VALUES (1);
 `,
+
+	// v8: the node's tailnet-lock public key, reported at registration and
+	// needed to authorize later node-key rotations.
+	`
+ALTER TABLE nodes ADD COLUMN nl_key TEXT NOT NULL DEFAULT '';
+`,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.
@@ -194,7 +200,7 @@ var _ Store = (*SQLiteStore)(nil)
 // nodeColumns is the column list every node SELECT and INSERT agrees on.
 const nodeColumns = `id, stable_id, machine_key, node_key, disco_key, user_id, hostname,
 	ipv4, ipv6, endpoints, home_derp, cap_ver, hostinfo, last_seen, expiry, created, method, ephemeral,
-	approved_routes, tags, key_signature`
+	approved_routes, tags, key_signature, nl_key`
 
 func (s *SQLiteStore) GetNodeByID(id NodeID) (Node, bool) {
 	return s.queryNode(context.Background(), "SELECT "+nodeColumns+" FROM nodes WHERE id = ?", int64(id))
@@ -288,11 +294,12 @@ func scanNode(sc scanner) (Node, error) {
 		approved  string
 		tags      string
 		keySig    []byte
+		nlKey     string
 	)
 
 	err := sc.Scan(&id, &stableID, &machineS, &nodeS, &discoS, &userID, &hostname,
 		&ipv4, &ipv6, &endpoints, &homeDERP, &capVer, &hostinfo, &lastSeen, &expiry,
-		&created, &method, &ephemeral, &approved, &tags, &keySig)
+		&created, &method, &ephemeral, &approved, &tags, &keySig, &nlKey)
 	if err != nil {
 		return Node{}, err
 	}
@@ -310,6 +317,11 @@ func scanNode(sc scanner) (Node, error) {
 	}
 	if len(keySig) > 0 {
 		n.KeySignature = keySig
+	}
+	if nlKey != "" {
+		if err := n.NLKey.UnmarshalText([]byte(nlKey)); err != nil {
+			return Node{}, fmt.Errorf("state: parsing network lock key: %w", err)
+		}
 	}
 
 	if err := n.MachineKey.UnmarshalText([]byte(machineS)); err != nil {
@@ -532,7 +544,7 @@ func (s *SQLiteStore) CreateNode(n *Node) error {
 	}
 
 	_, err = tx.ExecContext(ctx, `INSERT INTO nodes (`+nodeColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		int64(n.ID),
 		n.StableID,
 		textOf(n.MachineKey, ""),
@@ -554,6 +566,7 @@ func (s *SQLiteStore) CreateNode(n *Node) error {
 		approved,
 		tags,
 		nullableBytes(n.KeySignature),
+		textOf(n.NLKey, ""),
 	)
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -583,7 +596,8 @@ func (s *SQLiteStore) UpdateNode(n Node) error {
 			stable_id = ?, machine_key = ?, node_key = ?, disco_key = ?, user_id = ?,
 			hostname = ?, ipv4 = ?, ipv6 = ?, endpoints = ?, home_derp = ?,
 			cap_ver = ?, hostinfo = ?, last_seen = ?, expiry = ?, created = ?,
-			method = ?, ephemeral = ?, approved_routes = ?, tags = ?, key_signature = ?
+			method = ?, ephemeral = ?, approved_routes = ?, tags = ?, key_signature = ?,
+			nl_key = ?
 		WHERE id = ?`,
 		n.StableID,
 		textOf(n.MachineKey, ""),
@@ -605,6 +619,7 @@ func (s *SQLiteStore) UpdateNode(n Node) error {
 		approved,
 		tags,
 		nullableBytes(n.KeySignature),
+		textOf(n.NLKey, ""),
 		int64(n.ID),
 	)
 	if err != nil {

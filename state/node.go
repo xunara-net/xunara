@@ -63,6 +63,13 @@ type Node struct {
 	// verify the node key without trusting the control plane.
 	KeySignature tkatype.MarshaledSignature
 
+	// NLKey is the node's tailnet-lock public key (key.NLPublic), reported in
+	// RegisterRequest.NLKey while the tailnet has a key authority. It is
+	// persisted because TKASignInfo.RotationPubkey (the raw ed25519 public
+	// key) is needed so an administrator can sign a node key that survives
+	// later rotations.
+	NLKey key.NLPublic
+
 	// UserID is the owning user. In the single-tenant milestone this is always
 	// [DefaultUserID].
 	UserID tailcfg.UserID

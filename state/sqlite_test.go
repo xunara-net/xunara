@@ -167,6 +167,50 @@ func TestSQLiteStorePersistsAcrossReopen(t *testing.T) {
 	}
 }
 
+// TestSQLiteMigratesV7ToV8 simulates a database written before the node's
+// network-lock key was persisted: reopening it must apply the v8 migration
+// instead of failing on the missing column.
+func TestSQLiteMigratesV7ToV8(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	ctx := context.Background()
+	first := openTestSQLite(t, path)
+	n := Node{Hostname: "old", NodeKey: key.NewNode().Public()}
+	if err := first.CreateNode(&n); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "ALTER TABLE nodes DROP COLUMN nl_key"); err != nil {
+		t.Fatalf("dropping nl_key: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "PRAGMA user_version = 7"); err != nil {
+		t.Fatalf("downgrading schema version: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second := openTestSQLite(t, path)
+	got, ok := second.GetNodeByNodeKey(n.NodeKey)
+	if !ok {
+		t.Fatal("node did not survive the v7 -> v8 migration")
+	}
+	if !got.NLKey.IsZero() {
+		t.Errorf("NLKey = %v, want the zero value for a pre-v8 node", got.NLKey)
+	}
+
+	got.NLKey = key.NewNLPrivate().Public()
+	if err := second.UpdateNode(got); err != nil {
+		t.Fatalf("UpdateNode after migration: %v", err)
+	}
+	again, ok := second.GetNodeByNodeKey(n.NodeKey)
+	if !ok {
+		t.Fatal("node disappeared after update")
+	}
+	if again.NLKey != got.NLKey {
+		t.Errorf("NLKey after migration = %v, want %v", again.NLKey, got.NLKey)
+	}
+}
+
 func TestSQLiteStoreConcurrentAccess(t *testing.T) {
 	s := openTestSQLite(t, filepath.Join(t.TempDir(), "state.db"))
 

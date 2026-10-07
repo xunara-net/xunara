@@ -72,10 +72,18 @@ func (ns *noiseServer) handleTKAInitBegin(w http.ResponseWriter, req *http.Reque
 	nodes := ns.server.store.ListNodes()
 	infos := make([]tailcfg.TKASignInfo, 0, len(nodes))
 	for _, n := range nodes {
-		infos = append(infos, tailcfg.TKASignInfo{
+		info := tailcfg.TKASignInfo{
 			NodeID:     tailcfg.NodeID(n.ID),
 			NodePublic: n.NodeKey,
-		})
+		}
+		// The node's own tailnet-lock public key lets it rotate this node key
+		// later without another trusted signer: an administrator signature
+		// that wraps this key can be chained into a rotation signature by the
+		// node itself (tailcfg.TKASignInfo.RotationPubkey).
+		if !n.NLKey.IsZero() {
+			info.RotationPubkey = slices.Clone(n.NLKey.Verifier())
+		}
+		infos = append(infos, info)
 	}
 
 	// No netmap wakeup yet: enforcement turns on at init/finish, so clients

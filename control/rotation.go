@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -93,6 +94,15 @@ func (s *Server) rotateNodeKey(existing, want state.Node, applyTags bool, actor 
 	updated := existing
 	updated.NodeKey = want.NodeKey
 	updated.Method = want.Method
+	// A signature (or its absence) always moves with the node key: a signature
+	// naming the old key is worthless for the new one, and publishing it would
+	// only make peers treat the node as unsigned.
+	updated.KeySignature = slices.Clone(want.KeySignature)
+	// The network-lock key belongs to the machine and outlives rotations; only
+	// replace it when the client reported a new one.
+	if !want.NLKey.IsZero() {
+		updated.NLKey = want.NLKey
+	}
 	if want.Hostname != "" {
 		updated.Hostname = want.Hostname
 	}

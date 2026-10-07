@@ -44,11 +44,25 @@ func newTestTKAKey(t *testing.T) (key.NLPrivate, tka.AUM) {
 func signTestNodeKey(t *testing.T, priv key.NLPrivate, nodeKey key.NodePublic) tkatype.MarshaledSignature {
 	t.Helper()
 
+	return signTestNodeKeyWithRotation(t, priv, nodeKey, nil)
+}
+
+// signTestNodeKeyWithRotation builds a direct node-key signature that wraps the
+// node's raw ed25519 network-lock key (tailcfg.TKASignInfo.RotationPubkey), the
+// way an administrator signs a node key that must survive rotation.
+func signTestNodeKeyWithRotation(t *testing.T, priv key.NLPrivate, nodeKey key.NodePublic, rotationPubkey []byte) tkatype.MarshaledSignature {
+	t.Helper()
+
 	raw, err := nodeKey.MarshalBinary()
 	if err != nil {
 		t.Fatalf("MarshalBinary: %v", err)
 	}
-	sig := tka.NodeKeySignature{SigKind: tka.SigDirect, KeyID: priv.KeyID(), Pubkey: raw}
+	sig := tka.NodeKeySignature{
+		SigKind:        tka.SigDirect,
+		KeyID:          priv.KeyID(),
+		Pubkey:         raw,
+		WrappingPubkey: rotationPubkey,
+	}
 	sig.Signature, err = priv.SignNKS(sig.SigHash())
 	if err != nil {
 		t.Fatalf("SignNKS: %v", err)

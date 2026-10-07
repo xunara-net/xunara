@@ -123,6 +123,7 @@ func runStoreConformance(t *testing.T, newStore storeFactory) {
 			Tags:      []string{"tag:prod", "tag:server"},
 			// Node-key signatures are opaque CBOR blobs to the store.
 			KeySignature: []byte{0xa1, 0x01, 0x02},
+			NLKey:        key.NewNLPrivate().Public(),
 		}
 
 		if err := s.CreateNode(&n); err != nil {
@@ -166,6 +167,9 @@ func runStoreConformance(t *testing.T, newStore storeFactory) {
 		}
 		if !slices.Equal(got.KeySignature, n.KeySignature) {
 			t.Errorf("KeySignature = %v, want %v", got.KeySignature, n.KeySignature)
+		}
+		if got.NLKey != n.NLKey {
+			t.Errorf("NLKey = %v, want %v", got.NLKey, n.NLKey)
 		}
 	})
 
