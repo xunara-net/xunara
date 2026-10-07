@@ -547,7 +547,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
   - 测试：`control/featurequery_test.go`（已授权 Complete、未授权说明、
     Funnel 不支持、跨节点/未知 node key 404、未知 feature 有界、
     截断 JSON 拒绝）。
-- `services/` 其余：Funnel（明确不支持）；Discovery。
+- `services/`：Funnel 明确不支持；Discovery 见 M16（Xunara Atlas）。
 - M9 已完成：Xunara Agent（自研客户端，独立协议）。
   - 服务端 `/api/agent/v1`（`control/agent.go`，独立于 TS2021）：
     `POST /enroll`（pre-auth key 同步授权，或复用设备审批流的交互式授权；返回
@@ -1064,6 +1064,48 @@ Update}`（`AttrUpdate` = `map[string]any`，值可为 string / float64 / bool�
     不泄漏值、空库提示、stable-id 查找、未找到错误）。
 - 明确不做：ACL `srcPosture` 条件（需要上游控制面的策略语义，开源代码里没有
   可以照抄的判定规则）；属性的过期/回收策略（节点可覆盖或删除，删节点级联）。
+
+---
+
+## M16 — Xunara Atlas 服务发现（v1，已完成）
+
+目标：节点把自己提供的服务（名字、协议、端口）发布到控制面，其它节点与
+管理员能发现它；访问控制仍由既有 ACL/grants 决定（发现 ≠ 授权）。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §22（先写 spec 再实现，
+不猜 API）。
+
+- `state`（迁移 v10）：`node_services`（name 为主键=组织内唯一，node_id 外键
+  `ON DELETE CASCADE`，metadata 存 JSON）。`ServiceStore`：`ReplaceNodeServices`
+  （声明式整批替换、原子、保留 created、跨节点/请求内重名
+  → `ErrServiceNameTaken`）、`ListServices`/`ServicesForNode`/
+  `GetServiceByName`/`NodeServiceCounts`。内存与 SQLite 同步实现，共享一致性
+  套件 + v9→v10 迁移测试。
+- 数据面（M16b）：`POST /api/agent/v1/services`（原生客户端协议；agent token +
+  machine/node key 复述）。限额 fail-closed 且整批原子：name 小写 DNS label
+  ≤63、protocol ∈ {tcp,udp}、port 1–65535、metadata ≤16 项且编码 ≤2 KiB、
+  每节点 ≤32、组织 ≤512（429）。冲突（他人服务名/节点 hostname/DNS 记录）
+  → 409。审计 `node.services_updated`（只记名字/协议/端口），唤醒 netmap。
+- MagicDNS：`extraDNSRecords()` 追加派生 A/AAAA（`<name>.<domain>` → 发布节点
+  地址）。官方客户端按名字解析、按既有 ACL 连接；撤销服务即撤销记录。
+- 管理面（只读，与 M12/M13/M14 同一模式）：
+  - HTTP `GET /api/v2/services`（read scope；`node=<id|stable id>` 未知匹配空集、
+    `name=` 精确过滤、name 游标分页）；`GET /api/v2/machines` 增加
+    `serviceCount`（0 省略）。
+  - gRPC `PlatformService.ListServices`（同规则/同值）与
+    `Machine.service_count`；`platform.proto` 与 `api/gen` 已重新生成。
+  - Console 新增只读 Services 页（名字/协议/端口/DNS 名/发布节点/metadata），
+    Machines 表格增加 Services 计数列。
+  - CLI `xunara services list|show <name>`（直接读状态目录；DNS 名依赖部署
+    配置的域，由平台 API 提供）。
+- 测试：state 一致性套件；`control/services_test.go`（发布/替换/清空/审计、
+  认证三种失败、20 条非法输入、冲突、预算、DNS 记录）；`control/api_v2_test.go`、
+  `control/grpc_platform_test.go`、`control/console_test.go`（页面与计数列）、
+  `cmd/xunara/services_test.go`。
+- 明确不做（v1）：按 ACL 的可见性（与 MagicDNS 节点名一样组织内可见）、
+  健康检查/自动摘除、跨组织共享、与上游 `svc:` VIP 互通（需要上游控制面
+  语义，不猜 API）、控制面代理流量。
+- 下一步（未做）：`xunara-agent` 端一键发布（`services publish -file`）与
+  定期刷新；Consul/Kubernetes 等服务目录导入。
 
 ---
 

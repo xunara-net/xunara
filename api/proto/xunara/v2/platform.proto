@@ -59,6 +59,11 @@ service PlatformService {
   // ListMachines returns machines ordered by id, resumable with page_token.
   rpc ListMachines(ListMachinesRequest) returns (ListMachinesResponse);
 
+  // ListServices returns the services nodes advertise about themselves
+  // (Xunara Atlas), ordered by name and resumable with page_token. Publishing
+  // happens over the native client protocol; this surface is read-only.
+  rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
+
   // ListAudit returns audit events ordered by id, resumable with page_token.
   rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
 
@@ -161,6 +166,9 @@ message Machine {
   // device_attr_count is how many device posture attributes the machine has
   // reported; the values themselves come from GetMachineDeviceAttrs.
   uint32 device_attr_count = 18;
+  // service_count is how many services the machine advertises; the records
+  // themselves come from ListServices.
+  uint32 service_count = 19;
 }
 
 message GetMachineDeviceAttrsRequest {
@@ -191,6 +199,40 @@ message ListMachinesRequest {
 message ListMachinesResponse {
   repeated Machine machines = 1;
   string next_page_token = 2;
+}
+
+message ListServicesRequest {
+  // page_size defaults to 100 and is bounded by Meta.max_page_size.
+  uint32 page_size = 1;
+  // page_token is the next_page_token of the previous response.
+  string page_token = 2;
+  // node_id filters on the advertising machine; 0 means every machine. An
+  // unknown id matches nothing.
+  uint64 node_id = 3;
+  // name filters on one exact service name.
+  string name = 4;
+}
+
+message ListServicesResponse {
+  repeated Service services = 1;
+  string next_page_token = 2;
+}
+
+// Service is one endpoint a node advertises about itself. Discovery is not
+// authorization: reachability is still decided by the ACL rules.
+message Service {
+  string name = 1;
+  string protocol = 2;
+  uint32 port = 3;
+  map<string, string> metadata = 4;
+  uint64 machine_id = 5;
+  string stable_id = 6;
+  string hostname = 7;
+  // dns_name is the MagicDNS name the service resolves under; empty when the
+  // deployment has no domain configured.
+  string dns_name = 8;
+  google.protobuf.Timestamp created = 9;
+  google.protobuf.Timestamp updated = 10;
 }
 
 message AuditEvent {

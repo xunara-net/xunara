@@ -70,6 +70,7 @@ footer { text-align: center; color: #5b616e; font-size: .8rem; }
 <nav>
 <a href="/console/"{{if eq .Nav "overview"}} class="active"{{end}}>Overview</a>
 <a href="/console/machines"{{if eq .Nav "machines"}} class="active"{{end}}>Machines</a>
+<a href="/console/services"{{if eq .Nav "services"}} class="active"{{end}}>Services</a>
 <a href="/console/devices"{{if eq .Nav "devices"}} class="active"{{end}}>Devices</a>
 <a href="/console/users"{{if eq .Nav "users"}} class="active"{{end}}>Users</a>
 <a href="/console/dns"{{if eq .Nav "dns"}} class="active"{{end}}>DNS</a>
@@ -97,6 +98,7 @@ const consoleFoot = `</main>
 var consoleTitles = map[string]string{
 	"overview":  "Overview",
 	"machines":  "Machines",
+	"services":  "Services",
 	"devices":   "Devices",
 	"users":     "Users",
 	"dns":       "DNS",
@@ -169,7 +171,7 @@ so it has no issuer URL to be a trust anchor for, and nodes receive 501 from
 	consoleMachinesTemplate = consolePage("machines", `
 <h2>Machines</h2>
 <table>
-<thead><tr><th>Machine</th><th>Status</th><th>Owner</th><th>Method</th><th>Addresses</th><th>Routes</th><th>Posture</th><th>Actions</th></tr></thead>
+<thead><tr><th>Machine</th><th>Status</th><th>Owner</th><th>Method</th><th>Addresses</th><th>Routes</th><th>Posture</th><th>Services</th><th>Actions</th></tr></thead>
 <tbody>
 {{range .Machines}}
 <tr>
@@ -186,6 +188,7 @@ so it has no issuer URL to be a trust anchor for, and nodes receive 501 from
 {{if .AnnouncedRoutes}}announced: {{range .AnnouncedRoutes}}<code>{{.}}</code> {{end}}{{else}}announced: none{{end}}
 </td>
 <td>{{if .DeviceAttrCount}}{{.DeviceAttrCount}} attr{{if ne .DeviceAttrCount 1}}s{{end}}{{else}}—{{end}}</td>
+<td>{{if .ServiceCount}}{{.ServiceCount}}{{else}}—{{end}}</td>
 <td>
 {{if $.CanWrite}}
 <form method="post" action="/console/machines/{{.ID}}/routes">
@@ -201,7 +204,7 @@ so it has no issuer URL to be a trust anchor for, and nodes receive 501 from
 </td>
 </tr>
 {{else}}
-<tr><td colspan="8">No machines have registered yet.</td></tr>
+<tr><td colspan="9">No machines have registered yet.</td></tr>
 {{end}}
 </tbody>
 </table>
@@ -397,6 +400,35 @@ immediately; the device keeps its node identity and can enroll again.</p>
 {{else}}
 <p>No agent credentials. A device creates one when it enrolls with
 <code>/api/agent/v1/enroll</code>.</p>
+{{end}}
+`)
+
+	consoleServicesTemplate = consolePage("services", `
+<h2>Services</h2>
+<p>Services nodes advertise about themselves. Publishing happens on the node
+(<code>/api/agent/v1/services</code>); this page is read-only. A service name
+resolves in MagicDNS to the advertising node, and reachability is still decided
+by the ACL rules — discovery is not authorization.</p>
+{{if .Services}}
+<table>
+<thead><tr><th>Name</th><th>Protocol</th><th>Port</th><th>DNS name</th><th>Node</th><th>Updated</th><th>Metadata</th></tr></thead>
+<tbody>
+{{range .Services}}
+<tr>
+<td><code>{{.Name}}</code></td>
+<td>{{.Protocol}}</td>
+<td>{{.Port}}</td>
+<td>{{if .DNSName}}<code>{{.DNSName}}</code>{{else}}—{{end}}</td>
+<td>{{.Hostname}} <code>{{.StableID}}</code></td>
+<td>{{fmtTime .Updated}}</td>
+<td>{{if .Metadata}}{{range $k, $v := .Metadata}}<code>{{$k}}={{$v}}</code> {{end}}{{else}}—{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>No services have been advertised. An agent publishes them with
+<code>xunara-agent</code> / <code>/api/agent/v1/services</code>.</p>
 {{end}}
 `)
 

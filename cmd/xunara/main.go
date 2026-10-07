@@ -50,6 +50,8 @@ func main() {
 		runIDToken(os.Args[2:])
 	case "posture":
 		runPosture(os.Args[2:])
+	case "services":
+		runServices(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -84,6 +86,8 @@ Commands:
   id-token rotate      Rotate the identity-token signing key
   posture list         List machines with device posture attributes
   posture show         Show one machine's device posture attributes
+  services list        List services nodes advertise about themselves
+  services show        Show one advertised service
 
 Run "xunara <command> -h" for command options.
 `)

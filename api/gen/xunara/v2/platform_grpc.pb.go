@@ -50,6 +50,7 @@ const (
 	PlatformService_GetIDTokenIssuer_FullMethodName      = "/xunara.v2.PlatformService/GetIDTokenIssuer"
 	PlatformService_GetMachineDeviceAttrs_FullMethodName = "/xunara.v2.PlatformService/GetMachineDeviceAttrs"
 	PlatformService_ListMachines_FullMethodName          = "/xunara.v2.PlatformService/ListMachines"
+	PlatformService_ListServices_FullMethodName          = "/xunara.v2.PlatformService/ListServices"
 	PlatformService_ListAudit_FullMethodName             = "/xunara.v2.PlatformService/ListAudit"
 	PlatformService_ListWebhooks_FullMethodName          = "/xunara.v2.PlatformService/ListWebhooks"
 	PlatformService_RevokeAgentToken_FullMethodName      = "/xunara.v2.PlatformService/RevokeAgentToken"
@@ -80,6 +81,10 @@ type PlatformServiceClient interface {
 	GetMachineDeviceAttrs(ctx context.Context, in *GetMachineDeviceAttrsRequest, opts ...grpc.CallOption) (*MachineDeviceAttrs, error)
 	// ListMachines returns machines ordered by id, resumable with page_token.
 	ListMachines(ctx context.Context, in *ListMachinesRequest, opts ...grpc.CallOption) (*ListMachinesResponse, error)
+	// ListServices returns the services nodes advertise about themselves
+	// (Xunara Atlas), ordered by name and resumable with page_token. Publishing
+	// happens over the native client protocol; this surface is read-only.
+	ListServices(ctx context.Context, in *ListServicesRequest, opts ...grpc.CallOption) (*ListServicesResponse, error)
 	// ListAudit returns audit events ordered by id, resumable with page_token.
 	ListAudit(ctx context.Context, in *ListAuditRequest, opts ...grpc.CallOption) (*ListAuditResponse, error)
 	// ListWebhooks returns the configured and managed webhook receivers. The
@@ -148,6 +153,16 @@ func (c *platformServiceClient) ListMachines(ctx context.Context, in *ListMachin
 	return out, nil
 }
 
+func (c *platformServiceClient) ListServices(ctx context.Context, in *ListServicesRequest, opts ...grpc.CallOption) (*ListServicesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListServicesResponse)
+	err := c.cc.Invoke(ctx, PlatformService_ListServices_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *platformServiceClient) ListAudit(ctx context.Context, in *ListAuditRequest, opts ...grpc.CallOption) (*ListAuditResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListAuditResponse)
@@ -203,6 +218,10 @@ type PlatformServiceServer interface {
 	GetMachineDeviceAttrs(context.Context, *GetMachineDeviceAttrsRequest) (*MachineDeviceAttrs, error)
 	// ListMachines returns machines ordered by id, resumable with page_token.
 	ListMachines(context.Context, *ListMachinesRequest) (*ListMachinesResponse, error)
+	// ListServices returns the services nodes advertise about themselves
+	// (Xunara Atlas), ordered by name and resumable with page_token. Publishing
+	// happens over the native client protocol; this surface is read-only.
+	ListServices(context.Context, *ListServicesRequest) (*ListServicesResponse, error)
 	// ListAudit returns audit events ordered by id, resumable with page_token.
 	ListAudit(context.Context, *ListAuditRequest) (*ListAuditResponse, error)
 	// ListWebhooks returns the configured and managed webhook receivers. The
@@ -235,6 +254,9 @@ func (UnimplementedPlatformServiceServer) GetMachineDeviceAttrs(context.Context,
 }
 func (UnimplementedPlatformServiceServer) ListMachines(context.Context, *ListMachinesRequest) (*ListMachinesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListMachines not implemented")
+}
+func (UnimplementedPlatformServiceServer) ListServices(context.Context, *ListServicesRequest) (*ListServicesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListServices not implemented")
 }
 func (UnimplementedPlatformServiceServer) ListAudit(context.Context, *ListAuditRequest) (*ListAuditResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListAudit not implemented")
@@ -356,6 +378,24 @@ func _PlatformService_ListMachines_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlatformService_ListServices_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListServicesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).ListServices(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_ListServices_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).ListServices(ctx, req.(*ListServicesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PlatformService_ListAudit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListAuditRequest)
 	if err := dec(in); err != nil {
@@ -436,6 +476,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListMachines",
 			Handler:    _PlatformService_ListMachines_Handler,
+		},
+		{
+			MethodName: "ListServices",
+			Handler:    _PlatformService_ListServices_Handler,
 		},
 		{
 			MethodName: "ListAudit",

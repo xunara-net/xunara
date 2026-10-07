@@ -718,3 +718,70 @@ func TestConsoleMachinePostureColumn(t *testing.T) {
 		t.Errorf("machine without attributes lacks a dash:\n%s", row)
 	}
 }
+
+// TestConsoleServicesPage checks the read-only Services page and the services
+// column on the machines page: what a node advertised, with no way to change
+// it from the console.
+func TestConsoleServicesPage(t *testing.T) {
+	s := newServerWithConfig(t, Config{Domain: "example.com"})
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/services")
+
+	web := seedAPIMachine(t, s, "web", nil)
+	seedAPIMachine(t, s, "quiet", nil)
+	if err := s.store.ReplaceNodeServices(web.ID, []state.Service{
+		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"}},
+	}); err != nil {
+		t.Fatalf("ReplaceNodeServices: %v", err)
+	}
+
+	page := bodyString(t, getRequest(t, client, hs.URL+"/console/services", cookie))
+	for _, want := range []string{"api", "tcp", "8080", "web", web.StableID, "api.example.com", "version", "2"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("services page lacks %q:\n%s", want, page)
+		}
+	}
+	if strings.Contains(page, "/console/services/") {
+		t.Errorf("the services page offers a write control:\n%s", page)
+	}
+
+	// The machines page counts services per machine, with a dash when there
+	// are none.
+	machines := bodyString(t, getRequest(t, client, hs.URL+"/console/machines", cookie))
+	rows := strings.Split(machines, "<tr>")
+	find := func(hostname string) string {
+		t.Helper()
+		for _, row := range rows {
+			// The chunk before the first <tr> is the page head (nav and
+			// styles); only table rows are considered.
+			if !strings.Contains(row, "<td>") {
+				continue
+			}
+			if strings.Contains(row, ">"+hostname) {
+				return row
+			}
+		}
+		t.Fatalf("machines page has no row for %s", hostname)
+		return ""
+	}
+	if row := find("web"); !strings.Contains(row, "<td>1</td>") {
+		t.Errorf("web row lacks the service count:\n%s", row)
+	}
+	if row := find("quiet"); !strings.Contains(row, ">—<") {
+		t.Errorf("quiet row lacks a dash:\n%s", row)
+	}
+}
+
+// TestConsoleServicesPageEmpty checks the empty-state copy.
+func TestConsoleServicesPageEmpty(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/services")
+
+	page := bodyString(t, getRequest(t, client, hs.URL+"/console/services", cookie))
+	if !strings.Contains(page, "No services have been advertised") {
+		t.Errorf("empty services page = %s", page)
+	}
+}

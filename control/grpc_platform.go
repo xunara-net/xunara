@@ -338,6 +338,7 @@ func (g *grpcPlatformServer) ListMachines(ctx context.Context, req *xunarav2.Lis
 
 	out := make([]*xunarav2.Machine, 0, limit)
 	counts := s.deviceAttrCounts()
+	serviceCounts := s.serviceCounts()
 	var last uint64
 	next := ""
 	for _, n := range nodes {
@@ -364,11 +365,70 @@ func (g *grpcPlatformServer) ListMachines(ctx context.Context, req *xunarav2.Lis
 		}
 		view := grpcMachineView(n, s)
 		view.DeviceAttrCount = uint32(counts[n.ID])
+		view.ServiceCount = uint32(serviceCounts[n.ID])
 		out = append(out, view)
 		last = id
 	}
 
 	return &xunarav2.ListMachinesResponse{Machines: out, NextPageToken: next}, nil
+}
+
+// ListServices implements PlatformService.ListServices: the same read-only
+// registry as GET /api/v2/services, with the same filters and cursor.
+func (g *grpcPlatformServer) ListServices(ctx context.Context, req *xunarav2.ListServicesRequest) (*xunarav2.ListServicesResponse, error) {
+	s, _, err := g.authorize(ctx, identity.ScopeRead)
+	if err != nil {
+		return nil, err
+	}
+
+	limit := grpcPageSize(req.GetPageSize(), 100)
+	after, ok := grpcCursorString(req.GetPageToken(), "services")
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "invalid page token")
+	}
+
+	nodeFilter := state.NodeID(req.GetNodeId())
+	nameFilter := strings.TrimSpace(req.GetName())
+
+	out := make([]*xunarav2.Service, 0, limit)
+	var last string
+	next := ""
+	for _, svc := range s.store.ListServices() {
+		if after != "" && svc.Name <= after {
+			continue
+		}
+		if nodeFilter != 0 && svc.NodeID != nodeFilter {
+			continue
+		}
+		if nameFilter != "" && svc.Name != nameFilter {
+			continue
+		}
+		if len(out) == limit {
+			next = apiV2EncodeCursor("services", last)
+			break
+		}
+		node, ok := s.store.GetNodeByID(svc.NodeID)
+		if !ok {
+			continue
+		}
+		view := s.serviceView(svc, node)
+		entry := &xunarav2.Service{
+			Name:      view.Name,
+			Protocol:  view.Protocol,
+			Port:      uint32(view.Port),
+			Metadata:  view.Metadata,
+			MachineId: view.NodeID,
+			StableId:  view.StableID,
+			Hostname:  view.Hostname,
+			DnsName:   view.DNSName,
+			Created:   timestamppb.New(view.Created),
+			Updated:   timestamppb.New(view.Updated),
+		}
+		out = append(out, entry)
+		last = svc.Name
+	}
+
+	return &xunarav2.ListServicesResponse{Services: out, NextPageToken: next}, nil
 }
 
 // ListAudit implements PlatformService.ListAudit. Filters and cursor semantics
@@ -534,6 +594,19 @@ func grpcCursorUint(raw, kind string) (uint64, bool) {
 		return 0, false
 	}
 	return id, true
+}
+
+// grpcCursorString reads a single-string cursor of the given kind, accepting
+// the same opaque tokens the HTTP API returns.
+func grpcCursorString(raw, kind string) (string, bool) {
+	cursorKind, parts, ok := apiV2DecodeCursor(raw)
+	if !ok || (cursorKind != "" && cursorKind != kind) || len(parts) > 1 {
+		return "", false
+	}
+	if cursorKind == "" {
+		return "", true
+	}
+	return parts[0], true
 }
 
 // grpcMachineView builds the typed view of one node.

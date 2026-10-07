@@ -53,6 +53,7 @@ func (s *Server) apiV2Router() http.Handler {
 
 	r.Get("/machines", s.handleAPIV2Machines)
 	r.Get("/machines/{id}/device-attrs", s.handleAPIV2MachineDeviceAttrs)
+	r.Get("/services", s.handleAPIV2Services)
 	r.Get("/audit", s.handleAPIV2Audit)
 
 	r.Get("/agent-tokens", s.handleAPIV2AgentTokens)
@@ -117,6 +118,19 @@ func apiV2CursorUint(w http.ResponseWriter, r *http.Request, kind string) (uint6
 		return 0, false
 	}
 	return id, true
+}
+
+// apiV2CursorString reads a single-string cursor of the given kind.
+func apiV2CursorString(w http.ResponseWriter, r *http.Request, kind string) (string, bool) {
+	cursorKind, parts, ok := apiV2DecodeCursor(r.URL.Query().Get("cursor"))
+	if !ok || (cursorKind != "" && cursorKind != kind) || len(parts) > 1 {
+		writeAPIError(w, http.StatusBadRequest, "invalid cursor")
+		return "", false
+	}
+	if cursorKind == "" {
+		return "", true
+	}
+	return parts[0], true
 }
 
 // apiV2Limit parses ?limit=, bounded and defaulted.
@@ -254,6 +268,7 @@ func (s *Server) handleAPIV2Machines(w http.ResponseWriter, r *http.Request) {
 
 	items := make([]apiMachine, 0, limit)
 	counts := s.deviceAttrCounts()
+	serviceCounts := s.serviceCounts()
 	var last uint64
 	next := ""
 	for _, n := range nodes {
@@ -280,8 +295,72 @@ func (s *Server) handleAPIV2Machines(w http.ResponseWriter, r *http.Request) {
 		}
 		view := s.apiMachineView(n)
 		view.DeviceAttrCount = counts[n.ID]
+		view.ServiceCount = serviceCounts[n.ID]
 		items = append(items, view)
 		last = id
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "nextCursor": next})
+}
+
+// handleAPIV2Services implements GET /api/v2/services: the services nodes
+// advertise about themselves (Xunara Atlas), ordered by name.
+//
+// Filters: node=<machine id|stable id> (unknown matches nothing) and
+// name=<exact name>. The cursor is the last name of the previous page.
+func (s *Server) handleAPIV2Services(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.requireScope(w, r, identity.ScopeRead); !ok {
+		return
+	}
+	limit, ok := apiV2Limit(w, r, 100)
+	if !ok {
+		return
+	}
+	after, ok := apiV2CursorString(w, r, "services")
+	if !ok {
+		return
+	}
+
+	query := r.URL.Query()
+	var nodeFilter state.NodeID
+	if raw := query.Get("node"); raw != "" {
+		if id, err := strconv.ParseUint(raw, 10, 64); err == nil {
+			nodeFilter = state.NodeID(id)
+		} else if node, ok := s.store.GetNodeByStableID(raw); ok {
+			nodeFilter = node.ID
+		} else {
+			// An unknown node matches nothing rather than being ignored:
+			// a filter that silently widens its result is a security bug.
+			nodeFilter = ^state.NodeID(0)
+		}
+	}
+	nameFilter := query.Get("name")
+
+	items := make([]serviceView, 0, limit)
+	var last string
+	next := ""
+	for _, svc := range s.store.ListServices() {
+		if after != "" && svc.Name <= after {
+			continue
+		}
+		if nodeFilter != 0 && svc.NodeID != nodeFilter {
+			continue
+		}
+		if nameFilter != "" && svc.Name != nameFilter {
+			continue
+		}
+		if len(items) == limit {
+			next = apiV2EncodeCursor("services", last)
+			break
+		}
+		node, ok := s.store.GetNodeByID(svc.NodeID)
+		if !ok {
+			// The node was deleted; the store cascade removes its services,
+			// so a stale row is only a race with the deletion.
+			continue
+		}
+		items = append(items, s.serviceView(svc, node))
+		last = svc.Name
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "nextCursor": next})

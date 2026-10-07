@@ -77,6 +77,7 @@ func (s *Server) consoleRouter() http.Handler {
 	r.Get("/dns", s.handleConsoleDNS)
 	r.Get("/auth-keys", s.handleConsoleAuthKeys)
 	r.Get("/agents", s.handleConsoleAgents)
+	r.Get("/services", s.handleConsoleServices)
 	r.Get("/webhooks", s.handleConsoleWebhooks)
 	r.Get("/policy", s.handleConsolePolicy)
 	r.Get("/audit", s.handleConsoleAudit)
@@ -212,10 +213,12 @@ func (s *Server) handleConsoleMachines(w http.ResponseWriter, r *http.Request) {
 
 	nodes := s.store.ListNodes()
 	counts := s.deviceAttrCounts()
+	serviceCounts := s.serviceCounts()
 	machines := make([]apiMachine, 0, len(nodes))
 	for _, n := range nodes {
 		view := s.apiMachineView(n)
 		view.DeviceAttrCount = counts[n.ID]
+		view.ServiceCount = serviceCounts[n.ID]
 		machines = append(machines, view)
 	}
 	data["Machines"] = machines
@@ -673,6 +676,26 @@ func (s *Server) consoleAgentTokenViews() []apiAgentTokenView {
 		out = append(out, s.apiAgentTokenView(t))
 	}
 	return out
+}
+
+// handleConsoleServices implements GET /console/services: the read-only
+// registry of services nodes advertise about themselves (Xunara Atlas).
+func (s *Server) handleConsoleServices(w http.ResponseWriter, r *http.Request) {
+	_, data, ok := s.consoleSession(w, r, "services")
+	if !ok {
+		return
+	}
+
+	services := []serviceView{}
+	for _, svc := range s.store.ListServices() {
+		node, ok := s.store.GetNodeByID(svc.NodeID)
+		if !ok {
+			continue
+		}
+		services = append(services, s.serviceView(svc, node))
+	}
+	data["Services"] = services
+	s.renderConsole(w, consoleServicesTemplate, data)
 }
 
 // handleConsoleAgents implements GET /console/agents.

@@ -40,6 +40,10 @@ type apiMachine struct {
 	// reported; the values themselves come from the per-machine endpoint. It
 	// is omitted when the machine has none.
 	DeviceAttrCount int `json:"deviceAttrCount,omitempty"`
+	// ServiceCount is how many services the machine advertises (Xunara Atlas);
+	// the records themselves come from GET /api/v2/services. It is omitted
+	// when the machine advertises none.
+	ServiceCount int `json:"serviceCount,omitempty"`
 }
 
 // apiMachineView builds the JSON shape of a node.
@@ -89,6 +93,18 @@ func (s *Server) deviceAttrCounts() map[state.NodeID]int {
 	counts, err := s.store.NodeDeviceAttrCounts()
 	if err != nil {
 		s.log.Warn("counting device posture attributes", "err", err)
+		return nil
+	}
+	return counts
+}
+
+// serviceCounts returns how many services each node advertises. Like
+// deviceAttrCounts, a store error is not fatal: the count is informational and
+// the records themselves have their own endpoint.
+func (s *Server) serviceCounts() map[state.NodeID]int {
+	counts, err := s.store.NodeServiceCounts()
+	if err != nil {
+		s.log.Warn("counting advertised services", "err", err)
 		return nil
 	}
 	return counts

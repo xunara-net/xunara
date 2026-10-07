@@ -553,3 +553,114 @@ func TestAPIV2MachineDeviceAttrs(t *testing.T) {
 		t.Errorf("machine list covered %d machines, want 2", seen)
 	}
 }
+
+// TestAPIV2Services checks the read-only service registry: scopes, filters,
+// pagination, the DNS name, and the per-machine count in the machine list.
+func TestAPIV2Services(t *testing.T) {
+	s := newServerWithConfig(t, Config{Domain: "example.com"})
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+
+	web := seedAPIMachine(t, s, "web", nil)
+	quiet := seedAPIMachine(t, s, "quiet", nil)
+	if err := s.store.ReplaceNodeServices(web.ID, []state.Service{
+		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"}},
+		{Name: "metrics", Protocol: "udp", Port: 9090},
+	}); err != nil {
+		t.Fatalf("ReplaceNodeServices: %v", err)
+	}
+
+	url := hs.URL + "/api/v2/services"
+	if resp := apiRequest(t, client, http.MethodGet, url, "", nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("anonymous status = %d, want 401", resp.StatusCode)
+	}
+	_, readToken := seedAPIKey(t, s, identity.ScopeRead)
+	_, writeToken := seedAPIKey(t, s, identity.ScopeWrite)
+	if resp := apiRequest(t, client, http.MethodGet, url, writeToken, nil); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("write-only status = %d, want 403", resp.StatusCode)
+	}
+
+	body := decodeAPI(t, apiRequest(t, client, http.MethodGet, url, readToken, nil))
+	items, ok := body["items"].([]any)
+	if !ok || len(items) != 2 {
+		t.Fatalf("items = %v, want two services", body["items"])
+	}
+	first := items[0].(map[string]any)
+	if first["name"] != "api" || first["protocol"] != "tcp" || first["port"] != float64(8080) {
+		t.Errorf("first service = %v", first)
+	}
+	if first["nodeId"] != float64(web.ID) || first["stableId"] != web.StableID || first["hostname"] != "web" {
+		t.Errorf("first service identity = %v", first)
+	}
+	if first["dnsName"] != "api.example.com" {
+		t.Errorf("dnsName = %v, want api.example.com", first["dnsName"])
+	}
+	if metadata, ok := first["metadata"].(map[string]any); !ok || metadata["version"] != "2" {
+		t.Errorf("metadata = %v", first["metadata"])
+	}
+	if second := items[1].(map[string]any); second["name"] != "metrics" || second["protocol"] != "udp" {
+		t.Errorf("second service = %v", second)
+	}
+
+	// Filters: exact name, node by stable id, and an unknown node that must
+	// match nothing instead of widening the result.
+	filtered := decodeAPI(t, apiRequest(t, client, http.MethodGet, url+"?name=api", readToken, nil))
+	if got := filtered["items"].([]any); len(got) != 1 || got[0].(map[string]any)["name"] != "api" {
+		t.Errorf("name filter = %v", got)
+	}
+	byNode := decodeAPI(t, apiRequest(t, client, http.MethodGet, url+"?node="+web.StableID, readToken, nil))
+	if got := byNode["items"].([]any); len(got) != 2 {
+		t.Errorf("node filter = %v, want two services", got)
+	}
+	unknown := decodeAPI(t, apiRequest(t, client, http.MethodGet, url+"?node=9999", readToken, nil))
+	if got := unknown["items"].([]any); len(got) != 0 {
+		t.Errorf("unknown node filter = %v, want none", got)
+	}
+
+	// Pagination: one item per page, names as cursors.
+	page := decodeAPI(t, apiRequest(t, client, http.MethodGet, url+"?limit=1", readToken, nil))
+	if got := page["items"].([]any); len(got) != 1 || got[0].(map[string]any)["name"] != "api" {
+		t.Fatalf("page 1 = %v", got)
+	}
+	next, _ := page["nextCursor"].(string)
+	if next == "" {
+		t.Fatal("page 1 has no cursor")
+	}
+	page2 := decodeAPI(t, apiRequest(t, client, http.MethodGet, url+"?limit=1&cursor="+next, readToken, nil))
+	if got := page2["items"].([]any); len(got) != 1 || got[0].(map[string]any)["name"] != "metrics" {
+		t.Fatalf("page 2 = %v", got)
+	}
+	if cursor, _ := page2["nextCursor"].(string); cursor != "" {
+		t.Errorf("page 2 cursor = %q, want empty", cursor)
+	}
+
+	if resp := apiRequest(t, client, http.MethodGet, url+"?cursor="+apiV2EncodeCursor("machines", "1"), readToken, nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("wrong cursor kind status = %d, want 400", resp.StatusCode)
+	}
+	if resp := apiRequest(t, client, http.MethodGet, url+"?limit=0", readToken, nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("bad limit status = %d, want 400", resp.StatusCode)
+	}
+
+	// The machine list reports how many services each machine advertises, and
+	// omits the field for machines that advertise none.
+	list := decodeAPI(t, apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/machines", readToken, nil))
+	seen := 0
+	for _, raw := range list["items"].([]any) {
+		item := raw.(map[string]any)
+		switch item["stableId"] {
+		case web.StableID:
+			seen++
+			if item["serviceCount"] != float64(2) {
+				t.Errorf("web serviceCount = %v, want 2", item["serviceCount"])
+			}
+		case quiet.StableID:
+			seen++
+			if _, present := item["serviceCount"]; present {
+				t.Errorf("a machine without services carries a count: %v", item)
+			}
+		}
+	}
+	if seen != 2 {
+		t.Errorf("machine list covered %d machines, want 2", seen)
+	}
+}

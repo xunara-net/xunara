@@ -662,3 +662,108 @@ func TestPlatformGRPCDeviceAttrs(t *testing.T) {
 		t.Errorf("ListMachines covered %d machines, want 2", seen)
 	}
 }
+
+// TestPlatformGRPCListServices checks the read-only service registry over
+// gRPC: scopes, filters, pagination and the same values the HTTP API returns.
+func TestPlatformGRPCListServices(t *testing.T) {
+	s := newServerWithConfig(t, Config{Domain: "example.com"})
+	client := startGRPCTestServer(t, s.RegisterPlatformGRPC)
+
+	web := seedAPIMachine(t, s, "web", nil)
+	seedAPIMachine(t, s, "quiet", nil)
+	if err := s.store.ReplaceNodeServices(web.ID, []state.Service{
+		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"}},
+		{Name: "metrics", Protocol: "udp", Port: 9090},
+	}); err != nil {
+		t.Fatalf("ReplaceNodeServices: %v", err)
+	}
+
+	_, readToken := seedAPIKey(t, s, identity.ScopeRead)
+	_, writeToken := seedAPIKey(t, s, identity.ScopeWrite)
+
+	if _, err := client.ListServices(grpcCtx(""), &xunarav2.ListServicesRequest{}); status.Code(err) != codes.Unauthenticated {
+		t.Errorf("anonymous error = %v, want Unauthenticated", err)
+	}
+	if _, err := client.ListServices(grpcCtx(writeToken), &xunarav2.ListServicesRequest{}); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("write-only error = %v, want PermissionDenied", err)
+	}
+
+	list, err := client.ListServices(grpcCtx(readToken), &xunarav2.ListServicesRequest{})
+	if err != nil {
+		t.Fatalf("ListServices: %v", err)
+	}
+	if len(list.GetServices()) != 2 {
+		t.Fatalf("services = %+v, want two", list.GetServices())
+	}
+	first := list.GetServices()[0]
+	if first.GetName() != "api" || first.GetProtocol() != "tcp" || first.GetPort() != 8080 {
+		t.Errorf("first service = %+v", first)
+	}
+	if first.GetMachineId() != uint64(web.ID) || first.GetStableId() != web.StableID || first.GetHostname() != "web" {
+		t.Errorf("first service identity = %+v", first)
+	}
+	if first.GetDnsName() != "api.example.com" || first.GetMetadata()["version"] != "2" {
+		t.Errorf("first service dns/metadata = %+v", first)
+	}
+	if first.GetCreated() == nil || first.GetUpdated() == nil {
+		t.Errorf("first service has no timestamps: %+v", first)
+	}
+
+	byNode, err := client.ListServices(grpcCtx(readToken), &xunarav2.ListServicesRequest{NodeId: uint64(web.ID)})
+	if err != nil {
+		t.Fatalf("ListServices node filter: %v", err)
+	}
+	if len(byNode.GetServices()) != 2 {
+		t.Errorf("node filter = %+v", byNode.GetServices())
+	}
+	byName, err := client.ListServices(grpcCtx(readToken), &xunarav2.ListServicesRequest{Name: "metrics"})
+	if err != nil {
+		t.Fatalf("ListServices name filter: %v", err)
+	}
+	if len(byName.GetServices()) != 1 || byName.GetServices()[0].GetProtocol() != "udp" {
+		t.Errorf("name filter = %+v", byName.GetServices())
+	}
+	unknown, err := client.ListServices(grpcCtx(readToken), &xunarav2.ListServicesRequest{NodeId: 9999})
+	if err != nil {
+		t.Fatalf("ListServices unknown node: %v", err)
+	}
+	if len(unknown.GetServices()) != 0 {
+		t.Errorf("unknown node filter = %+v, want none", unknown.GetServices())
+	}
+
+	page, err := client.ListServices(grpcCtx(readToken), &xunarav2.ListServicesRequest{PageSize: 1})
+	if err != nil {
+		t.Fatalf("ListServices page 1: %v", err)
+	}
+	if len(page.GetServices()) != 1 || page.GetNextPageToken() == "" {
+		t.Fatalf("page 1 = %+v, next %q", page.GetServices(), page.GetNextPageToken())
+	}
+	page2, err := client.ListServices(grpcCtx(readToken), &xunarav2.ListServicesRequest{PageSize: 1, PageToken: page.GetNextPageToken()})
+	if err != nil {
+		t.Fatalf("ListServices page 2: %v", err)
+	}
+	if len(page2.GetServices()) != 1 || page2.GetServices()[0].GetName() != "metrics" || page2.GetNextPageToken() != "" {
+		t.Errorf("page 2 = %+v, next %q", page2.GetServices(), page2.GetNextPageToken())
+	}
+	if _, err := client.ListServices(grpcCtx(readToken), &xunarav2.ListServicesRequest{PageToken: apiV2EncodeCursor("machines", "1")}); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("wrong cursor kind error = %v, want InvalidArgument", err)
+	}
+
+	// The machine list carries the per-machine count.
+	machines, err := client.ListMachines(grpcCtx(readToken), &xunarav2.ListMachinesRequest{})
+	if err != nil {
+		t.Fatalf("ListMachines: %v", err)
+	}
+	for _, m := range machines.GetMachines() {
+		switch m.GetStableId() {
+		case web.StableID:
+			if m.GetServiceCount() != 2 {
+				t.Errorf("web service_count = %d, want 2", m.GetServiceCount())
+			}
+		default:
+			if m.GetServiceCount() != 0 {
+				t.Errorf("%s service_count = %d, want 0", m.GetHostname(), m.GetServiceCount())
+			}
+		}
+	}
+}
