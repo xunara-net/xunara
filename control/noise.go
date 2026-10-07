@@ -139,6 +139,11 @@ func (ns *noiseServer) router() http.Handler {
 		r.Post("/map", ns.handleMap)
 		r.Post("/set-dns", ns.handleSetDNS)
 		r.Post("/feature/query", ns.handleFeatureQuery)
+		r.Post("/audit-log", ns.handleAuditLog)
+		r.Post("/update-health", ns.handleUpdateHealth)
+		r.Get("/whoami", ns.handleWhoami)
+		r.Patch("/set-device-attr", ns.handleNotImplemented("device posture attributes"))
+		r.Post("/id-token", ns.handleNotImplemented("OIDC ID tokens"))
 		r.Get("/ssh/action/{srcNodeID}/to/{dstNodeID}", ns.handleSSHAction)
 	})
 

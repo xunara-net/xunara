@@ -60,7 +60,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
 已知限制（M2 起补齐）：
 
 - Store 无持久化；无预认证密钥（PAK）；`/register/{id}` 页面不自动审批（审批仅经 `ApproveRegistration` 接缝）。
-- 未处理 TKA、Funnel、`/machine/feature/query` 等内层端点（后续里程碑补齐）。
+- 内层端点：`/machine/{register,map,set-dns,feature/query,audit-log,update-health,whoami}` 与 SSH check 已实现；`set-device-attr`、`id-token` 显式 501；TKA、Funnel 未处理。
 
 ---
 
@@ -473,6 +473,21 @@ reference/{go-oidc,oauth2,dex,webauthn}
     不进 ExtraRecords、越权 400、provider 失败 502、reap 只删过期 challenge）、
     `dnsprovider/webhook_test.go`、`dnsprovider/cloudflare_test.go`
     （请求体/鉴权、put 替换旧值、幂等删除、API 错误、URL 校验）。
+- M6h 已完成：内层端点补齐（health / audit-log / whoami）。
+  - `POST /machine/update-health`（`tailcfg.HealthChangeRequest`）：健康报告是
+    咨询性遥测，只记 debug 日志（字段截断/去控制字符），不影响注册、策略或
+    路由；node key 非零时校验 machine key 绑定，为零（旧客户端）时仍接受。
+  - `POST /machine/audit-log`（`tailcfg.AuditLogRequest`）：客户端上报的审计
+    事件落持久审计日志；action 必须在白名单（当前 `DISCONNECT_NODE` →
+    `node.disconnect_reported`），未知 action 400；details 截断 512 字节并去
+    控制字符（控制台/终端渲染安全）；actor/target 用节点 stable ID。
+  - `GET /machine/whoami`：`tailscale debug ts2021` 的握手探针；按 Noise 会话
+    machine key 找节点（多节点取最旧），返回 node id/stable id/FQDN/地址/
+    短公钥；未注册 machine key 404。
+  - `PATCH /machine/set-device-attr` 与 `POST /machine/id-token` 显式 501
+    （设备姿态属性、OIDC ID token 未实现；不伪造 token，不代表支持）。
+  - 测试：`control/machine_misc_test.go`（审计落库与净化、未知 action 400、
+    跨节点 404、health 204/绑定、whoami 成功与未注册 404、501 表）。
 - M6g 已完成：`/machine/feature/query`（serve / funnel 的启用指引）。
   - `control/featurequery.go`：解析 `tailcfg.QueryFeatureRequest`，Noise 会话
     machine key 必须匹配请求中的 node key（跨节点探测 404）；节点已持有全部
