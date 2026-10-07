@@ -143,7 +143,7 @@ func (ns *noiseServer) router() http.Handler {
 		r.Post("/update-health", ns.handleUpdateHealth)
 		r.Get("/whoami", ns.handleWhoami)
 		r.Patch("/set-device-attr", ns.handleNotImplemented("device posture attributes"))
-		r.Post("/id-token", ns.handleNotImplemented("OIDC ID tokens"))
+		r.Post("/id-token", ns.handleIDToken)
 		r.Get("/ssh/action/{srcNodeID}/to/{dstNodeID}", ns.handleSSHAction)
 
 		// Tailnet lock (TKA). The official client issues all of these as GET

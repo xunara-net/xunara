@@ -12,10 +12,10 @@ import (
 )
 
 // This file implements the remaining inner (Noise) endpoints official clients
-// call: health reports, client audit logs, and the debug whoami probe. The two
-// endpoints this build cannot honour truthfully (device posture attributes and
-// OIDC ID-token minting) are registered as explicit 501s rather than being
-// left to 404, so a client sees "not supported" instead of "routing bug".
+// call: health reports, client audit logs, and the debug whoami probe. The one
+// endpoint this build cannot honour truthfully (device posture attributes) is
+// registered as an explicit 501 rather than being left to 404, so a client
+// sees "not supported" instead of "routing bug".
 
 // maxAuditDetailsLen bounds the client-supplied detail string before it is
 // persisted; the audit log is durable, so unbounded input is a storage risk.

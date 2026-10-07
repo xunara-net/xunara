@@ -22,6 +22,7 @@ import (
 	"tailscale.com/types/key"
 
 	"github.com/xunara/xunara/identity"
+	"github.com/xunara/xunara/idtoken"
 	"github.com/xunara/xunara/policy"
 	"github.com/xunara/xunara/state"
 	"github.com/xunara/xunara/webhook"
@@ -162,6 +163,13 @@ type Server struct {
 	// tka owns the tailnet's tailnet-lock (TKA) state: the AUM chain and the
 	// sealed support disablement secret.
 	tka *tkaManager
+
+	// tokens holds the signing keys for the OIDC identity tokens nodes fetch
+	// from /machine/id-token, and for the public JWKS a relying party reads. It
+	// is nil when no issuer URL is configured: without one there is nothing a
+	// relying party could trust, so the endpoint answers 501 instead of
+	// minting a token with an empty issuer.
+	tokens *idtoken.Keyring
 
 	// certDomains are the extra certificate names from cfg, normalised at
 	// construction. Empty when no DNS provider is configured.
@@ -319,6 +327,11 @@ func New(cfg Config) (*Server, error) {
 		pendingByNode:     make(map[key.NodePublic]string),
 		online:            make(map[state.NodeID]int),
 		watchers:          make(map[uint64]chan struct{}),
+	}
+
+	if cfg.ServerURL != "" {
+		srv.tokens = idtoken.NewKeyring(cfg.StateDir, cfg.Logger)
+		cfg.Logger.Info("identity-token issuer enabled", "issuer", idtoken.TrimIssuer(cfg.ServerURL))
 	}
 
 	// The DERP policy decides what clients are served; a policy that names a
@@ -559,6 +572,8 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/key", s.handleKey)
 	r.Get("/health", s.handleHealth)
 	r.Get("/version", s.handleVersion)
+	r.Get("/.well-known/jwks.json", s.handleJWKS)
+	r.Get("/.well-known/openid-configuration", s.handleOpenIDConfiguration)
 	r.Get("/login", s.handleLogin)
 	r.Post("/logout", s.handleLogout)
 	r.Get("/oidc/callback/{providerID}", s.handleCallback)

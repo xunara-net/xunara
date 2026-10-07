@@ -177,7 +177,8 @@ func TestWhoamiEndpoint(t *testing.T) {
 }
 
 // TestUnimplementedEndpointsAreExplicit checks that unsupported endpoints fail
-// with 501 instead of a confusing 404.
+// with 501 instead of a confusing 404. (id-token used to be one of them; it is
+// implemented now and covered by idtoken_test.go.)
 func TestUnimplementedEndpointsAreExplicit(t *testing.T) {
 	s := newServerWithConfig(t, Config{})
 	hs := newTestHTTPServer(t, s)
@@ -187,8 +188,5 @@ func TestUnimplementedEndpointsAreExplicit(t *testing.T) {
 
 	if body, status := doRaw(t, client, http.MethodPatch, "/machine/set-device-attr", struct{}{}); status != http.StatusNotImplemented {
 		t.Errorf("set-device-attr status = %d (%s), want 501", status, body)
-	}
-	if body, status := doRaw(t, client, http.MethodPost, "/machine/id-token", struct{}{}); status != http.StatusNotImplemented {
-		t.Errorf("id-token status = %d (%s), want 501", status, body)
 	}
 }

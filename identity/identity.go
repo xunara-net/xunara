@@ -180,4 +180,9 @@ const (
 	AuditTailnetLockEnabled    = "tailnet_lock.enabled"
 	AuditTailnetLockDisabled   = "tailnet_lock.disabled"
 	AuditTailnetLockNodeSigned = "tailnet_lock.node_signed"
+	// AuditIDTokenIssued records a node minting an OIDC identity token for a
+	// third-party audience through /machine/id-token. The token itself is a
+	// bearer credential and is never written: the record names the node and
+	// the audience, which is what an incident review needs to correlate.
+	AuditIDTokenIssued = "identity_token.issued"
 )

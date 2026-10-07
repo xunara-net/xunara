@@ -46,6 +46,8 @@ func main() {
 		runAPIKey(os.Args[2:])
 	case "tka":
 		runTKA(os.Args[2:])
+	case "id-token":
+		runIDToken(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -76,6 +78,8 @@ Commands:
   apikey list          List API keys (never their tokens)
   apikey revoke        Revoke an API key
   tka status           Show the tailnet-lock (key authority) state
+  id-token show        Show the OIDC identity-token signing keys
+  id-token rotate      Rotate the identity-token signing key
 
 Run "xunara <command> -h" for command options.
 `)

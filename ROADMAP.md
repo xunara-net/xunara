@@ -60,7 +60,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
 已知限制（M2 起补齐）：
 
 - Store 无持久化；无预认证密钥（PAK）；`/register/{id}` 页面不自动审批（审批仅经 `ApproveRegistration` 接缝）。
-- 内层端点：`/machine/{register,map,set-dns,feature/query,audit-log,update-health,whoami}` 与 SSH check 已实现；`set-device-attr`、`id-token` 显式 501；TKA 见 M11（已完成）；Funnel 未处理。
+- 内层端点：`/machine/{register,map,set-dns,feature/query,audit-log,update-health,whoami,id-token}` 与 SSH check 已实现；`set-device-attr` 显式 501；TKA 见 M11、ID token 见 M13（均已完成）；Funnel 未处理。
 
 ---
 
@@ -518,10 +518,10 @@ reference/{go-oidc,oauth2,dex,webauthn}
   - `GET /machine/whoami`：`tailscale debug ts2021` 的握手探针；按 Noise 会话
     machine key 找节点（多节点取最旧），返回 node id/stable id/FQDN/地址/
     短公钥；未注册 machine key 404。
-  - `PATCH /machine/set-device-attr` 与 `POST /machine/id-token` 显式 501
-    （设备姿态属性、OIDC ID token 未实现；不伪造 token，不代表支持）。
+  - `PATCH /machine/set-device-attr` 显式 501（设备姿态属性未实现；不假装
+    接受再丢弃）。`POST /machine/id-token` 当时也是 501，M13 已实现。
   - 测试：`control/machine_misc_test.go`（审计落库与净化、未知 action 400、
-    跨节点 404、health 204/绑定、whoami 成功与未注册 404、501 表）。
+    跨节点 404、health 204/绑定、whoami 成功与未注册 404、set-device-attr 501）。
 - M6g 已完成：`/machine/feature/query`（serve / funnel 的启用指引）。
   - `control/featurequery.go`：解析 `tailcfg.QueryFeatureRequest`，Noise 会话
     machine key 必须匹配请求中的 node key（跨节点探测 404）；节点已持有全部
@@ -922,6 +922,62 @@ in-place re-registration 与 `HandleNodeFromAuthPath` 的 reauth/convert 语义�
   `control/grpc_platform_test.go`（未认证/缺 scope、与 HTTP 同值）、
   `control/console_test.go`（Overview 三态渲染）、`cmd/xunara/tka_test.go`
   （缺失/空/有链三种 state dir）。
+
+---
+
+## M13 — Workload Identity（`/machine/id-token`，已完成）
+
+目标：让节点向第三方（云厂商 STS、Kubernetes、内部服务）证明自己的 tailnet
+身份。官方客户端 `tailscale id-token <aud>`（需 `TAILSCALE_USE_WIP_CODE=1`）
+经 Noise 发 `tailcfg.TokenRequest{CapVersion,NodeKey,Audience}` 到
+`POST /machine/id-token`，期望 `tailcfg.TokenResponse{IDToken}`；claim 集合
+以 `tailcfg.TokenResponse` 的注释为准（上游控制面实现不开源，不猜 API）。
+
+- `idtoken/`（新包，只做签名与轮换，不认识任何 tailnet 概念）：
+  - RSA-2048 密钥环 `<state-dir>/id_token_keys.json`（0600，PKCS#8 PEM，
+    原子 temp+rename 写入）；kid = RFC 7638 JWK thumbprint（从公钥推导，
+    手改文件无法让两把钥同名）。
+  - 懒生成：从不签发 token 的部署不会有密钥文件。每次使用都重新读盘，因此
+    `xunara id-token rotate` 对运行中的服务立即生效。
+  - `TTL=15m`；`KeyGrace=TTL+5m`。轮换不删旧钥：旧公钥继续留在 JWKS，直到它
+    签过的 token 全部过期（+时钟偏移余量），所以没刷新 JWKS 的依赖方仍能验签；
+    过期钥在下次读盘时清除（JWKS 不会无限增长）。
+  - 权限过宽的文件（group/other 可读）直接报错拒绝使用；解析失败时若内存中
+    已有可用密钥则告警并继续（不因一个坏文件让控制面停止签发）。
+- `control/idtoken.go`：
+  - `POST /machine/id-token`（Noise 内层）：版本门 → audience 非空且 ≤256
+    字节 → `getAndValidateNode`（NodeKey 必须属于本会话的 machine key，跨节点
+    404）。签发 RS256 token 并落审计 `identity_token.issued`（target=节点，
+    detail=audience；token 永不入日志/审计）。
+  - Claims：`iss`=ServerURL，`sub`=节点 MagicDNS FQDN（含尾点），`aud`、`exp`
+    （+TTL）、`iat`、`nbf`、`jti`（16 字节随机）；私有 claim `key`（node public
+    key）、`addresses`（/32、/128）、`nid`、`node`、`domain`、`tags`
+    （`<domain>:<tag>`，非 tagged 节点为空数组）、`user`/`uid`（仅非 tagged
+    节点；`<provider>:<login name>`，与注册响应的 Provider 一致，绝不使用裸
+    email，AGENTS §5/§6）。
+  - `GET /.well-known/jwks.json`：公开公钥（`use=sig`，RS256，Cache-Control
+    max-age=300）；响应里没有任何私钥字段。
+  - `GET /.well-known/openid-configuration`：只声明 `issuer`、`jwks_uri`、
+    `id_token_signing_alg_values_supported`、`subject_types_supported`、
+    `claims_supported`。不声明 authorization/token/userinfo 端点：本服务不是
+    登录 OP，声明不存在的端点会误导依赖方（AGENTS §3）。
+  - 未配置 `ServerURL` 时（没有可作为信任锚的 issuer）端点返回 501，
+    `/.well-known/*` 404：宁可不签，也不签出 issuer 为空的 token。
+- CLI：`xunara id-token show [-state-dir] [-issuer]`（当前 active/retired 密钥）、
+  `xunara id-token rotate [-state-dir]`（打印新 kid）。只操作状态目录，不需要
+  服务在跑。
+- 信任模型（同时写在代码注释里）：issuer 就是控制面自身；任何已注册节点都能为
+  自己（且仅为自己）取任意 audience 的 token。还没有"哪些节点可以联邦"的 grant
+  （上游是 tsidp capability），所以管理员只应在"整个 tailnet 的节点都允许以自身
+  身份认证"时把该 issuer 配进依赖方。尚未做按节点/按 audience 的限流。
+- 测试：`idtoken/idtoken_test.go`（0600 建钥、JWKS 验签往返、轮换后旧钥仍可验
+  已签发 token、grace 后裁剪、权限过宽/坏文件拒绝、Keys 视图）、
+  `control/idtoken_test.go`（端到端拿 token → 用公开 JWKS 验签并断言全部 claim、
+  tagged 节点无 user/uid、跨节点与未注册会话 404、audience 校验与版本门、
+  无 issuer 时 501/404、JWKS 只有公有字段、discovery 内容）、
+  `cmd/xunara/idtoken_test.go`（无密钥/有密钥/轮换三种 show 输出）。
+- 明确不做：`userinfo`/`authorize`/`token`（不是登录 OP）、按 audience 的授权
+  策略与限流、token 撤销列表（短 TTL + 一次性签发；依赖方自行缓存 JWKS）。
 
 ---
 
