@@ -379,12 +379,23 @@ func nodeTarget(n state.Node) string { return "node:" + n.StableID }
 //
 // The user and login name come from the trust plane, so a client shows the
 // actual human the node belongs to.
+//
+// An expired node key is reported through NodeKeyExpired: the client answers by
+// generating a fresh node key and re-registering with the old key named in
+// OldNodeKey (upstream controlclient doLoginOrRegen). Without the flag the
+// client would keep presenting the expired key until it rebuilt the netmap,
+// only to learn from KeyExpiry that it must log in again.
 func (s *Server) nodeToRegisterResponse(n state.Node) *tailcfg.RegisterResponse {
+	// The node key, not the machine, expires: the client replaces it and keeps
+	// the machine identity, which is what this response authorizes.
+	expired := n.Expired(time.Now())
+
 	// Tagged nodes belong to their tags, not to a human: report the reserved
 	// tagged-devices identity, as headscale does via node.Owner().
 	if len(n.Tags) > 0 {
 		profile := mapper.TaggedDevicesProfile()
 		return &tailcfg.RegisterResponse{
+			NodeKeyExpired:    expired,
 			MachineAuthorized: true,
 			User: tailcfg.User{
 				ID:          profile.ID,
@@ -407,6 +418,7 @@ func (s *Server) nodeToRegisterResponse(n state.Node) *tailcfg.RegisterResponse 
 	}
 
 	return &tailcfg.RegisterResponse{
+		NodeKeyExpired:    expired,
 		MachineAuthorized: true,
 		User: tailcfg.User{
 			ID:          n.UserID,

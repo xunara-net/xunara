@@ -232,6 +232,10 @@ reference/{go-oidc,oauth2,dex,webauthn}
 - Node 过期：`Config.NodeKeyExpiry` 决定服务器策略；客户端请求的 `RequestedExpiry`
   只能**缩短**不能延长（`applyRegistrationDefaults`），并写入 `state.Node.Expiry`。
 - 到期失效：`state.Node.Expired()`，mapper 在 `tailcfg.Node.Expired` 下发。
+- 客户端信号（M15a）：`RegisterResponse.NodeKeyExpired` 在已知节点重连且 node key
+  已过期时置位，官方客户端据此立即生成新 key 重注册（`doLoginOrRegen`），不必等
+  一次 netmap；机器仍 `MachineAuthorized`（过期的只是 key）。新 key 走交互审批
+  后原地轮换：ID/StableID/machine key 不变、旧 key 注销、有效期刷新。
 - Ephemeral 回收：`Server.ReapEphemeral`（跳过在线节点，按 `LastSeen` 否则 `Created` 计龄）
   由 `runJanitor` 每分钟调度，`Config.EphemeralInactivityTimeout`（默认 30 分钟）可调。
 - 测试：`control/janitor_test.go`（过期应用、只可缩短、默认不过期、回收与在线保护）、
@@ -890,8 +894,7 @@ in-place re-registration 与 `HandleNodeFromAuthPath` 的 reauth/convert 语义�
 - 已知限制（后续里程碑）：
   - 控制面从不代替管理员重签 node key：rotation 签名必须由节点自己的 NL 私钥生成，
     控制面只保管公钥（TKA 威胁模型不允许把管理员/节点的 NL 私钥交给控制面）。
-  - 控制面尚未返回 `RegisterResponse.NodeKeyExpired`；官方客户端会从 netmap 的
-    `KeyExpiry` 自行判定过期并主动换 key，因此轮换路径已可用。
+  - ~~控制面尚未返回 `RegisterResponse.NodeKeyExpired`~~：已由 M15a 实现。
   - 未提供 CLI/Platform API 的 TKA 状态与初始化入口（协议面已完整，官方客户端
     可直接使用 `tailscale lock ...`）。
 

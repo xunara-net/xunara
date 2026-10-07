@@ -235,3 +235,129 @@ func seedPreAuthKey(t *testing.T, s *Server, template state.PreAuthKey) string {
 	}
 	return secret
 }
+
+// TestRegisterReportsExpiredNodeKey checks the NodeKeyExpired signal the
+// official client uses to regenerate its node key without waiting for a netmap
+// (controlclient doLoginOrRegen). The machine stays authorized: only the key
+// expired.
+func TestRegisterReportsExpiredNodeKey(t *testing.T) {
+	s := newServerWithConfig(t, Config{NodeKeyExpiry: time.Hour})
+	mk := key.NewMachine().Public()
+	nk := key.NewNode().Public()
+
+	secret := seedPreAuthKey(t, s, state.PreAuthKey{})
+	resp, err := s.handleRegister(context.Background(), tailcfg.RegisterRequest{
+		Version:  tailcfg.CurrentCapabilityVersion,
+		NodeKey:  nk,
+		Hostinfo: &tailcfg.Hostinfo{Hostname: "expiring"},
+		Auth:     &tailcfg.RegisterResponseAuth{AuthKey: secret},
+	}, mk)
+	if err != nil {
+		t.Fatalf("handleRegister: %v", err)
+	}
+	if resp.NodeKeyExpired {
+		t.Errorf("a fresh registration reports an expired node key: %+v", resp)
+	}
+
+	node, ok := s.store.GetNodeByNodeKey(nk)
+	if !ok {
+		t.Fatal("node was not created")
+	}
+	node.Expiry = time.Now().Add(-time.Minute)
+	if err := s.store.UpdateNode(node); err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+
+	// A client restart re-registers with the expired key: the server must ask
+	// for a replacement instead of silently keeping the dead key.
+	resp2, err := s.handleRegister(context.Background(), tailcfg.RegisterRequest{
+		Version: tailcfg.CurrentCapabilityVersion,
+		NodeKey: nk,
+	}, mk)
+	if err != nil {
+		t.Fatalf("re-register: %v", err)
+	}
+	if !resp2.NodeKeyExpired {
+		t.Errorf("re-register with an expired key does not report it: %+v", resp2)
+	}
+	if !resp2.MachineAuthorized {
+		t.Errorf("only the key expired, the machine stays authorized: %+v", resp2)
+	}
+	if resp2.AuthURL != "" {
+		t.Errorf("an expired key must not silently turn into a new interactive login: %+v", resp2)
+	}
+}
+
+// TestExpiredNodeKeyRegenerationRotatesInPlace walks the flow an official
+// client performs after NodeKeyExpired: it generates a new node key, names the
+// old one in OldNodeKey, and the human authorizes the login. The node keeps its
+// identity (ID, stable ID, machine key) and gets a fresh expiry.
+func TestExpiredNodeKeyRegenerationRotatesInPlace(t *testing.T) {
+	s := newTestServer(t)
+	mk := key.NewMachine().Public()
+	oldKey := key.NewNode().Public()
+
+	secret := seedPreAuthKey(t, s, state.PreAuthKey{})
+	if _, err := s.handleRegister(context.Background(), tailcfg.RegisterRequest{
+		Version:  tailcfg.CurrentCapabilityVersion,
+		NodeKey:  oldKey,
+		Hostinfo: &tailcfg.Hostinfo{Hostname: "rotating"},
+		Auth:     &tailcfg.RegisterResponseAuth{AuthKey: secret},
+	}, mk); err != nil {
+		t.Fatalf("handleRegister: %v", err)
+	}
+
+	node, ok := s.store.GetNodeByNodeKey(oldKey)
+	if !ok {
+		t.Fatal("node was not created")
+	}
+	node.Expiry = time.Now().Add(-time.Minute)
+	if err := s.store.UpdateNode(node); err != nil {
+		t.Fatalf("UpdateNode: %v", err)
+	}
+
+	newKey := key.NewNode().Public()
+	pending, err := s.handleRegister(context.Background(), tailcfg.RegisterRequest{
+		Version:    tailcfg.CurrentCapabilityVersion,
+		NodeKey:    newKey,
+		OldNodeKey: oldKey,
+	}, mk)
+	if err != nil {
+		t.Fatalf("regenerated registration: %v", err)
+	}
+	if pending.AuthURL == "" {
+		t.Fatalf("the regenerated key is not registered, a login is needed: %+v", pending)
+	}
+
+	if err := s.ApproveRegistration(path.Base(pending.AuthURL)); err != nil {
+		t.Fatalf("ApproveRegistration: %v", err)
+	}
+
+	rotated, ok := s.store.GetNodeByNodeKey(newKey)
+	if !ok {
+		t.Fatal("approval did not register the new node key")
+	}
+	if rotated.ID != node.ID || rotated.StableID != node.StableID || rotated.MachineKey != mk {
+		t.Errorf("rotation changed the node identity: %+v, want id %d stable %s", rotated, node.ID, node.StableID)
+	}
+	if _, ok := s.store.GetNodeByNodeKey(oldKey); ok {
+		t.Error("the old node key is still registered")
+	}
+	if rotated.Expired(time.Now()) {
+		t.Errorf("the rotated node is still expired: %v", rotated.Expiry)
+	}
+
+	// The follow-up the client sends after approval authorizes the new key and
+	// no longer asks for another one.
+	follow, err := s.handleRegister(context.Background(), tailcfg.RegisterRequest{
+		Version:  tailcfg.CurrentCapabilityVersion,
+		NodeKey:  newKey,
+		Followup: pending.AuthURL,
+	}, mk)
+	if err != nil {
+		t.Fatalf("follow-up: %v", err)
+	}
+	if !follow.MachineAuthorized || follow.NodeKeyExpired {
+		t.Errorf("follow-up = %+v, want authorized with a usable key", follow)
+	}
+}
