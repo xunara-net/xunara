@@ -137,6 +137,7 @@ func (ns *noiseServer) router() http.Handler {
 	r.Route("/machine", func(r chi.Router) {
 		r.Post("/register", ns.handleRegister)
 		r.Post("/map", ns.handleMap)
+		r.Post("/set-dns", ns.handleSetDNS)
 	})
 
 	return r

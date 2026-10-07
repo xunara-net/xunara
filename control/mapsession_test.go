@@ -11,6 +11,16 @@ func sessionNode(id tailcfg.NodeID, hostname string) *tailcfg.Node {
 	return &tailcfg.Node{ID: id, StableID: tailcfg.StableNodeID(hostname), Name: hostname + "."}
 }
 
+// applyFrame mirrors the server's streaming loop: diff against the session,
+// then commit the frame so the session remembers what the client now has.
+func applyFrame(sess *mapSession, resp *tailcfg.MapResponse, peers []*tailcfg.Node) bool {
+	changed := sess.diff(resp, peers)
+	if changed {
+		sess.commit(resp, peers)
+	}
+	return changed
+}
+
 func TestMapSessionInitialFrame(t *testing.T) {
 	sess, err := newMapSession()
 	if err != nil {
@@ -46,15 +56,16 @@ func TestMapSessionDelta(t *testing.T) {
 
 	t.Run("unchanged sends nothing", func(t *testing.T) {
 		resp := &tailcfg.MapResponse{Node: self}
-		if sess.apply(resp, []*tailcfg.Node{first, second}) {
-			t.Error("apply reported a change for an identical netmap")
+		if applyFrame(sess, resp, []*tailcfg.Node{first, second}) {
+			t.Error("diff reported a change for an identical netmap")
 		}
 	})
 
 	t.Run("self-only update", func(t *testing.T) {
-		resp := &tailcfg.MapResponse{Node: sessionNode(1, "renamed")}
-		if !sess.apply(resp, []*tailcfg.Node{first, second}) {
-			t.Fatal("apply missed a self change")
+		renamed := sessionNode(1, "renamed")
+		resp := &tailcfg.MapResponse{Node: renamed}
+		if !applyFrame(sess, resp, []*tailcfg.Node{first, second}) {
+			t.Fatal("diff missed a self change")
 		}
 		if resp.Peers != nil || resp.PeersChanged != nil || resp.PeersRemoved != nil {
 			t.Errorf("self-only update carried peer fields: %+v", resp)
@@ -69,23 +80,23 @@ func TestMapSessionDelta(t *testing.T) {
 		updated.Endpoints = []netip.AddrPort{netip.MustParseAddrPort("198.51.100.7:41641")}
 
 		resp := &tailcfg.MapResponse{Node: sessionNode(1, "renamed"), Peers: []*tailcfg.Node{updated, second}}
-		if !sess.apply(resp, []*tailcfg.Node{updated, second}) {
-			t.Fatal("apply missed a peer change")
+		if !applyFrame(sess, resp, []*tailcfg.Node{updated, second}) {
+			t.Fatal("diff missed a peer change")
 		}
 		if len(resp.PeersChanged) != 1 || resp.PeersChanged[0].ID != 2 {
 			t.Errorf("PeersChanged = %v, want just node 2", resp.PeersChanged)
 		}
-		if resp.PeersRemoved != nil {
-			t.Errorf("PeersRemoved = %v, want nil", resp.PeersRemoved)
+		if resp.Peers != nil || resp.PeersRemoved != nil {
+			t.Errorf("delta frame carried Peers=%v PeersRemoved=%v", resp.Peers, resp.PeersRemoved)
 		}
 	})
 
 	t.Run("all peers changed uses the full list", func(t *testing.T) {
 		a := sessionNode(2, "a")
 		b := sessionNode(3, "b")
-		resp := &tailcfg.MapResponse{}
-		if !sess.apply(resp, []*tailcfg.Node{a, b}) {
-			t.Fatal("apply missed a full relist")
+		resp := &tailcfg.MapResponse{Node: sessionNode(1, "renamed")}
+		if !applyFrame(sess, resp, []*tailcfg.Node{a, b}) {
+			t.Fatal("diff missed a full relist")
 		}
 		if len(resp.Peers) != 2 {
 			t.Errorf("Peers = %v, want the full list", resp.Peers)
@@ -96,9 +107,9 @@ func TestMapSessionDelta(t *testing.T) {
 	})
 
 	t.Run("peer removal", func(t *testing.T) {
-		resp := &tailcfg.MapResponse{}
-		if !sess.apply(resp, []*tailcfg.Node{sessionNode(2, "a")}) {
-			t.Fatal("apply missed a removal")
+		resp := &tailcfg.MapResponse{Node: sessionNode(1, "renamed")}
+		if !applyFrame(sess, resp, []*tailcfg.Node{sessionNode(2, "a")}) {
+			t.Fatal("diff missed a removal")
 		}
 		if len(resp.PeersRemoved) != 1 || resp.PeersRemoved[0] != 3 {
 			t.Errorf("PeersRemoved = %v, want [3]", resp.PeersRemoved)
@@ -109,9 +120,9 @@ func TestMapSessionDelta(t *testing.T) {
 	})
 
 	t.Run("empty tailnet removes the last peer", func(t *testing.T) {
-		resp := &tailcfg.MapResponse{}
-		if !sess.apply(resp, nil) {
-			t.Fatal("apply missed the removal of the last peer")
+		resp := &tailcfg.MapResponse{Node: sessionNode(1, "renamed")}
+		if !applyFrame(sess, resp, nil) {
+			t.Fatal("diff missed the removal of the last peer")
 		}
 		if len(resp.PeersRemoved) != 1 || resp.PeersRemoved[0] != 2 {
 			t.Errorf("PeersRemoved = %v, want [2]", resp.PeersRemoved)
@@ -120,4 +131,32 @@ func TestMapSessionDelta(t *testing.T) {
 			t.Errorf("Peers = %v, want nil (an empty list would read as no change)", resp.Peers)
 		}
 	})
+}
+
+func TestMapSessionDNSSync(t *testing.T) {
+	sess, err := newMapSession()
+	if err != nil {
+		t.Fatalf("newMapSession: %v", err)
+	}
+
+	initial := &tailcfg.DNSConfig{Domains: []string{"example.com"}, Proxied: true}
+	resp := &tailcfg.MapResponse{Node: sessionNode(1, "self"), DNSConfig: initial}
+	sess.initial(resp)
+
+	if sess.syncDNS(&tailcfg.MapResponse{}, initial) {
+		t.Error("unchanged DNS configuration was reported as changed")
+	}
+
+	grown := &tailcfg.DNSConfig{
+		Domains:      []string{"example.com"},
+		Proxied:      true,
+		ExtraRecords: []tailcfg.DNSRecord{{Name: "_acme-challenge.self.example.com.", Type: "TXT", Value: "v"}},
+	}
+	out := &tailcfg.MapResponse{}
+	if !sess.syncDNS(out, grown) {
+		t.Fatal("a new extra record was not reported as a DNS change")
+	}
+	if out.DNSConfig != grown {
+		t.Error("syncDNS did not attach the new configuration")
+	}
 }

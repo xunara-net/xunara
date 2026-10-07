@@ -50,3 +50,38 @@ func TestIsExitRoute(t *testing.T) {
 		t.Error("IsExitRoute(10.0.0.0/8) = true")
 	}
 }
+
+func TestNormalizeDNSRecordName(t *testing.T) {
+	good := map[string]string{
+		"_acme-challenge.foo.example.com.": "_acme-challenge.foo.example.com",
+		"FOO.Example.COM":                  "foo.example.com",
+	}
+	for in, want := range good {
+		got, err := NormalizeDNSRecordName(in)
+		if err != nil {
+			t.Errorf("NormalizeDNSRecordName(%q): %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("NormalizeDNSRecordName(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	for _, bad := range []string{"", "   ", "localhost", "-bad.example.com", "foo..example.com"} {
+		if got, err := NormalizeDNSRecordName(bad); err == nil {
+			t.Errorf("NormalizeDNSRecordName(%q) = %q, want an error", bad, got)
+		}
+	}
+}
+
+func TestNormalizeDNSRecordType(t *testing.T) {
+	for in, want := range map[string]string{"": "A", "txt": "TXT", "A": "A", "AAAA": "AAAA"} {
+		got, err := NormalizeDNSRecordType(in)
+		if err != nil || got != want {
+			t.Errorf("NormalizeDNSRecordType(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	if _, err := NormalizeDNSRecordType("MX"); err == nil {
+		t.Error("expected an error for an unsupported record type")
+	}
+}

@@ -11,10 +11,12 @@ import (
 	"fmt"
 	"net/netip"
 	"slices"
+	"strings"
 	"time"
 
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
+	"tailscale.com/util/dnsname"
 )
 
 // NodeID is the server-local, stable identifier of a node. It is distinct from
@@ -224,11 +226,27 @@ func normalizeRoutes(routes []netip.Prefix) []netip.Prefix {
 }
 
 // FQDN returns the node's fully-qualified MagicDNS name, always with a
-// trailing dot.
-func (n Node) FQDN() string {
-	name := n.Hostname
+// trailing dot. baseDomain is the tailnet's MagicDNS suffix, without a
+// trailing dot; an empty baseDomain yields a single-label name.
+//
+// The hostname is sanitised into a DNS label because clients report whatever
+// the operating system calls the machine, which is not necessarily a legal
+// DNS label (and can be long, or non-ASCII).
+func (n Node) FQDN(baseDomain string) string {
+	name := dnsname.SanitizeHostname(n.Hostname)
 	if name == "" {
 		name = fmt.Sprintf("node-%d", n.ID)
 	}
-	return name + "."
+	if len(name) > maxDNSLabelLength {
+		name = strings.Trim(name[:maxDNSLabelLength], "-")
+	}
+
+	base := strings.Trim(baseDomain, ".")
+	if base == "" {
+		return name + "."
+	}
+	return name + "." + base + "."
 }
+
+// maxDNSLabelLength is the wire limit for a single DNS label.
+const maxDNSLabelLength = 63

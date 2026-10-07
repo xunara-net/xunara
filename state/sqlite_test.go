@@ -36,6 +36,12 @@ func TestSQLitePreAuthKeyConformance(t *testing.T) {
 	})
 }
 
+func TestSQLiteDNSRecordConformance(t *testing.T) {
+	runDNSRecordConformance(t, func(t *testing.T) Store {
+		return openTestSQLite(t, filepath.Join(t.TempDir(), "state.db"))
+	})
+}
+
 // TestSQLitePreAuthKeyPersistsAcrossReopen checks keys survive a restart and
 // that the ID counter does not restart with them.
 func TestSQLitePreAuthKeyPersistsAcrossReopen(t *testing.T) {

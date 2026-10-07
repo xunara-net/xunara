@@ -69,6 +69,20 @@ CREATE TABLE IF NOT EXISTS preauthkeys (
 	`
 ALTER TABLE nodes ADD COLUMN approved_routes TEXT NOT NULL DEFAULT '[]';
 `,
+
+	// v4: MagicDNS records created through /machine/set-dns.
+	`
+CREATE TABLE IF NOT EXISTS dns_records (
+	id      INTEGER PRIMARY KEY,
+	name    TEXT    NOT NULL,
+	type    TEXT    NOT NULL,
+	value   TEXT    NOT NULL,
+	node_id INTEGER NOT NULL DEFAULT 0,
+	created INTEGER NOT NULL,
+	UNIQUE(name, type, value)
+);
+CREATE INDEX IF NOT EXISTS idx_dns_records_name ON dns_records(name);
+`,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.

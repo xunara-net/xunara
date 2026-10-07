@@ -133,7 +133,11 @@ func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWri
 			}
 			msg := s.updateMap(self)
 			peers := msg.Peers
-			if !sess.apply(msg, peers) {
+			changed := sess.diff(msg, peers)
+			if sess.syncDNS(msg, mapper.DNSConfig(s.mapperConfig())) {
+				changed = true
+			}
+			if !changed {
 				// Nothing the client can observe changed (for example a
 				// keep-alive woke us); sending a frame would only burn battery.
 				continue
@@ -143,6 +147,7 @@ func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWri
 				msg.PeersChanged = nil
 				msg.PeersRemoved = nil
 			}
+			sess.commit(msg, peers)
 			if err := writeMapResponse(w, req.Compress, true, msg); err != nil {
 				return
 			}
@@ -161,13 +166,17 @@ func (s *Server) fullMap(self state.Node, req tailcfg.MapRequest) *tailcfg.MapRe
 
 // updateMap builds a netmap update for a node: only the fields that can change.
 func (s *Server) updateMap(self state.Node) *tailcfg.MapResponse {
-	return mapper.Update(self, s.store.ListNodes(), s.isOnline)
+	return mapper.Update(self, s.store.ListNodes(), s.mapperConfig(), s.isOnline)
 }
 
+// mapperConfig snapshots the tailnet-wide configuration for one netmap build.
 func (s *Server) mapperConfig() mapper.Config {
 	return mapper.Config{
-		Domain:  s.cfg.Domain,
-		DERPMap: s.cfg.DERPMap,
+		Domain:       s.cfg.Domain,
+		Resolvers:    s.resolvers,
+		Routes:       s.dnsRoutes,
+		ExtraRecords: s.store.ListDNSRecords(),
+		DERPMap:      s.cfg.DERPMap,
 	}
 }
 

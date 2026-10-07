@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"tailscale.com/tailcfg"
+	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"
 
 	"github.com/xunara/xunara/state"
@@ -38,6 +39,12 @@ type Config struct {
 	// Domain is the tailnet's MagicDNS domain, without a trailing dot. Empty
 	// disables MagicDNS.
 	Domain string
+	// Nameservers are the tailnet's global DNS resolvers, in preference order.
+	// Entries are IP addresses or "IP:port" pairs; an empty port uses 53.
+	Nameservers []string
+	// DNSRoutes is the split-DNS table: DNS suffix (without a leading dot) to
+	// the resolvers that answer it.
+	DNSRoutes map[string][]string
 	// DERPMap is advertised to clients when non-nil.
 	DERPMap *tailcfg.DERPMap
 	// NodeKeyExpiry is the lifetime granted to node keys at registration. Zero
@@ -64,6 +71,12 @@ type Server struct {
 	noiseKey key.MachinePrivate
 	store    state.Store
 	closer   io.Closer
+
+	// resolvers and dnsRoutes are the parsed forms of cfg.Nameservers and
+	// cfg.DNSRoutes; parsing happens once, at construction, so a bad
+	// configuration fails fast instead of on every netmap build.
+	resolvers []*dnstype.Resolver
+	dnsRoutes map[string][]*dnstype.Resolver
 
 	// mu guards the registration maps below.
 	mu            sync.Mutex
@@ -114,12 +127,25 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 
+	resolvers, err := parseResolvers(cfg.Nameservers)
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+	dnsRoutes, err := parseDNSRoutes(cfg.DNSRoutes)
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+
 	return &Server{
 		cfg:           cfg,
 		log:           cfg.Logger,
 		noiseKey:      noiseKey,
 		store:         store,
 		closer:        store,
+		resolvers:     resolvers,
+		dnsRoutes:     dnsRoutes,
 		pending:       make(map[string]*pendingRegistration),
 		pendingByNode: make(map[key.NodePublic]string),
 		online:        make(map[state.NodeID]int),

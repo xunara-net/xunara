@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"tailscale.com/tailcfg"
+	"tailscale.com/types/dnstype"
 	"tailscale.com/types/key"
 
 	"github.com/xunara/xunara/state"
@@ -39,8 +40,8 @@ func TestFullIncludesSelfPeersAndPolicy(t *testing.T) {
 	if resp.Node == nil || resp.Node.ID != tailcfg.NodeID(self.ID) {
 		t.Fatalf("self node = %+v, want id %d", resp.Node, self.ID)
 	}
-	if resp.Node.Name != "self." {
-		t.Errorf("self name = %q, want self.", resp.Node.Name)
+	if resp.Node.Name != "self.xunara.test." {
+		t.Errorf("self name = %q, want self.xunara.test.", resp.Node.Name)
 	}
 	if len(resp.Peers) != 1 {
 		t.Fatalf("peers = %d, want 1 (self must be filtered out)", len(resp.Peers))
@@ -121,7 +122,7 @@ func TestUpdateCarriesOnlyMutableFields(t *testing.T) {
 	self := testNode(1, "self")
 	peer := testNode(2, "peer")
 
-	resp := Update(self, []state.Node{self, peer}, neverOnline)
+	resp := Update(self, []state.Node{self, peer}, Config{}, neverOnline)
 
 	if resp.Node == nil || len(resp.Peers) != 1 {
 		t.Fatalf("update = %+v, want self node and one peer", resp)
@@ -138,19 +139,19 @@ func TestNodeMarksExpiredKeys(t *testing.T) {
 	expired := testNode(1, "expired")
 	expired.Expiry = time.Now().Add(-time.Hour)
 
-	if got := Node(expired, true, neverOnline, nil); !got.Expired {
+	if got := Node(expired, true, neverOnline, nil, Config{}); !got.Expired {
 		t.Error("Expired = false for a node whose key expiry has passed")
 	}
 
 	future := testNode(2, "future")
 	future.Expiry = time.Now().Add(time.Hour)
 
-	if got := Node(future, true, neverOnline, nil); got.Expired {
+	if got := Node(future, true, neverOnline, nil, Config{}); got.Expired {
 		t.Error("Expired = true for a node whose key expiry is in the future")
 	}
 
 	never := testNode(3, "never")
-	if got := Node(never, true, neverOnline, nil); got.Expired {
+	if got := Node(never, true, neverOnline, nil, Config{}); got.Expired {
 		t.Error("Expired = true for a node that never expires")
 	}
 }
@@ -174,7 +175,7 @@ func prefixList(t *testing.T, in []netip.Prefix) []string {
 func TestSelfAddressesAreAlwaysAllowed(t *testing.T) {
 	self := testNode(1, "self")
 
-	got := Node(self, true, neverOnline, NewRouteTable([]state.Node{self}))
+	got := Node(self, true, neverOnline, NewRouteTable([]state.Node{self}), Config{})
 	if len(got.AllowedIPs) != 2 {
 		t.Fatalf("AllowedIPs = %v, want the two self addresses", got.AllowedIPs)
 	}
@@ -192,7 +193,7 @@ func TestAllowedIPsUseApprovedAnnouncedRoutesOnly(t *testing.T) {
 		[]netip.Prefix{subnet, notApproved},
 		[]netip.Prefix{subnet, approvedNotAnnounced})
 
-	got := Node(self, true, neverOnline, NewRouteTable([]state.Node{self}))
+	got := Node(self, true, neverOnline, NewRouteTable([]state.Node{self}), Config{})
 
 	want := []string{"100.64.0.1/32", "192.168.1.0/24", "fd7a:115c:a1e0::1/128"}
 	if diff := prefixList(t, got.AllowedIPs); !slices.Equal(diff, want) {
@@ -208,7 +209,7 @@ func TestExitRoutesAreAllowedButNotPrimary(t *testing.T) {
 		[]netip.Prefix{state.ExitRouteV4, state.ExitRouteV6},
 		[]netip.Prefix{state.ExitRouteV4, state.ExitRouteV6})
 
-	got := Node(self, true, neverOnline, NewRouteTable([]state.Node{self}))
+	got := Node(self, true, neverOnline, NewRouteTable([]state.Node{self}), Config{})
 
 	want := []string{"0.0.0.0/0", "100.64.0.1/32", "::/0", "fd7a:115c:a1e0::1/128"}
 	if diff := prefixList(t, got.AllowedIPs); !slices.Equal(diff, want) {
@@ -234,8 +235,8 @@ func TestRouteElectionPicksLowestNodeID(t *testing.T) {
 
 	// Both nodes still carry the prefix in PrimaryRoutes? No: only the elected
 	// router serves it, the other must not claim the prefix to peers.
-	primary := Node(first, true, neverOnline, routes)
-	backup := Node(second, true, neverOnline, routes)
+	primary := Node(first, true, neverOnline, routes, Config{})
+	backup := Node(second, true, neverOnline, routes, Config{})
 
 	if diff := prefixList(t, primary.PrimaryRoutes); !slices.Equal(diff, []string{"10.10.0.0/16"}) {
 		t.Errorf("primary PrimaryRoutes = %v", diff)
@@ -249,5 +250,62 @@ func TestRouteElectionPicksLowestNodeID(t *testing.T) {
 		if a == route {
 			t.Errorf("backup AllowedIPs still contains the elected route: %v", backup.AllowedIPs)
 		}
+	}
+}
+
+func TestFQDNIncludesTheMagicDNSDomain(t *testing.T) {
+	self := testNode(1, "My Laptop")
+
+	got := Node(self, true, neverOnline, NewRouteTable([]state.Node{self}), Config{Domain: "example.com"})
+	if want := "my-laptop.example.com."; got.Name != want {
+		t.Errorf("Name = %q, want %q", got.Name, want)
+	}
+
+	// Without a MagicDNS domain the name stays a single label.
+	got = Node(self, true, neverOnline, NewRouteTable([]state.Node{self}), Config{})
+	if want := "my-laptop."; got.Name != want {
+		t.Errorf("Name = %q, want %q", got.Name, want)
+	}
+}
+
+func TestDNSConfigIncludesResolversRoutesAndRecords(t *testing.T) {
+	cfg := Config{
+		Domain:    "example.com",
+		Resolvers: []*dnstype.Resolver{{Addr: "9.9.9.9"}},
+		Routes:    map[string][]*dnstype.Resolver{"corp.example.com": {{Addr: "10.0.0.53"}}},
+		ExtraRecords: []state.DNSRecord{
+			{Name: "_acme-challenge.web.example.com", Type: "TXT", Value: "token"},
+		},
+	}
+
+	dns := DNSConfig(cfg)
+	if dns == nil {
+		t.Fatal("DNSConfig = nil, want a configuration")
+	}
+	if len(dns.Domains) != 1 || dns.Domains[0] != "example.com" {
+		t.Errorf("Domains = %v, want [example.com]", dns.Domains)
+	}
+	if !dns.Proxied {
+		t.Error("Proxied = false, want true for MagicDNS")
+	}
+	if len(dns.Resolvers) != 1 || dns.Resolvers[0].Addr != "9.9.9.9" {
+		t.Errorf("Resolvers = %v", dns.Resolvers)
+	}
+	if got := dns.Routes["corp.example.com"]; len(got) != 1 || got[0].Addr != "10.0.0.53" {
+		t.Errorf("Routes = %v", dns.Routes)
+	}
+	if len(dns.CertDomains) != 1 || dns.CertDomains[0] != "example.com" {
+		t.Errorf("CertDomains = %v, want [example.com]", dns.CertDomains)
+	}
+	if len(dns.ExtraRecords) != 1 {
+		t.Fatalf("ExtraRecords = %v, want one record", dns.ExtraRecords)
+	}
+	rec := dns.ExtraRecords[0]
+	if rec.Name != "_acme-challenge.web.example.com." || rec.Type != "TXT" || rec.Value != "token" {
+		t.Errorf("ExtraRecords[0] = %+v", rec)
+	}
+
+	if got := DNSConfig(Config{}); got != nil {
+		t.Errorf("DNSConfig without a domain = %+v, want nil", got)
 	}
 }

@@ -18,6 +18,7 @@ var ErrNodeKeyExists = errors.New("node key already registered")
 // persist changes through [Store.UpdateNode].
 type Store interface {
 	PreAuthKeyStore
+	DNSRecordStore
 
 	// GetNodeByID returns the node with the given server-local ID.
 	GetNodeByID(id NodeID) (Node, bool)

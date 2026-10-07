@@ -57,7 +57,7 @@ func runStoreConformance(t *testing.T, newStore storeFactory) {
 		if got := s.ListNodes(); len(got) != 1 {
 			t.Errorf("ListNodes len = %d, want 1", len(got))
 		}
-		if got := n.FQDN(); got != "host1." {
+		if got := n.FQDN(""); got != "host1." {
 			t.Errorf("FQDN = %q, want host1.", got)
 		}
 	})
@@ -403,6 +403,83 @@ func runStoreConformance(t *testing.T, newStore storeFactory) {
 }
 
 // runPreAuthKeyConformance exercises the [PreAuthKeyStore] contract.
+// runDNSRecordConformance exercises the [DNSRecordStore] contract.
+func runDNSRecordConformance(t *testing.T, newStore storeFactory) {
+	t.Run("upsert assigns identity and is idempotent", func(t *testing.T) {
+		s := newStore(t)
+
+		first := DNSRecord{Name: "_acme-challenge.foo.example.com", Type: "TXT", Value: "challenge-1", NodeID: 7}
+		if err := s.UpsertDNSRecord(&first); err != nil {
+			t.Fatalf("UpsertDNSRecord: %v", err)
+		}
+		if first.ID == 0 {
+			t.Error("expected an assigned record ID")
+		}
+		if first.Created.IsZero() {
+			t.Error("expected a creation time")
+		}
+
+		repeat := DNSRecord{Name: first.Name, Type: first.Type, Value: first.Value, NodeID: 9}
+		if err := s.UpsertDNSRecord(&repeat); err != nil {
+			t.Fatalf("repeat UpsertDNSRecord: %v", err)
+		}
+		if repeat.ID != first.ID {
+			t.Errorf("repeat ID = %d, want %d", repeat.ID, first.ID)
+		}
+		if !repeat.Created.Equal(first.Created) {
+			t.Errorf("repeat Created = %v, want %v", repeat.Created, first.Created)
+		}
+		if got := s.ListDNSRecords(); len(got) != 1 {
+			t.Errorf("ListDNSRecords len = %d, want 1", len(got))
+		}
+	})
+
+	t.Run("distinct values coexist for one name", func(t *testing.T) {
+		s := newStore(t)
+
+		name := "_acme-challenge.bar.example.com"
+		for _, value := range []string{"one", "two"} {
+			rec := DNSRecord{Name: name, Type: "TXT", Value: value}
+			if err := s.UpsertDNSRecord(&rec); err != nil {
+				t.Fatalf("UpsertDNSRecord(%s): %v", value, err)
+			}
+		}
+
+		records := s.ListDNSRecords()
+		if len(records) != 2 {
+			t.Fatalf("ListDNSRecords len = %d, want 2", len(records))
+		}
+		if records[0].ID >= records[1].ID {
+			t.Errorf("records not ordered by ID: %v", records)
+		}
+	})
+
+	t.Run("delete removes a record", func(t *testing.T) {
+		s := newStore(t)
+
+		rec := DNSRecord{Name: "a.example.com", Type: "A", Value: "100.64.0.9"}
+		if err := s.UpsertDNSRecord(&rec); err != nil {
+			t.Fatalf("UpsertDNSRecord: %v", err)
+		}
+		if err := s.DeleteDNSRecord(rec.ID); err != nil {
+			t.Fatalf("DeleteDNSRecord: %v", err)
+		}
+		if got := s.ListDNSRecords(); len(got) != 0 {
+			t.Errorf("ListDNSRecords = %v, want empty", got)
+		}
+		if err := s.DeleteDNSRecord(rec.ID); err != nil {
+			t.Errorf("deleting an unknown record must be a no-op, got %v", err)
+		}
+	})
+
+	t.Run("upsert requires a name", func(t *testing.T) {
+		s := newStore(t)
+		if err := s.UpsertDNSRecord(&DNSRecord{Type: "TXT"}); err == nil {
+			t.Error("expected an error for a record without a name")
+		}
+	})
+}
+
 func runPreAuthKeyConformance(t *testing.T, newStore storeFactory) {
 	t.Run("create assigns identity", func(t *testing.T) {
 		s := newStore(t)

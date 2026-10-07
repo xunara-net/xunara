@@ -37,6 +37,9 @@ type MemoryStore struct {
 
 	preauth map[string]PreAuthKey
 
+	dns       map[uint64]DNSRecord
+	nextDNSID uint64
+
 	// configRevision counts out-of-band configuration changes.
 	configRevision atomic.Uint64
 
@@ -49,8 +52,10 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		nextID:    1,
 		nextKeyID: 1,
+		nextDNSID: 1,
 		byID:      make(map[NodeID]Node),
 		preauth:   make(map[string]PreAuthKey),
+		dns:       make(map[uint64]DNSRecord),
 		byNode:    make(map[key.NodePublic]NodeID),
 		byStab:    make(map[string]NodeID),
 		byMach:    make(map[key.MachinePublic][]NodeID),

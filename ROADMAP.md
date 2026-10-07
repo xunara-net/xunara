@@ -109,13 +109,34 @@ reference/{go-oidc,oauth2,dex,webauthn}
   移除、空 tailnet）、`TestStreamingNetmapIsDeltaEncoded`（真实流式端到端）；
   测试侧新增 `netmapView`（按客户端语义合并 Peers/PeersChanged/PeersRemoved）。
 
+已完成（M2b-3，MagicDNS 与 set-dns）：
+
+- `state.Node.FQDN(baseDomain)`：hostname 经 `dnsname.SanitizeHostname` 规范化为 DNS
+  label（长度截断到 63），域名非空时输出 `<host>.<domain>.`；`tailcfg.Node.Name` 与
+  之一致。
+- `mapper.Config` 增加 `Resolvers` / `Routes` / `ExtraRecords`；`mapper.DNSConfig()`
+  生成 `Domains` + `Proxied` + `CertDomains` + `ExtraRecords`。
+- `state.DNSRecord` + `DNSRecordStore`（内存与 SQLite 共用同一套一致性测试）：
+  按 `(name, type, value)` 幂等 upsert，SQLite 迁移 v4 建 `dns_records` 表。
+- `POST /machine/set-dns`：校验 node key/machine key 绑定、记录名必须位于本 tailnet
+  MagicDNS 域内、类型白名单（A/AAAA/TXT/CNAME）、值长度上限；写入后推送 netmap。
+- 流式会话只在 DNSConfig 真正变化时下发（`mapSession.syncDNS` 指纹比对），避免每次
+  netmap 重建都迫使客户端全量刷新。
+- 服务端配置：`-nameserver`（可重复）、`-dns-route suffix=resolver[,resolver]`；
+  解析在 `New()` 中一次性完成，配置错误直接启动失败。
+- CLI：`xunara dns list|delete`。
+- 测试：`TestNetmapCarriesMagicDNSConfig`、`TestSetDNSPublishesRecordToTailnet`、
+  `TestSetDNSRejectsOutsideDomain`、`TestSetDNSUnknownNodeIsRejected`、
+  `TestSetDNSRequiresAConfiguredDomain`、`mapSession` DNS 指纹用例、
+  `runDNSRecordConformance`（内存 + SQLite）。
+
 待办（M2b 剩余）：
 
 - `PeersChangedPatch`（更细粒度端点/DERP patch）。
 - ACL → `PacketFilter` 真实策略引擎（替换 allow-all）。
-- MagicDNS 记录与 `/machine/set-dns`。
-- `MapSessionHandle` / `Seq` 会话续传；`ControlTime` 之外的 `ClientVersion` 下发。
-- `HomeDERP` 的延迟择优（当前仅在 DERP map 只有一个 region 时自动归位）。
+- `ClientVersion` 下发（版本提示）；`HomeDERP` 延迟择优（当前仅单 region 自动归位）。
+- 说明：`set-dns` 记录通过 `ExtraRecords` 在 tailnet 内可见，**不**写入外部 DNS 提供商；
+  公网 ACME 校验需要额外的 DNS 集成（后续里程碑）。
 
 ## M3 — 持久化与密钥 —— 进行中
 

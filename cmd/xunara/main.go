@@ -31,6 +31,8 @@ func main() {
 		runPreAuthKey(os.Args[2:])
 	case "routes":
 		runRoutes(os.Args[2:])
+	case "dns":
+		runDNS(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -50,6 +52,8 @@ Commands:
   routes list          List subnet routes and their approval state
   routes approve       Approve subnet routes (or exit-node routes) for a node
   routes unapprove     Withdraw approval for subnet routes
+  dns list             List MagicDNS records published through set-dns
+  dns delete           Delete a MagicDNS record by ID (or -all)
 
 Run "xunara <command> -h" for command options.
 `)

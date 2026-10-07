@@ -3,6 +3,7 @@ package control
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"slices"
 
 	"tailscale.com/tailcfg"
@@ -21,6 +22,11 @@ type mapSession struct {
 
 	self  *tailcfg.Node
 	peers map[tailcfg.NodeID]*tailcfg.Node
+
+	// dns fingerprints the DNS configuration this session already sent. The
+	// netmap update path normally omits DNSConfig (it forces clients into a
+	// full rebuild), so it is added back only when it actually changed.
+	dns string
 }
 
 // newMapSession starts a session with a fresh opaque handle.
@@ -37,21 +43,24 @@ func newMapSession() (*mapSession, error) {
 	return &mapSession{handle: hex.EncodeToString(b[:])}, nil
 }
 
-// initial stamps resp as the first frame of the session: it carries the
-// handle, so the client can tell a resumed session from a fresh one.
+// initial stamps resp as the first frame of the session: it carries the full
+// netmap and the handle, so the client can tell a resumed session from a fresh
+// one.
 func (s *mapSession) initial(resp *tailcfg.MapResponse) {
+	s.record(resp.Node, peersOf(resp))
+	s.dns = fingerprintDNS(resp.DNSConfig)
+
 	s.seq = 1
 	resp.MapSessionHandle = s.handle
 	resp.Seq = s.seq
-	s.record(resp.Node, peersOf(resp))
 }
 
-// apply turns resp into a delta against what this session already sent, and
-// reports whether the frame carries anything new.
+// diff rewrites resp's peer fields as a delta against what this session already
+// sent, and reports whether the self node or any peer changed.
 //
-// Only Peers/PeersChanged/PeersRemoved and the self node are managed here;
-// callers fill in any other field first.
-func (s *mapSession) apply(resp *tailcfg.MapResponse, peers []*tailcfg.Node) bool {
+// The caller stamps the frame with [mapSession.commit] once it knows the frame
+// carries something, which may also be a DNS change rather than a peer change.
+func (s *mapSession) diff(resp *tailcfg.MapResponse, peers []*tailcfg.Node) bool {
 	changed := make([]*tailcfg.Node, 0, len(peers))
 	seen := make(map[tailcfg.NodeID]bool, len(peers))
 	for _, p := range peers {
@@ -69,29 +78,56 @@ func (s *mapSession) apply(resp *tailcfg.MapResponse, peers []*tailcfg.Node) boo
 	}
 	slices.Sort(removed)
 
-	selfChanged := s.self == nil || !s.self.Equal(resp.Node)
-	if !selfChanged && len(changed) == 0 && len(removed) == 0 {
-		return false
-	}
-
 	switch {
 	case len(removed) == 0 && len(changed) == len(peers):
 		// Every peer is new or changed: the full list is both smaller and
 		// unambiguous. A non-empty Peers makes clients ignore the delta
 		// fields, so it can never carry PeersRemoved alongside.
 		resp.Peers = peers
+		resp.PeersChanged, resp.PeersRemoved = nil, nil
 	case len(changed) == 0 && len(removed) == 0:
-		// Self-only update: leave the peer fields nil ("unchanged").
+		// Nothing peer-shaped changed: nil means "unchanged" on the wire.
+		resp.Peers, resp.PeersChanged, resp.PeersRemoved = nil, nil, nil
 	default:
 		resp.Peers = nil
 		resp.PeersChanged = changed
 		resp.PeersRemoved = removed
 	}
 
+	return s.self == nil || !s.self.Equal(resp.Node) || len(changed) > 0 || len(removed) > 0
+}
+
+// syncDNS attaches dns to resp when it differs from what this session already
+// sent, and reports whether it did.
+func (s *mapSession) syncDNS(resp *tailcfg.MapResponse, dns *tailcfg.DNSConfig) bool {
+	fp := fingerprintDNS(dns)
+	if fp == s.dns {
+		return false
+	}
+	s.dns = fp
+	resp.DNSConfig = dns
+	return true
+}
+
+// commit stamps a frame that is about to be written with the session sequence
+// number and records the state it puts the client in.
+func (s *mapSession) commit(resp *tailcfg.MapResponse, peers []*tailcfg.Node) {
 	s.record(resp.Node, peers)
 	s.seq++
 	resp.Seq = s.seq
-	return true
+}
+
+// fingerprintDNS renders a DNS configuration into a comparable string. An
+// empty string means "no configuration".
+func fingerprintDNS(dns *tailcfg.DNSConfig) string {
+	if dns == nil {
+		return ""
+	}
+	b, err := json.Marshal(dns)
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // record remembers the state a frame put the client in.

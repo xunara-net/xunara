@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"tailscale.com/tailcfg"
@@ -25,6 +26,12 @@ func main() {
 		derpMapPath = flag.String("derp-map", "", "path to a tailcfg.DERPMap JSON file to advertise to clients")
 		logLevel    = flag.String("log-level", "info", "log level: debug|info|warn|error")
 	)
+	var (
+		nameservers stringListFlag
+		dnsRoutes   stringListFlag
+	)
+	flag.Var(&nameservers, "nameserver", "global DNS resolver (IP or IP:port); repeatable")
+	flag.Var(&dnsRoutes, "dns-route", "split-DNS entry suffix=resolver[,resolver]; repeatable")
 	flag.Parse()
 
 	logger := newLogger(*logLevel)
@@ -39,13 +46,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	routes, err := parseDNSRouteFlags(dnsRoutes)
+	if err != nil {
+		logger.Error("parsing -dns-route", "err", err)
+		os.Exit(1)
+	}
+
 	srv, err := control.New(control.Config{
-		ServerURL:  *serverURL,
-		ListenAddr: *listen,
-		StateDir:   *stateDir,
-		Domain:     *domain,
-		DERPMap:    derpMap,
-		Logger:     logger,
+		ServerURL:   *serverURL,
+		ListenAddr:  *listen,
+		StateDir:    *stateDir,
+		Domain:      *domain,
+		Nameservers: nameservers,
+		DNSRoutes:   routes,
+		DERPMap:     derpMap,
+		Logger:      logger,
 	})
 	if err != nil {
 		logger.Error("initializing server", "err", err)
@@ -60,6 +75,45 @@ func main() {
 		logger.Error("server error", "err", err)
 		os.Exit(1)
 	}
+}
+
+// stringListFlag collects a repeatable string flag.
+type stringListFlag []string
+
+func (f *stringListFlag) String() string { return strings.Join(*f, ",") }
+
+func (f *stringListFlag) Set(v string) error {
+	*f = append(*f, v)
+	return nil
+}
+
+// parseDNSRouteFlags turns "suffix=resolver[,resolver]" entries into the map
+// control.Config expects.
+func parseDNSRouteFlags(entries []string) (map[string][]string, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+
+	out := make(map[string][]string, len(entries))
+	for _, entry := range entries {
+		suffix, resolvers, ok := strings.Cut(entry, "=")
+		if !ok {
+			return nil, fmt.Errorf("%q is not of the form suffix=resolver[,resolver]", entry)
+		}
+		suffix = strings.TrimSpace(suffix)
+		if suffix == "" {
+			return nil, fmt.Errorf("%q has an empty suffix", entry)
+		}
+
+		var list []string
+		for _, r := range strings.Split(resolvers, ",") {
+			if r = strings.TrimSpace(r); r != "" {
+				list = append(list, r)
+			}
+		}
+		out[suffix] = list
+	}
+	return out, nil
 }
 
 // loadDERPMap reads a tailcfg.DERPMap JSON document, returning nil when no path

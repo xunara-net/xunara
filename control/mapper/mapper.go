@@ -11,9 +11,11 @@ package mapper
 import (
 	"net/netip"
 	"slices"
+	"strings"
 	"time"
 
 	"tailscale.com/tailcfg"
+	"tailscale.com/types/dnstype"
 
 	"github.com/xunara/xunara/state"
 )
@@ -31,6 +33,17 @@ type Config struct {
 	// Empty disables MagicDNS in the netmap.
 	Domain string
 
+	// Resolvers are the tailnet's global DNS resolvers, in preference order.
+	Resolvers []*dnstype.Resolver
+
+	// Routes is the split-DNS table: DNS suffix to the resolvers that answer
+	// it.
+	Routes map[string][]*dnstype.Resolver
+
+	// ExtraRecords are administrator- and ACME-created records published to
+	// every client through MagicDNS.
+	ExtraRecords []state.DNSRecord
+
 	// DERPMap is advertised to clients when non-nil.
 	DERPMap *tailcfg.DERPMap
 }
@@ -42,10 +55,10 @@ type Config struct {
 func Full(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc, capVer tailcfg.CapabilityVersion) *tailcfg.MapResponse {
 	routes := NewRouteTable(nodes)
 	resp := &tailcfg.MapResponse{
-		Node:         Node(self, true, online, routes),
-		Peers:        peerNodes(self, nodes, online, routes),
+		Node:         Node(self, true, online, routes, cfg),
+		Peers:        peerNodes(self, nodes, online, routes, cfg),
 		Domain:       cfg.Domain,
-		DNSConfig:    dnsConfig(cfg),
+		DNSConfig:    DNSConfig(cfg),
 		DERPMap:      cfg.DERPMap,
 		UserProfiles: userProfiles(self, nodes),
 	}
@@ -57,11 +70,11 @@ func Full(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc, ca
 //
 // Only fields that can change are set: nil means "unchanged" on the client, so
 // DNSConfig, DERPMap, Domain and the packet filter are left alone.
-func Update(self state.Node, nodes []state.Node, online OnlineFunc) *tailcfg.MapResponse {
+func Update(self state.Node, nodes []state.Node, cfg Config, online OnlineFunc) *tailcfg.MapResponse {
 	routes := NewRouteTable(nodes)
 	return &tailcfg.MapResponse{
-		Node:         Node(self, true, online, routes),
-		Peers:        peerNodes(self, nodes, online, routes),
+		Node:         Node(self, true, online, routes, cfg),
+		Peers:        peerNodes(self, nodes, online, routes, cfg),
 		UserProfiles: userProfiles(self, nodes),
 	}
 }
@@ -96,7 +109,7 @@ func NewRouteTable(nodes []state.Node) RouteTable {
 // elected primary for). PrimaryRoutes carries the served subnet routes only:
 // exit routes reach the client through AllowedIPs and must not appear there,
 // matching upstream.
-func Node(n state.Node, self bool, online OnlineFunc, routes RouteTable) *tailcfg.Node {
+func Node(n state.Node, self bool, online OnlineFunc, routes RouteTable, cfg Config) *tailcfg.Node {
 	addresses := make([]netip.Prefix, 0, 2)
 	if n.IPv4.IsValid() {
 		addresses = append(addresses, netip.PrefixFrom(n.IPv4, n.IPv4.BitLen()))
@@ -121,7 +134,7 @@ func Node(n state.Node, self bool, online OnlineFunc, routes RouteTable) *tailcf
 	out := &tailcfg.Node{
 		ID:            tailcfg.NodeID(n.ID),
 		StableID:      tailcfg.StableNodeID(n.StableID),
-		Name:          n.FQDN(),
+		Name:          n.FQDN(cfg.Domain),
 		User:          n.UserID,
 		Key:           n.NodeKey,
 		KeyExpiry:     n.Expiry,
@@ -150,13 +163,13 @@ func Node(n state.Node, self bool, online OnlineFunc, routes RouteTable) *tailcf
 }
 
 // peerNodes converts every node except self, sorted by ID as the wire requires.
-func peerNodes(self state.Node, nodes []state.Node, online OnlineFunc, routes RouteTable) []*tailcfg.Node {
+func peerNodes(self state.Node, nodes []state.Node, online OnlineFunc, routes RouteTable, cfg Config) []*tailcfg.Node {
 	out := make([]*tailcfg.Node, 0, len(nodes))
 	for _, n := range nodes {
 		if n.ID == self.ID {
 			continue
 		}
-		out = append(out, Node(n, false, online, routes))
+		out = append(out, Node(n, false, online, routes, cfg))
 	}
 	slices.SortFunc(out, func(a, b *tailcfg.Node) int {
 		return int(a.ID) - int(b.ID)
@@ -189,16 +202,34 @@ func userProfiles(self state.Node, nodes []state.Node) []tailcfg.UserProfile {
 	return out
 }
 
-// dnsConfig returns the MagicDNS configuration, or nil when the tailnet has no
+// DNSConfig builds the MagicDNS configuration, or nil when the tailnet has no
 // domain configured (nil means "unchanged"/"none" to the client).
-func dnsConfig(cfg Config) *tailcfg.DNSConfig {
-	if cfg.Domain == "" {
+//
+// CertDomains advertises that this control plane answers ACME DNS-01
+// challenges for the tailnet's MagicDNS suffix: a client that runs "tailscale
+// cert" POSTs the challenge record to /machine/set-dns, and the record is then
+// served to the tailnet through ExtraRecords.
+func DNSConfig(cfg Config) *tailcfg.DNSConfig {
+	domain := strings.Trim(cfg.Domain, ".")
+	if domain == "" {
 		return nil
 	}
-	return &tailcfg.DNSConfig{
-		Domains: []string{cfg.Domain},
-		Proxied: true,
+
+	out := &tailcfg.DNSConfig{
+		Domains:     []string{domain},
+		Proxied:     true,
+		Resolvers:   cfg.Resolvers,
+		Routes:      cfg.Routes,
+		CertDomains: []string{domain},
 	}
+	for _, r := range cfg.ExtraRecords {
+		out.ExtraRecords = append(out.ExtraRecords, tailcfg.DNSRecord{
+			Name:  r.FQDN(),
+			Type:  r.Type,
+			Value: r.Value,
+		})
+	}
+	return out
 }
 
 // setPacketFilters attaches the tailnet firewall rules using the field the
