@@ -122,3 +122,116 @@ func TestHandleRegisterLogout(t *testing.T) {
 		t.Fatal("node should be removed after logout")
 	}
 }
+
+func TestRegisterWithPreAuthKey(t *testing.T) {
+	s := newTestServer(t)
+
+	secret := seedPreAuthKey(t, s, state.PreAuthKey{Ephemeral: true})
+
+	machineKey := key.NewMachine().Public()
+	nodeKey := key.NewNode().Public()
+
+	resp, err := s.handleRegister(context.Background(), tailcfg.RegisterRequest{
+		Version:  tailcfg.CurrentCapabilityVersion,
+		NodeKey:  nodeKey,
+		Auth:     &tailcfg.RegisterResponseAuth{AuthKey: secret},
+		Hostinfo: &tailcfg.Hostinfo{Hostname: "pak-node"},
+	}, machineKey)
+	if err != nil {
+		t.Fatalf("handleRegister: %v", err)
+	}
+	if !resp.MachineAuthorized {
+		t.Fatalf("node was not authorized: %+v", resp)
+	}
+
+	node, ok := s.store.GetNodeByNodeKey(nodeKey)
+	if !ok {
+		t.Fatal("node was not created")
+	}
+	if node.Method != state.RegisterMethodAuthKey {
+		t.Errorf("method = %q, want %q", node.Method, state.RegisterMethodAuthKey)
+	}
+	if !node.Ephemeral {
+		t.Error("ephemeral flag from the key was not applied")
+	}
+	if node.Hostname != "pak-node" {
+		t.Errorf("hostname = %q, want pak-node", node.Hostname)
+	}
+
+	// The key is single-use by default: a second node must be turned away.
+	_, err = s.handleRegister(context.Background(), tailcfg.RegisterRequest{
+		Version: tailcfg.CurrentCapabilityVersion,
+		NodeKey: key.NewNode().Public(),
+		Auth:    &tailcfg.RegisterResponseAuth{AuthKey: secret},
+	}, key.NewMachine().Public())
+
+	var he HTTPError
+	if !errors.As(err, &he) || he.Code != http.StatusUnauthorized {
+		t.Fatalf("second registration err = %v, want 401 HTTPError", err)
+	}
+}
+
+func TestRegisterWithReusablePreAuthKey(t *testing.T) {
+	s := newTestServer(t)
+
+	secret := seedPreAuthKey(t, s, state.PreAuthKey{Reusable: true})
+
+	for range 2 {
+		if _, err := s.handleRegister(context.Background(), tailcfg.RegisterRequest{
+			Version: tailcfg.CurrentCapabilityVersion,
+			NodeKey: key.NewNode().Public(),
+			Auth:    &tailcfg.RegisterResponseAuth{AuthKey: secret},
+		}, key.NewMachine().Public()); err != nil {
+			t.Fatalf("handleRegister: %v", err)
+		}
+	}
+
+	if got := len(s.store.ListNodes()); got != 2 {
+		t.Errorf("nodes = %d, want 2", got)
+	}
+}
+
+func TestRegisterRejectsBadPreAuthKeys(t *testing.T) {
+	s := newTestServer(t)
+
+	expired := seedPreAuthKey(t, s, state.PreAuthKey{Expiry: time.Now().Add(-time.Hour)})
+
+	tests := map[string]string{
+		"unknown": "tskey-auth-0000000000000000000000000",
+		"expired": expired,
+	}
+
+	for name, secret := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := s.handleRegister(context.Background(), tailcfg.RegisterRequest{
+				Version: tailcfg.CurrentCapabilityVersion,
+				NodeKey: key.NewNode().Public(),
+				Auth:    &tailcfg.RegisterResponseAuth{AuthKey: secret},
+			}, key.NewMachine().Public())
+
+			var he HTTPError
+			if !errors.As(err, &he) || he.Code != http.StatusUnauthorized {
+				t.Fatalf("err = %v, want 401 HTTPError", err)
+			}
+		})
+	}
+}
+
+// seedPreAuthKey stores a pre-auth key with a generated secret.
+func seedPreAuthKey(t *testing.T, s *Server, template state.PreAuthKey) string {
+	t.Helper()
+
+	secret, err := state.NewPreAuthKeySecret()
+	if err != nil {
+		t.Fatalf("NewPreAuthKeySecret: %v", err)
+	}
+
+	template.Key = secret
+	if template.UserID == 0 {
+		template.UserID = state.DefaultUserID
+	}
+	if err := s.store.CreatePreAuthKey(&template); err != nil {
+		t.Fatalf("CreatePreAuthKey: %v", err)
+	}
+	return secret
+}

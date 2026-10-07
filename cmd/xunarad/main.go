@@ -51,6 +51,7 @@ func main() {
 		logger.Error("initializing server", "err", err)
 		os.Exit(1)
 	}
+	defer srv.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

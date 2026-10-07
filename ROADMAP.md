@@ -93,13 +93,30 @@ reference/{go-oidc,oauth2,dex,webauthn}
 - `MapSessionHandle` / `Seq` 会话续传；`ControlTime` 之外的 `ClientVersion` 下发。
 - `HomeDERP` 的延迟择优（当前仅在 DERP map 只有一个 region 时自动归位）。
 
-## M3 — 持久化与密钥
+## M3 — 持久化与密钥 —— 进行中
 
-- `state` 落地 SQLite（`database/sql` + 纯 Go 驱动），保留 `Store` 接口不变。
-- 迁移框架 + `nodes` / `users` / `preauthkeys` 表。
-- 预认证密钥（PAK）：生成 / 一次性 / 可复用 / 过期 / 绑定 user。
-- Node 过期与 GC（ephemeral 回收）。
-- 测试：`go test -race`；重启后状态与 Noise 密钥一致。
+已完成（M3a/M3b）：
+
+- `state/sqlite.go`：`SQLiteStore` 实现 `Store`（`database/sql` + `modernc.org/sqlite`，纯 Go 无 cgo）。
+  - 迁移框架（`PRAGMA user_version`），v1 `nodes`/`counters`，v2 `preauthkeys`。
+  - WAL + `busy_timeout` + `synchronous(NORMAL)`；单连接串行化，ID/地址分配在事务内完成。
+  - 连接串对 `?`/`#` 做校验，避免 DSN 注入。
+- 地址分配改为偏移量算术（`state/addr.go`），ID/地址计数器持久化，重启不重号。
+- `Store` 接口拆分出 `PreAuthKeyStore`；内存实现补齐同样方法。
+- **共享一致性测试套件** `state/store_test.go`：内存与 SQLite 跑同一套断言（含富字段往返、索引重建、唯一性、删除清理）。
+- 预认证密钥：`state.PreAuthKey`（一次性/可复用/过期/绑定 user/ephemeral）、`NewPreAuthKeySecret`
+  （`tskey-auth-` + base32，长度 26 字符 ≈130 bit 熵；格式刻意落在官方客户端日志打码正则 `tskey-[A-Za-z0-9-]+` 内）。
+- 注册流程接入 PAK：`registerWithAuthKey` 同步授权；密钥单次使用在节点落库**之后**才标记，避免崩溃烧掉密钥。
+- `cmd/xunara` 管理 CLI：`preauthkey create|list|delete`。
+- 服务端默认使用 SQLite（`<state-dir>/state.db`），`Server.Close()` 释放；`-db` 可覆盖路径。
+- 测试：`TestNodeSurvivesServerRestart`（重启后节点免登录重连并可取 netmap）、
+  `TestSQLiteStorePersistsAcrossReopen`、`TestTS2021RegisterWithAuthKey`（`tailscale up --authkey=` 等价链路）。
+
+待办（M3c）：
+
+- Node 过期（`KeyExpiry` 下发与到期失效）与 ephemeral 节点回收。
+- 用户表与多用户（当前锚定 `DefaultUserID`）。
+- 后台 GC 调度与审计记录。
 
 ## M4 — Identity & Login（Trust Plane）
 

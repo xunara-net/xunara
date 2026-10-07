@@ -3,9 +3,11 @@ package control
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +33,8 @@ type Config struct {
 	ListenAddr string
 	// StateDir is the directory holding persistent server state.
 	StateDir string
+	// DBPath is the SQLite database file. It defaults to <StateDir>/state.db.
+	DBPath string
 	// Domain is the tailnet's MagicDNS domain, without a trailing dot. Empty
 	// disables MagicDNS.
 	Domain string
@@ -46,6 +50,7 @@ type Server struct {
 	log      *slog.Logger
 	noiseKey key.MachinePrivate
 	store    state.Store
+	closer   io.Closer
 
 	// mu guards the registration maps below.
 	mu            sync.Mutex
@@ -76,8 +81,16 @@ func New(cfg Config) (*Server, error) {
 	if err := os.MkdirAll(cfg.StateDir, 0o700); err != nil {
 		return nil, err
 	}
+	if cfg.DBPath == "" {
+		cfg.DBPath = filepath.Join(cfg.StateDir, "state.db")
+	}
 
 	noiseKey, err := loadOrCreateNoiseKey(cfg.StateDir)
+	if err != nil {
+		return nil, err
+	}
+
+	store, err := state.OpenSQLite(context.Background(), cfg.DBPath)
 	if err != nil {
 		return nil, err
 	}
@@ -86,12 +99,21 @@ func New(cfg Config) (*Server, error) {
 		cfg:           cfg,
 		log:           cfg.Logger,
 		noiseKey:      noiseKey,
-		store:         state.NewMemoryStore(),
+		store:         store,
+		closer:        store,
 		pending:       make(map[string]*pendingRegistration),
 		pendingByNode: make(map[key.NodePublic]string),
 		online:        make(map[state.NodeID]int),
 		watchers:      make(map[uint64]chan struct{}),
 	}, nil
+}
+
+// Close releases the server's durable resources.
+func (s *Server) Close() error {
+	if s.closer == nil {
+		return nil
+	}
+	return s.closer.Close()
 }
 
 // markOnline records that a node holds a control session.

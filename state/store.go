@@ -16,6 +16,8 @@ var ErrNodeKeyExists = errors.New("node key already registered")
 // getters are copies: mutating them must not affect stored state. Callers
 // persist changes through [Store.UpdateNode].
 type Store interface {
+	PreAuthKeyStore
+
 	// GetNodeByID returns the node with the given server-local ID.
 	GetNodeByID(id NodeID) (Node, bool)
 	// GetNodeByNodeKey returns the node registered under a node key.

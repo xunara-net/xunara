@@ -26,14 +26,22 @@ import (
 // newTestServer builds a Server backed by a temporary state directory.
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
+	return newServerAt(t, t.TempDir())
+}
+
+// newServerAt builds a Server rooted at a specific state directory, so tests
+// can restart it against the same durable state.
+func newServerAt(t *testing.T, stateDir string) *Server {
+	t.Helper()
 
 	s, err := New(Config{
 		ServerURL: "http://login.test",
-		StateDir:  t.TempDir(),
+		StateDir:  stateDir,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	t.Cleanup(func() { s.Close() })
 	return s
 }
 

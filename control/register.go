@@ -107,9 +107,71 @@ func (s *Server) handleRegister(ctx context.Context, req tailcfg.RegisterRequest
 		return s.waitForFollowup(ctx, req, machineKey)
 	}
 
-	// 4. Interactive login: create a pending registration and hand the client a
+	// 4. Pre-authentication key: the client can be authorized synchronously.
+	if req.Auth != nil && req.Auth.AuthKey != "" {
+		return s.registerWithAuthKey(req, machineKey)
+	}
+
+	// 5. Interactive login: create a pending registration and hand the client a
 	//    URL to visit.
 	return s.startInteractiveRegistration(req, machineKey)
+}
+
+// registerWithAuthKey authorizes a node from a pre-authentication key.
+//
+// The key authorizes a *machine*; the resulting node is still an independent
+// identity. A key is single-use unless it was created reusable.
+func (s *Server) registerWithAuthKey(req tailcfg.RegisterRequest, machineKey key.MachinePublic) (*tailcfg.RegisterResponse, error) {
+	now := time.Now().UTC()
+
+	preauth, ok := s.store.GetPreAuthKey(req.Auth.AuthKey)
+	if !ok {
+		return nil, NewHTTPError(http.StatusUnauthorized, "invalid pre-auth key", nil)
+	}
+	if !preauth.Usable(now) {
+		return nil, NewHTTPError(http.StatusUnauthorized, "expired or already used pre-auth key", nil)
+	}
+
+	var (
+		hostname string
+		hostinfo *tailcfg.Hostinfo
+	)
+	if req.Hostinfo != nil {
+		hostinfo = req.Hostinfo
+		hostname = hostinfo.Hostname
+	}
+
+	userID := preauth.UserID
+	if userID == 0 {
+		userID = state.DefaultUserID
+	}
+
+	node := state.Node{
+		MachineKey: machineKey,
+		NodeKey:    req.NodeKey,
+		UserID:     userID,
+		Hostname:   hostname,
+		Hostinfo:   hostinfo,
+		Method:     state.RegisterMethodAuthKey,
+		Ephemeral:  preauth.Ephemeral || req.Ephemeral,
+	}
+
+	if err := s.store.CreateNode(&node); err != nil {
+		if errors.Is(err, state.ErrNodeKeyExists) {
+			return nil, NewHTTPError(http.StatusConflict, "node key already registered", nil)
+		}
+		return nil, fmt.Errorf("creating node: %w", err)
+	}
+
+	// Mark the key used only after the node is durable: a failure between the
+	// two must not burn a single-use key without registering a node.
+	if err := s.store.MarkPreAuthKeyUsed(preauth.Key, now); err != nil {
+		s.log.Warn("marking pre-auth key used", "key_id", preauth.ID, "err", err)
+	}
+
+	s.notifyWatchers()
+
+	return s.nodeToRegisterResponse(node), nil
 }
 
 // nodeToRegisterResponse builds an authorized registration response for a node.

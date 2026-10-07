@@ -14,6 +14,8 @@ import (
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 	"tailscale.com/util/zstdframe"
+
+	"github.com/xunara/xunara/state"
 )
 
 // TestTS2021HandshakeRegisterAndMap drives the server through a real TS2021
@@ -251,4 +253,44 @@ func readMapResponse(t *testing.T, r io.Reader) *tailcfg.MapResponse {
 		t.Fatalf("decoding map response: %v", err)
 	}
 	return &msg
+}
+
+// TestTS2021RegisterWithAuthKey covers the `tailscale up --authkey=...` path
+// end to end: no browser, no approval step, a machine authorized by a key.
+func TestTS2021RegisterWithAuthKey(t *testing.T) {
+	s := newTestServer(t)
+	hs := httptest.NewServer(s.Handler())
+	defer hs.Close()
+
+	secret := seedPreAuthKey(t, s, state.PreAuthKey{Ephemeral: true})
+
+	machineKey := key.NewMachine()
+	nodeKey := key.NewNode()
+
+	conn := dialNoise(t, hs, machineKey)
+	defer conn.Close()
+
+	client := h2Client(conn)
+
+	resp := decodeJSON[tailcfg.RegisterResponse](t, postRaw(t, client, "/machine/register", tailcfg.RegisterRequest{
+		Version:  tailcfg.CurrentCapabilityVersion,
+		NodeKey:  nodeKey.Public(),
+		Auth:     &tailcfg.RegisterResponseAuth{AuthKey: secret},
+		Hostinfo: &tailcfg.Hostinfo{Hostname: "keyed"},
+	}))
+	if !resp.MachineAuthorized {
+		t.Fatalf("registration with an auth key was not authorized: %+v", resp)
+	}
+
+	// The authorized node must be immediately servable.
+	mapResp := decodeMapResponse(t, postRaw(t, client, "/machine/map", tailcfg.MapRequest{
+		Version: tailcfg.CurrentCapabilityVersion,
+		NodeKey: nodeKey.Public(),
+	}), "")
+	if mapResp.Node == nil || mapResp.Node.Name != "keyed." {
+		t.Fatalf("self node = %+v", mapResp.Node)
+	}
+	if !mapResp.Node.KeyExpiry.IsZero() {
+		t.Errorf("key expiry = %v, want zero (no expiry configured)", mapResp.Node.KeyExpiry)
+	}
 }

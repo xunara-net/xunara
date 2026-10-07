@@ -26,11 +26,15 @@ var (
 type MemoryStore struct {
 	mu sync.RWMutex
 
-	nextID NodeID
+	nextID    NodeID
+	nextKeyID uint64
+
 	byID   map[NodeID]Node
 	byNode map[key.NodePublic]NodeID
 	byStab map[string]NodeID
 	byMach map[key.MachinePublic][]NodeID
+
+	preauth map[string]PreAuthKey
 
 	ip4 *ipAllocator
 	ip6 *ipAllocator
@@ -39,13 +43,15 @@ type MemoryStore struct {
 // NewMemoryStore returns an empty in-memory store.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		nextID: 1,
-		byID:   make(map[NodeID]Node),
-		byNode: make(map[key.NodePublic]NodeID),
-		byStab: make(map[string]NodeID),
-		byMach: make(map[key.MachinePublic][]NodeID),
-		ip4:    newIPAllocator(defaultIPv4Prefix),
-		ip6:    newIPAllocator(defaultIPv6Prefix),
+		nextID:    1,
+		nextKeyID: 1,
+		byID:      make(map[NodeID]Node),
+		preauth:   make(map[string]PreAuthKey),
+		byNode:    make(map[key.NodePublic]NodeID),
+		byStab:    make(map[string]NodeID),
+		byMach:    make(map[key.MachinePublic][]NodeID),
+		ip4:       newIPAllocator(defaultIPv4Prefix),
+		ip6:       newIPAllocator(defaultIPv6Prefix),
 	}
 }
 
