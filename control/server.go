@@ -40,9 +40,22 @@ type Config struct {
 	Domain string
 	// DERPMap is advertised to clients when non-nil.
 	DERPMap *tailcfg.DERPMap
+	// NodeKeyExpiry is the lifetime granted to node keys at registration. Zero
+	// means keys never expire.
+	NodeKeyExpiry time.Duration
+	// EphemeralInactivityTimeout is how long an ephemeral node may stay offline
+	// before it is reaped. Zero uses the default.
+	EphemeralInactivityTimeout time.Duration
 	// Logger receives server logs. Defaults to slog.Default.
 	Logger *slog.Logger
 }
+
+// DefaultEphemeralInactivityTimeout is how long an ephemeral node may stay
+// offline before it is deleted.
+const DefaultEphemeralInactivityTimeout = 30 * time.Minute
+
+// ephemeralReapInterval is how often the janitor looks for reaped nodes.
+const ephemeralReapInterval = 1 * time.Minute
 
 // Server is the Xunara control plane server.
 type Server struct {
@@ -83,6 +96,9 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.DBPath == "" {
 		cfg.DBPath = filepath.Join(cfg.StateDir, "state.db")
+	}
+	if cfg.EphemeralInactivityTimeout == 0 {
+		cfg.EphemeralInactivityTimeout = DefaultEphemeralInactivityTimeout
 	}
 
 	noiseKey, err := loadOrCreateNoiseKey(cfg.StateDir)
@@ -220,6 +236,8 @@ func (s *Server) Serve(ctx context.Context) error {
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+
+	go s.runJanitor(ctx)
 
 	errCh := make(chan error, 1)
 	go func() {

@@ -34,10 +34,22 @@ func newTestServer(t *testing.T) *Server {
 func newServerAt(t *testing.T, stateDir string) *Server {
 	t.Helper()
 
-	s, err := New(Config{
-		ServerURL: "http://login.test",
-		StateDir:  stateDir,
-	})
+	return newServerWithConfig(t, Config{StateDir: stateDir})
+}
+
+// newServerWithConfig builds a Server with an explicit config, filling in test
+// defaults for anything the caller left blank.
+func newServerWithConfig(t *testing.T, cfg Config) *Server {
+	t.Helper()
+
+	if cfg.ServerURL == "" {
+		cfg.ServerURL = "http://login.test"
+	}
+	if cfg.StateDir == "" {
+		cfg.StateDir = t.TempDir()
+	}
+
+	s, err := New(cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

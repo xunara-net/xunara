@@ -11,6 +11,7 @@ package mapper
 import (
 	"net/netip"
 	"slices"
+	"time"
 
 	"tailscale.com/tailcfg"
 
@@ -80,6 +81,7 @@ func Node(n state.Node, self bool, online OnlineFunc) *tailcfg.Node {
 		User:       n.UserID,
 		Key:        n.NodeKey,
 		KeyExpiry:  n.Expiry,
+		Expired:    n.Expired(time.Now()),
 		Machine:    n.MachineKey,
 		DiscoKey:   n.DiscoKey,
 		Addresses:  addresses,

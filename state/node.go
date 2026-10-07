@@ -86,6 +86,9 @@ type Node struct {
 	// Expiry is when the node key expires. The zero value means the key never
 	// expires.
 	Expiry time.Time
+	// RequestedExpiry is the expiry the client asked for, before server policy
+	// is applied. It is not persisted.
+	RequestedExpiry time.Time `json:"-"`
 	// Created is when the node was created.
 	Created time.Time
 	// Method records how the node was authorized.

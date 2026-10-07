@@ -112,11 +112,20 @@ reference/{go-oidc,oauth2,dex,webauthn}
 - 测试：`TestNodeSurvivesServerRestart`（重启后节点免登录重连并可取 netmap）、
   `TestSQLiteStorePersistsAcrossReopen`、`TestTS2021RegisterWithAuthKey`（`tailscale up --authkey=` 等价链路）。
 
-待办（M3c）：
+已完成（M3c）：
 
-- Node 过期（`KeyExpiry` 下发与到期失效）与 ephemeral 节点回收。
+- Node 过期：`Config.NodeKeyExpiry` 决定服务器策略；客户端请求的 `RequestedExpiry`
+  只能**缩短**不能延长（`applyRegistrationDefaults`），并写入 `state.Node.Expiry`。
+- 到期失效：`state.Node.Expired()`，mapper 在 `tailcfg.Node.Expired` 下发。
+- Ephemeral 回收：`Server.ReapEphemeral`（跳过在线节点，按 `LastSeen` 否则 `Created` 计龄）
+  由 `runJanitor` 每分钟调度，`Config.EphemeralInactivityTimeout`（默认 30 分钟）可调。
+- 测试：`control/janitor_test.go`（过期应用、只可缩短、默认不过期、回收与在线保护）、
+  `control/mapper/mapper_test.go::TestNodeMarksExpiredKeys`。
+
+待办（M3 剩余）：
+
 - 用户表与多用户（当前锚定 `DefaultUserID`）。
-- 后台 GC 调度与审计记录。
+- 审计记录（注册/审批/回收事件落库）。
 
 ## M4 — Identity & Login（Trust Plane）
 

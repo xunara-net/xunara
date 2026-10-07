@@ -147,14 +147,16 @@ func (s *Server) registerWithAuthKey(req tailcfg.RegisterRequest, machineKey key
 	}
 
 	node := state.Node{
-		MachineKey: machineKey,
-		NodeKey:    req.NodeKey,
-		UserID:     userID,
-		Hostname:   hostname,
-		Hostinfo:   hostinfo,
-		Method:     state.RegisterMethodAuthKey,
-		Ephemeral:  preauth.Ephemeral || req.Ephemeral,
+		MachineKey:      machineKey,
+		NodeKey:         req.NodeKey,
+		UserID:          userID,
+		Hostname:        hostname,
+		Hostinfo:        hostinfo,
+		Method:          state.RegisterMethodAuthKey,
+		Ephemeral:       preauth.Ephemeral || req.Ephemeral,
+		RequestedExpiry: req.Expiry,
 	}
+	s.applyRegistrationDefaults(&node, now)
 
 	if err := s.store.CreateNode(&node); err != nil {
 		if errors.Is(err, state.ErrNodeKeyExists) {
@@ -268,14 +270,16 @@ func (s *Server) ApproveRegistration(authID string) error {
 	}
 
 	node := state.Node{
-		MachineKey: pr.machineKey,
-		NodeKey:    pr.req.NodeKey,
-		UserID:     state.DefaultUserID,
-		Hostname:   hostname,
-		Hostinfo:   hostinfo,
-		Method:     state.RegisterMethodInteractive,
-		Ephemeral:  pr.req.Ephemeral,
+		MachineKey:      pr.machineKey,
+		NodeKey:         pr.req.NodeKey,
+		UserID:          state.DefaultUserID,
+		Hostname:        hostname,
+		Hostinfo:        hostinfo,
+		Method:          state.RegisterMethodInteractive,
+		Ephemeral:       pr.req.Ephemeral,
+		RequestedExpiry: pr.req.Expiry,
 	}
+	s.applyRegistrationDefaults(&node, time.Now().UTC())
 
 	if err := s.store.CreateNode(&node); err != nil && !errors.Is(err, state.ErrNodeKeyExists) {
 		return fmt.Errorf("creating node: %w", err)

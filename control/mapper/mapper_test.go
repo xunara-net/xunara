@@ -132,3 +132,24 @@ func TestUpdateCarriesOnlyMutableFields(t *testing.T) {
 		t.Error("update must not restate the packet filter")
 	}
 }
+
+func TestNodeMarksExpiredKeys(t *testing.T) {
+	expired := testNode(1, "expired")
+	expired.Expiry = time.Now().Add(-time.Hour)
+
+	if got := Node(expired, true, neverOnline); !got.Expired {
+		t.Error("Expired = false for a node whose key expiry has passed")
+	}
+
+	future := testNode(2, "future")
+	future.Expiry = time.Now().Add(time.Hour)
+
+	if got := Node(future, true, neverOnline); got.Expired {
+		t.Error("Expired = true for a node whose key expiry is in the future")
+	}
+
+	never := testNode(3, "never")
+	if got := Node(never, true, neverOnline); got.Expired {
+		t.Error("Expired = true for a node that never expires")
+	}
+}
