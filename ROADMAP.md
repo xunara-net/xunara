@@ -346,6 +346,20 @@ reference/{go-oidc,oauth2,dex,webauthn}
     `identity/sshcheck_test.go`（生命周期、过期、consume-once、方向性记忆）、
     `control/sshcheck_test.go`（端到端 approve/deny、长轮询、自动放行、策略重载
     失效、machine key 与 auth_id 绑定、always 每次复查、审批页需登录）。
+- M6d 已完成：`grants`（ACL v2）与 `autogroup:member` 语义修正。
+  - `policy`：解析 `grants`（原为 unsupported 字段）；每条规则编译为
+    `tailcfg.FilterRule`：`ip` 条目（`tcp:443`、`udp:6000-6100`、裸端口、`*`）
+    逐条生成带 IPProto/Ports 的规则；`app` 生成 `CapGrant`（Dsts 为目的地
+    前缀，CapMap 原样透传文档 JSON），并为 `drive`→`drive-sharer`、
+    `relay`→`relay-target` 生成反向 companion 规则（对齐上游）。
+    `dst: autogroup:self` 仍按目的节点解析；wildcard CapGrant.Dsts 展开为
+    尾网网段（CapGrant 不能使用 wire 的 `"*"`）。`via` 未实现，加载即拒绝。
+  - `autogroup:member` 现在排除 tagged 节点（上游语义）；tagged 设备改用
+    `tag:` 或 `autogroup:tagged` 引用。ACL/SSH/nodeAttrs/grants 全部生效。
+  - 测试：`policy/grants_test.go`（ip 规则、CapGrant 值透传、companion、
+    self 目的、wildcard 网段、校验表、裸端口、计数）、
+    `control/grants_test.go`（CapGrant 到达 netmap）、
+    `policy TestAutogroupMemberExcludesTagged`。
 - `services/` 其余：Serve / Funnel（Funnel 明确不支持；Serve 控制面无 DNS/ACME）、
   Discovery。
 - `client/`：Xunara Agent（自研客户端，独立协议，不侵入 TS2021）。

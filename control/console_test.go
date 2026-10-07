@@ -329,7 +329,7 @@ func TestConsolePolicyPage(t *testing.T) {
 	doc := `{
   // A policy with one rule and one unsupported field.
   "acls": [{"action": "accept", "src": ["*"], "dst": ["*:*"]}],
-  "grants": [{"src": ["*"], "dst": ["*"], "app": {"example.com/cap/x": []}}],
+  "autoApprovers": {"routes": {"10.0.0.0/8": ["tag:router"]}},
 }`
 	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
 		t.Fatalf("writing policy: %v", err)
@@ -345,7 +345,7 @@ func TestConsolePolicyPage(t *testing.T) {
 		t.Fatalf("policy page status = %d, want 200", resp.StatusCode)
 	}
 	body := bodyString(t, resp)
-	for _, want := range []string{"policy.hujson", "<dd>1</dd>", "Unsupported fields", "grants"} {
+	for _, want := range []string{"policy.hujson", "<dd>1</dd>", "Unsupported fields", "autoApprovers"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("policy page lacks %q:\n%s", want, body)
 		}

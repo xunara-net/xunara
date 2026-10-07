@@ -82,16 +82,28 @@ func TestNodeAttrsAutogroupSelectors(t *testing.T) {
 	client := testNode(2, "client", "100.64.0.2")
 	nodes := []state.Node{server, client}
 
+	// A tagged device is not a member: it receives the autogroup:tagged and
+	// wildcard grants, but not the autogroup:member one.
 	got := capsOf(engine, nodes, server.ID)
-	if len(got) != 3 {
-		t.Errorf("server caps = %v, want all three", got)
+	if len(got) != 2 {
+		t.Errorf("server caps = %v, want https (tagged) plus the wildcard grant", got)
 	}
 	if _, ok := got[tailcfg.CapabilityHTTPS]; !ok {
 		t.Errorf("server caps = %v, want https from autogroup:tagged", got)
 	}
-	if got := capsOf(engine, nodes, client.ID); len(got) != 2 {
-		t.Errorf("client caps = %v, want member+wildcard grants only", got)
-	} else if _, ok := got[tailcfg.CapabilityHTTPS]; ok {
+	if _, ok := got[tailcfg.CapabilityFileSharing]; ok {
+		t.Errorf("server caps = %v, want no autogroup:member grant on a tagged node", got)
+	}
+
+	// The untagged device is a member, but not tagged.
+	got = capsOf(engine, nodes, client.ID)
+	if len(got) != 2 {
+		t.Errorf("client caps = %v, want member+wildcard grants", got)
+	}
+	if _, ok := got[tailcfg.CapabilityFileSharing]; !ok {
+		t.Errorf("client caps = %v, want the member grant", got)
+	}
+	if _, ok := got[tailcfg.CapabilityHTTPS]; ok {
 		t.Errorf("client caps = %v, want no https (untagged)", got)
 	}
 }

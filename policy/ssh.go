@@ -338,8 +338,10 @@ func (r *resolution) nodesForSelectors(sels []selector) map[state.NodeID]bool {
 // produces wire strings, this returns the nodes themselves.
 func (r *resolution) nodesForSelector(sel selector) []state.Node {
 	switch sel.kind {
-	case selWildcard, selMember:
+	case selWildcard:
 		return r.nodes
+	case selMember:
+		return r.memberNodes()
 	case selTagged:
 		return r.taggedNodes()
 	case selSelf:

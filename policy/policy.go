@@ -25,6 +25,10 @@ type Document struct {
 	// ACLs are the traffic rules.
 	ACLs []ACLRow `json:"acls,omitempty"`
 
+	// Grants are ACL v2 rules: like ACLs, but with protocol:port "ip"
+	// entries and per-peer "app" capability grants.
+	Grants []GrantRow `json:"grants,omitempty"`
+
 	// Groups map "group:name" to its members (users, tags or other groups).
 	Groups map[string][]string `json:"groups,omitempty"`
 
@@ -119,6 +123,30 @@ func (p *SSHCheckPeriod) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
+// GrantRow is one rule of the document's "grants" section.
+type GrantRow struct {
+	// Src are the source selectors, as in an ACL.
+	Src []string `json:"src,omitempty"`
+
+	// Dst are the destination selectors; "autogroup:self" is resolved
+	// relative to the node the filter is compiled for.
+	Dst []string `json:"dst,omitempty"`
+
+	// IP are "protocol:ports" entries ("tcp:443", "udp:6000-6100", "443",
+	// or "*"). Every entry becomes a filter rule on its own.
+	IP []string `json:"ip,omitempty"`
+
+	// App maps a peer capability name to its JSON values; the capability is
+	// delivered in the filter's CapGrant so the destination can decide what
+	// the source may do.
+	App map[string][]json.RawMessage `json:"app,omitempty"`
+
+	// Via names the subnet routers the traffic must traverse. This build
+	// does not implement via grants, so a non-empty list is rejected at
+	// load time rather than silently widening access.
+	Via []string `json:"via,omitempty"`
+}
+
 // ACLRow is one traffic rule.
 type ACLRow struct {
 	// Action is "accept" (the only supported action).
@@ -173,6 +201,7 @@ func Parse(raw []byte) (*Document, error) {
 		"tests":     &doc.Tests,
 		"ssh":       &doc.SSH,
 		"nodeAttrs": &doc.NodeAttrs,
+		"grants":    &doc.Grants,
 	}
 
 	keys := make([]string, 0, len(fields))

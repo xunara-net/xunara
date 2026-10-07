@@ -58,6 +58,7 @@ func TestParseHuJSON(t *testing.T) {
 		],
 		"ssh": [{"action": "accept", "src": ["*"], "dst": ["*"], "users": ["root"]}],
 		"grants": [{"src": ["*"], "dst": ["*"], "app": {"example.com/cap/x": []}}],
+		"autoApprovers": {"routes": {"10.0.0.0/8": ["tag:router"]}},
 	}`)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
@@ -68,8 +69,11 @@ func TestParseHuJSON(t *testing.T) {
 	if len(doc.SSH) != 1 || doc.SSH[0].Action != "accept" {
 		t.Errorf("SSH = %+v, want one accept rule", doc.SSH)
 	}
-	if len(doc.Unsupported) != 1 || doc.Unsupported[0] != "grants" {
-		t.Errorf("Unsupported = %v, want [grants]", doc.Unsupported)
+	if len(doc.Grants) != 1 || doc.Grants[0].Src[0] != "*" {
+		t.Errorf("Grants = %+v, want the parsed grant row", doc.Grants)
+	}
+	if len(doc.Unsupported) != 1 || doc.Unsupported[0] != "autoApprovers" {
+		t.Errorf("Unsupported = %v, want [autoApprovers]", doc.Unsupported)
 	}
 }
 
@@ -140,6 +144,34 @@ func TestEmailUserSelectorMatchesLoginName(t *testing.T) {
 	filter := engine.FilterFor(nodes[0], nodes)
 	if len(filter) != 1 || filter[0].SrcIPs[0] != "100.64.0.1/32" {
 		t.Fatalf("filter = %+v, want the local user's address", filter)
+	}
+}
+
+func TestAutogroupMemberExcludesTagged(t *testing.T) {
+	engine := mustEngine(t, `{
+		"tagOwners": {"tag:server": ["local"]},
+		"acls": [
+			{"action": "accept", "src": ["autogroup:member"], "dst": ["*:*"]},
+			{"action": "accept", "src": ["autogroup:tagged"], "dst": ["100.64.0.9:443"]},
+		],
+	}`)
+
+	tagged := testNode(1, "tagged", "100.64.0.1")
+	tagged.Tags = []string{"tag:server"}
+	plain := testNode(2, "plain", "100.64.0.2")
+	nodes := []state.Node{tagged, plain}
+
+	filter := engine.FilterFor(plain, nodes)
+	if len(filter) != 2 {
+		t.Fatalf("filter = %+v, want both rules", filter)
+	}
+	memberSrc := strings.Join(filter[0].SrcIPs, ",")
+	if memberSrc != "100.64.0.2/32,fd7a:115c:a1e0::2/128" {
+		t.Errorf("member SrcIPs = %v, want the untagged device only", filter[0].SrcIPs)
+	}
+	taggedSrc := strings.Join(filter[1].SrcIPs, ",")
+	if taggedSrc != "100.64.0.1/32,fd7a:115c:a1e0::1/128" {
+		t.Errorf("tagged SrcIPs = %v, want the tagged device only", filter[1].SrcIPs)
 	}
 }
 

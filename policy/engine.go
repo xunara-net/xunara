@@ -43,6 +43,9 @@ type Engine struct {
 
 	// nodeAttrs are the compiled "nodeAttrs" rows.
 	nodeAttrs []compiledNodeAttr
+
+	// grants are the compiled "grants" rows (ACL v2).
+	grants []compiledGrant
 }
 
 // compiledRule keeps selectors unresolved: user, tag and autogroup selectors
@@ -111,6 +114,9 @@ func NewEngine(doc *Document, opts Options) (*Engine, error) {
 	if err := e.compileACLs(); err != nil {
 		return nil, err
 	}
+	if err := e.compileGrants(); err != nil {
+		return nil, err
+	}
 	if err := e.compileSSHRules(); err != nil {
 		return nil, err
 	}
@@ -127,11 +133,12 @@ func NewEngine(doc *Document, opts Options) (*Engine, error) {
 // as selectors that currently match no node.
 func (e *Engine) Warnings() []string { return slices.Clone(e.warnings) }
 
-// RuleCount reports how many ACL rows the document declares.
-func (e *Engine) RuleCount() int { return len(e.rules) }
+// RuleCount reports how many traffic rows the document declares: ACLs plus
+// grants.
+func (e *Engine) RuleCount() int { return len(e.rules) + len(e.grants) }
 
 // HasRules reports whether the policy grants anything at all.
-func (e *Engine) HasRules() bool { return len(e.rules) > 0 }
+func (e *Engine) HasRules() bool { return len(e.rules) > 0 || len(e.grants) > 0 }
 
 // TagExists reports whether the tag is defined in the document's tagOwners.
 // An undefined tag cannot be applied to any key or node.
@@ -597,7 +604,8 @@ func (e *Engine) FilterFor(self state.Node, nodes []state.Node) []tailcfg.Filter
 			IPProto:  rule.proto,
 		})
 	}
-	return out
+
+	return append(out, e.grantFilterRules(r)...)
 }
 
 // resolution resolves selectors against one node snapshot.
@@ -687,12 +695,25 @@ func (r *resolution) matchingNodes(sel selector) []state.Node {
 	case selSelf:
 		return r.nodesForUserID(r.self.UserID)
 	case selMember:
-		return r.nodes
+		return r.memberNodes()
 	case selTagged:
 		return r.taggedNodes()
 	default:
 		return nil
 	}
+}
+
+// memberNodes returns the devices owned by a user. Tagged devices are not
+// members, matching Tailscale's autogroup:member semantics; they are addressable
+// through their tags or autogroup:tagged instead.
+func (r *resolution) memberNodes() []state.Node {
+	var out []state.Node
+	for _, n := range r.nodes {
+		if len(n.Tags) == 0 {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func (r *resolution) nodesForUserID(id tailcfg.UserID) []state.Node {

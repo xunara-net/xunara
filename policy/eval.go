@@ -127,8 +127,10 @@ func (e *Engine) singleNode(nodes []state.Node, sel string) (state.Node, error) 
 		return pickNode(r.taggedNodes())
 	case selUser:
 		return pickNode(r.nodesForUser(classed.raw))
-	case selSelf, selMember:
-		return pickNode(nodes)
+	case selSelf:
+		return pickNode(r.nodesForUserID(r.self.UserID))
+	case selMember:
+		return pickNode(r.memberNodes())
 	default:
 		return state.Node{}, fmt.Errorf("%q does not name a single node", sel)
 	}
