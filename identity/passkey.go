@@ -1,0 +1,372 @@
+package identity
+
+// This file is the WebAuthn relying-party logic: it wraps the go-webauthn
+// library with the trust plane's store, config validation and the browser
+// binding of a ceremony.
+//
+// Passkey sign-in is Human Identity (AGENTS.md section 5): an assertion signs
+// a user in and never authorizes a machine. Challenges are single-use and
+// persisted (section 7 replay, section 9 multi-instance).
+
+import (
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"github.com/go-webauthn/webauthn/protocol"
+	"github.com/go-webauthn/webauthn/webauthn"
+	"tailscale.com/tailcfg"
+)
+
+// residentKeyRequired asks the authenticator to store the passkey itself
+// (a discoverable credential), which is what lets the login ceremony be
+// usernameless.
+var residentKeyRequired = true
+
+// PasskeyConfig configures passkey (WebAuthn) sign-in.
+type PasskeyConfig struct {
+	// DisplayName is what authenticators show as the relying party. Empty
+	// falls back to the RP ID.
+	DisplayName string
+	// RPID is the relying party ID: a registrable domain the control plane is
+	// served from, with no scheme or port (e.g. "login.example.com").
+	RPID string
+	// Origins are the exact browser origins allowed to answer a ceremony
+	// (e.g. "https://login.example.com"). Plain http is only accepted for
+	// loopback hosts, matching browser security.
+	Origins []string
+	// UserVerification is how strongly an assertion must verify the user.
+	// Empty means [protocol.VerificationRequired].
+	UserVerification protocol.UserVerificationRequirement
+	// Timeout bounds one ceremony server-side. Zero uses the library default
+	// (60s) and still enforces it.
+	Timeout time.Duration
+}
+
+// PasskeyService performs passkey registration and login.
+type PasskeyService struct {
+	store            Store
+	wa               *webauthn.WebAuthn
+	userVerification protocol.UserVerificationRequirement
+}
+
+// NewPasskeyService validates cfg and returns the service. A configuration
+// mistake is fatal at startup: a wrong relying party would otherwise silently
+// refuse every ceremony.
+func NewPasskeyService(store Store, cfg PasskeyConfig) (*PasskeyService, error) {
+	if store == nil {
+		return nil, errors.New("identity: passkey service needs a store")
+	}
+	rpID := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(cfg.RPID), "."))
+	if rpID == "" {
+		return nil, errors.New("identity: passkey sign-in needs an RP ID")
+	}
+	if strings.ContainsAny(rpID, "/:@ ") {
+		return nil, fmt.Errorf("identity: passkey RP ID %q must be a bare domain", cfg.RPID)
+	}
+	// Browsers refuse an IP address as RP ID, so accepting one here would
+	// start a server whose ceremonies can never succeed.
+	if net.ParseIP(rpID) != nil {
+		return nil, fmt.Errorf("identity: passkey RP ID %q must be a domain, not an IP address", cfg.RPID)
+	}
+	if err := protocol.ValidateRPID(rpID); err != nil {
+		return nil, fmt.Errorf("identity: passkey RP ID %q is not a valid domain: %w", cfg.RPID, err)
+	}
+	if len(cfg.Origins) == 0 {
+		return nil, errors.New("identity: passkey sign-in needs at least one allowed origin")
+	}
+
+	origins := make([]string, 0, len(cfg.Origins))
+	for _, raw := range cfg.Origins {
+		origin, err := validatePasskeyOrigin(raw, rpID)
+		if err != nil {
+			return nil, err
+		}
+		origins = append(origins, origin)
+	}
+
+	displayName := strings.TrimSpace(cfg.DisplayName)
+	if displayName == "" {
+		displayName = rpID
+	}
+
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 60 * time.Second
+	}
+	timeouts := webauthn.TimeoutsConfig{
+		Registration: webauthn.TimeoutConfig{Enforce: true, Timeout: timeout, TimeoutUVD: timeout},
+		Login:        webauthn.TimeoutConfig{Enforce: true, Timeout: timeout, TimeoutUVD: timeout},
+	}
+
+	wa, err := webauthn.New(&webauthn.Config{
+		RPID:                  rpID,
+		RPDisplayName:         displayName,
+		RPOrigins:             origins,
+		AttestationPreference: protocol.PreferNoAttestation,
+		Timeouts:              timeouts,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("identity: configuring passkey sign-in: %w", err)
+	}
+
+	userVerification := cfg.UserVerification
+	if userVerification == "" {
+		userVerification = protocol.VerificationRequired
+	}
+	switch userVerification {
+	case protocol.VerificationRequired, protocol.VerificationPreferred, protocol.VerificationDiscouraged:
+	default:
+		return nil, fmt.Errorf("identity: unknown user verification requirement %q", cfg.UserVerification)
+	}
+
+	return &PasskeyService{store: store, wa: wa, userVerification: userVerification}, nil
+}
+
+// validatePasskeyOrigin enforces that an allowed origin is a plain https (or
+// loopback http) origin whose host is the RP ID or a subdomain of it, which is
+// what the WebAuthn specification requires for the assertion to verify.
+func validatePasskeyOrigin(raw, rpID string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	origin, err := url.Parse(trimmed)
+	if err != nil || origin.Host == "" {
+		return "", fmt.Errorf("identity: passkey origin %q is not an origin", raw)
+	}
+	if origin.User != nil || origin.RawQuery != "" || origin.Fragment != "" ||
+		(origin.Path != "" && origin.Path != "/") {
+		return "", fmt.Errorf("identity: passkey origin %q must not carry a path, query or credentials", raw)
+	}
+
+	host := strings.ToLower(origin.Hostname())
+	if host != rpID && !strings.HasSuffix(host, "."+rpID) {
+		return "", fmt.Errorf("identity: passkey origin %q is not under RP ID %q", raw, rpID)
+	}
+
+	switch origin.Scheme {
+	case "https":
+	case "http":
+		if host != "localhost" && host != "127.0.0.1" && host != "::1" {
+			return "", fmt.Errorf("identity: passkey origin %q must use https outside loopback", raw)
+		}
+	default:
+		return "", fmt.Errorf("identity: passkey origin %q must use https", raw)
+	}
+
+	return origin.Scheme + "://" + origin.Host, nil
+}
+
+// BeginRegistration starts a registration ceremony for user and returns the
+// browser options plus the ceremony and browser-binding secrets.
+func (s *PasskeyService) BeginRegistration(user User) (options *protocol.CredentialCreation, ceremonyID, browserSecret string, err error) {
+	if user.ID == 0 {
+		return nil, "", "", errors.New("identity: passkey registration needs a user")
+	}
+
+	adapter := s.newUser(user, s.store.ListPasskeys(user.ID))
+	creation, session, err := s.wa.BeginRegistration(adapter,
+		webauthn.WithAuthenticatorSelection(protocol.AuthenticatorSelection{
+			ResidentKey:        protocol.ResidentKeyRequirementRequired,
+			RequireResidentKey: &residentKeyRequired,
+			UserVerification:   s.userVerification,
+		}),
+		webauthn.WithExclusions(webauthn.Credentials(adapter.credentials).CredentialDescriptors()),
+	)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("identity: starting passkey registration: %w", err)
+	}
+	ceremonyID, browserSecret, err = s.saveCeremony(PasskeyCeremonyRegister, user.ID, session)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return creation, ceremonyID, browserSecret, nil
+}
+
+// FinishRegistration verifies the authenticator's answer and stores the
+// passkey under name for user. The ceremony must have been started by the same
+// user in the same browser.
+func (s *PasskeyService) FinishRegistration(ceremonyID, browserSecret string, user User, name string, finish *http.Request) (Passkey, error) {
+	ceremony, err := s.takeCeremony(ceremonyID, browserSecret, PasskeyCeremonyRegister)
+	if err != nil {
+		return Passkey{}, err
+	}
+	if ceremony.UserID != user.ID {
+		// A ceremony belongs to the account that started it; never let one
+		// user finish another's registration.
+		return Passkey{}, ErrPasskeyCeremonyNotFound
+	}
+	session, err := decodeCeremonySession(ceremony)
+	if err != nil {
+		return Passkey{}, err
+	}
+
+	adapter := s.newUser(user, s.store.ListPasskeys(user.ID))
+	credential, err := s.wa.FinishRegistration(adapter, session, finish)
+	if err != nil {
+		return Passkey{}, fmt.Errorf("identity: passkey registration failed: %w", err)
+	}
+
+	passkey := Passkey{
+		UserID:       user.ID,
+		Name:         strings.TrimSpace(name),
+		CredentialID: credential.ID,
+		Credential:   *credential,
+	}
+	if err := s.store.CreatePasskey(&passkey); err != nil {
+		return Passkey{}, err
+	}
+	return passkey, nil
+}
+
+// BeginLogin starts a usernameless login ceremony: the authenticator offers a
+// discoverable passkey and the account is resolved from the credential.
+func (s *PasskeyService) BeginLogin() (options *protocol.CredentialAssertion, ceremonyID, browserSecret string, err error) {
+	assertion, session, err := s.wa.BeginDiscoverableLogin(
+		webauthn.WithUserVerification(s.userVerification),
+	)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("identity: starting passkey login: %w", err)
+	}
+	ceremonyID, browserSecret, err = s.saveCeremony(PasskeyCeremonyLogin, 0, session)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return assertion, ceremonyID, browserSecret, nil
+}
+
+// FinishLogin verifies an assertion and returns the user it signs in, together
+// with the passkey that was used. The stored sign counter is advanced before
+// the caller creates a session: a cloned authenticator must be detected on the
+// next assertion, not skipped.
+func (s *PasskeyService) FinishLogin(ceremonyID, browserSecret string, finish *http.Request) (User, Passkey, error) {
+	ceremony, err := s.takeCeremony(ceremonyID, browserSecret, PasskeyCeremonyLogin)
+	if err != nil {
+		return User{}, Passkey{}, err
+	}
+	session, err := decodeCeremonySession(ceremony)
+	if err != nil {
+		return User{}, Passkey{}, err
+	}
+
+	var used Passkey
+	handler := func(rawID, _ []byte) (webauthn.User, error) {
+		passkey, ok := s.store.GetPasskeyByCredentialID(rawID)
+		if !ok {
+			return nil, ErrPasskeyNotFound
+		}
+		user, ok := s.store.GetUser(passkey.UserID)
+		if !ok {
+			return nil, ErrUserNotFound
+		}
+		used = passkey
+		return s.newUser(user, s.store.ListPasskeys(user.ID)), nil
+	}
+
+	_, credential, err := s.wa.FinishPasskeyLogin(handler, session, finish)
+	if err != nil {
+		return User{}, Passkey{}, fmt.Errorf("identity: passkey login failed: %w", err)
+	}
+	user, ok := s.store.GetUser(used.UserID)
+	if !ok {
+		return User{}, Passkey{}, ErrUserNotFound
+	}
+
+	if err := s.store.UpdatePasskey(used.ID, *credential, time.Now().UTC()); err != nil {
+		return User{}, Passkey{}, err
+	}
+	used.Credential = *credential
+	used.LastUsedAt = time.Now().UTC()
+	return user, used, nil
+}
+
+// saveCeremony persists a started ceremony and returns its ID plus the browser
+// secret the caller sets as a cookie.
+func (s *PasskeyService) saveCeremony(kind PasskeyCeremonyKind, userID tailcfg.UserID, session *webauthn.SessionData) (string, string, error) {
+	raw, err := json.Marshal(session)
+	if err != nil {
+		return "", "", fmt.Errorf("identity: encoding passkey ceremony: %w", err)
+	}
+	ceremony, browserSecret, err := s.store.CreatePasskeyCeremony(NewPasskeyCeremonyOptions{
+		Kind:      kind,
+		UserID:    userID,
+		Session:   raw,
+		ExpiresAt: session.Expires,
+	})
+	if err != nil {
+		return "", "", err
+	}
+	return ceremony.ID, browserSecret, nil
+}
+
+// takeCeremony checks the browser binding, then consumes the ceremony so the
+// same challenge response cannot be replayed.
+//
+// The binding is verified before consuming: someone who merely guesses a
+// ceremony ID must not be able to burn an honest user's ceremony.
+func (s *PasskeyService) takeCeremony(id, browserSecret string, kind PasskeyCeremonyKind) (PasskeyCeremony, error) {
+	if id == "" || browserSecret == "" {
+		return PasskeyCeremony{}, ErrPasskeyCeremonyNotFound
+	}
+	stored, ok := s.store.GetPasskeyCeremony(id)
+	if !ok {
+		return PasskeyCeremony{}, ErrPasskeyCeremonyNotFound
+	}
+	if stored.Kind != kind || !SecretEqual(stored.BrowserSessionHash, browserSecret) {
+		return PasskeyCeremony{}, ErrPasskeyCeremonyNotFound
+	}
+	return s.store.ConsumePasskeyCeremony(id)
+}
+
+// decodeCeremonySession returns the library's session state.
+func decodeCeremonySession(ceremony PasskeyCeremony) (webauthn.SessionData, error) {
+	var session webauthn.SessionData
+	if err := json.Unmarshal(ceremony.Session, &session); err != nil {
+		return webauthn.SessionData{}, fmt.Errorf("identity: decoding passkey ceremony: %w", err)
+	}
+	return session, nil
+}
+
+// webauthnUser adapts an identity user and its stored passkeys to the
+// library's User interface.
+type webauthnUser struct {
+	user        User
+	credentials []webauthn.Credential
+}
+
+// newUser adapts user with the given passkeys. A nil slice is loaded from the
+// store so the library always sees the current credential set.
+func (s *PasskeyService) newUser(user User, passkeys []Passkey) webauthnUser {
+	credentials := make([]webauthn.Credential, 0, len(passkeys))
+	for _, passkey := range passkeys {
+		credentials = append(credentials, passkey.Credential)
+	}
+	return webauthnUser{user: user, credentials: credentials}
+}
+
+// WebAuthnID is the opaque, stable user handle. It is an account handle for
+// the authenticator, never an authorization key: login still requires a valid
+// assertion and the session layer still gates every request.
+func (u webauthnUser) WebAuthnID() []byte {
+	var handle [8]byte
+	binary.BigEndian.PutUint64(handle[:], uint64(u.user.ID))
+	return handle[:]
+}
+
+// WebAuthnName is the human-palatable account name shown by the authenticator.
+func (u webauthnUser) WebAuthnName() string { return u.user.LoginName }
+
+// WebAuthnDisplayName is the account's display name.
+func (u webauthnUser) WebAuthnDisplayName() string {
+	if u.user.DisplayName != "" {
+		return u.user.DisplayName
+	}
+	return u.user.LoginName
+}
+
+// WebAuthnCredentials returns the account's registered passkeys.
+func (u webauthnUser) WebAuthnCredentials() []webauthn.Credential { return u.credentials }

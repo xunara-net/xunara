@@ -110,4 +110,6 @@ type Store interface {
 	SSHCheckStore
 	APIKeyStore
 	AgentTokenStore
+	PasskeyStore
+	PasskeyCeremonyStore
 }

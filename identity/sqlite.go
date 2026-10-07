@@ -213,6 +213,35 @@ CREATE TABLE IF NOT EXISTS webhook_endpoints (
 	updated_at INTEGER NOT NULL
 );
 `,
+
+	// v10: WebAuthn passkeys and their single-use ceremonies. Credentials are
+	// public-key records; ceremonies are separate from OAuth transactions
+	// because they carry a challenge and library session state instead of a
+	// redirect (AGENTS.md section 10).
+	`
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+	id            TEXT    PRIMARY KEY,
+	user_id       INTEGER NOT NULL,
+	name          TEXT    NOT NULL DEFAULT '',
+	credential_id BLOB    NOT NULL UNIQUE,
+	credential    TEXT    NOT NULL,
+	created_at    INTEGER NOT NULL,
+	last_used_at  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user ON webauthn_credentials(user_id);
+
+CREATE TABLE IF NOT EXISTS webauthn_ceremonies (
+	id                   TEXT    PRIMARY KEY,
+	kind                 TEXT    NOT NULL,
+	user_id              INTEGER NOT NULL DEFAULT 0,
+	session              TEXT    NOT NULL,
+	browser_session_hash TEXT    NOT NULL,
+	created_at           INTEGER NOT NULL,
+	expires_at           INTEGER NOT NULL,
+	consumed_at          INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_webauthn_ceremonies_expires ON webauthn_ceremonies(expires_at);
+`,
 }
 
 // SQLiteStore is a durable [Store] sharing the control plane's database.
@@ -405,6 +434,14 @@ func (s *SQLiteStore) DeleteUser(id tailcfg.UserID) error {
 	if _, err := tx.ExecContext(ctx,
 		"DELETE FROM external_identities WHERE user_id = ?", int64(id)); err != nil {
 		return fmt.Errorf("identity: deleting external identities of user %d: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM webauthn_credentials WHERE user_id = ?", int64(id)); err != nil {
+		return fmt.Errorf("identity: deleting passkeys of user %d: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM webauthn_ceremonies WHERE user_id = ?", int64(id)); err != nil {
+		return fmt.Errorf("identity: deleting passkey ceremonies of user %d: %w", id, err)
 	}
 	res, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id = ?", int64(id))
 	if err != nil {
