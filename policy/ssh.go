@@ -269,6 +269,8 @@ func (r *resolution) nodesForSelector(sel selector) []state.Node {
 	switch sel.kind {
 	case selWildcard, selMember:
 		return r.nodes
+	case selTagged:
+		return r.taggedNodes()
 	case selSelf:
 		return r.nodesForUserID(r.self.UserID)
 	case selTag:

@@ -192,15 +192,15 @@ func (s *Server) updateMap(self state.Node) *tailcfg.MapResponse {
 // mapperConfig snapshots the tailnet-wide configuration for one netmap build.
 func (s *Server) mapperConfig() mapper.Config {
 	return mapper.Config{
-		Domain:         s.cfg.Domain,
-		Resolvers:      s.resolvers,
-		Routes:         s.dnsRoutes,
-		ExtraRecords:   s.store.ListDNSRecords(),
-		DERPMap:        s.cfg.DERPMap,
-		FilterFor:      s.packetFilterFor,
-		UserProfile:    s.UserProfile,
-		SSHPolicyFor:   s.sshPolicyFor,
-		SSHDestination: s.sshDestinationFunc(),
+		Domain:       s.cfg.Domain,
+		Resolvers:    s.resolvers,
+		Routes:       s.dnsRoutes,
+		ExtraRecords: s.store.ListDNSRecords(),
+		DERPMap:      s.cfg.DERPMap,
+		FilterFor:    s.packetFilterFor,
+		UserProfile:  s.UserProfile,
+		SSHPolicyFor: s.sshPolicyFor,
+		NodeCaps:     s.nodeCapsFunc(),
 	}
 }
 
@@ -213,18 +213,34 @@ func (s *Server) sshPolicyFor(self state.Node) *tailcfg.SSHPolicy {
 	return engine.CompileSSHPolicy(self, s.store.ListNodes())
 }
 
-// sshDestinationFunc snapshots which nodes the SSH policy names as
-// destinations, or nil when the tailnet has no SSH rules.
-func (s *Server) sshDestinationFunc() func(state.Node) bool {
+// nodeCapsFunc snapshots the capabilities each node advertises: the policy's
+// nodeAttrs grants plus tailscale.com/cap/ssh for the nodes the SSH policy
+// names as destinations. Nil when the tailnet grants no capabilities at all.
+func (s *Server) nodeCapsFunc() func(state.Node) tailcfg.NodeCapMap {
 	engine := s.policy.Load()
 	if engine == nil {
 		return nil
 	}
-	dests := engine.SSHDestinations(s.store.ListNodes())
-	if len(dests) == 0 {
+	nodes := s.store.ListNodes()
+	grants := engine.NodeCapMaps(nodes)
+	sshDests := engine.SSHDestinations(nodes)
+	if len(grants) == 0 && len(sshDests) == 0 {
 		return nil
 	}
-	return func(n state.Node) bool { return dests[n.ID] }
+	return func(n state.Node) tailcfg.NodeCapMap {
+		caps := grants[n.ID]
+		if !sshDests[n.ID] {
+			return caps
+		}
+		// Copy so the snapshot stays immutable and safe to reuse across the
+		// nodes of one netmap build.
+		merged := make(tailcfg.NodeCapMap, len(caps)+1)
+		for name, value := range caps {
+			merged[name] = value
+		}
+		merged[tailcfg.CapabilitySSH] = nil
+		return merged
+	}
 }
 
 // getAndValidateNode looks the node up by node key and confirms the Noise

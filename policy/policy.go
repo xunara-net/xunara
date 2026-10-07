@@ -38,6 +38,11 @@ type Document struct {
 	// session to which devices, as which local users.
 	SSH []SSHRow `json:"ssh,omitempty"`
 
+	// NodeAttrs grant extra capabilities to the nodes a target selector
+	// names, for example "https" (enable HTTPS) or
+	// "https://tailscale.com/cap/file-sharing".
+	NodeAttrs []NodeAttrRow `json:"nodeAttrs,omitempty"`
+
 	// Tests are assertions about the compiled policy, as in the official ACL
 	// file format.
 	Tests []Test `json:"tests,omitempty"`
@@ -47,6 +52,16 @@ type Document struct {
 	// silently treated as granting access: a policy that relies on them denies
 	// more than its author intended, and the server logs them at load time.
 	Unsupported []string `json:"-"`
+}
+
+// NodeAttrRow is one rule of the document's "nodeAttrs" section.
+type NodeAttrRow struct {
+	// Target names the nodes the attrs apply to: a user, group, tag, host,
+	// prefix, autogroup:member, autogroup:tagged or *.
+	Target []string `json:"target,omitempty"`
+
+	// Attr are the capability names granted to those nodes.
+	Attr []string `json:"attr,omitempty"`
 }
 
 // SSHRow is one rule of the document's "ssh" section.
@@ -122,6 +137,7 @@ func Parse(raw []byte) (*Document, error) {
 		"tagOwners": &doc.TagOwners,
 		"tests":     &doc.Tests,
 		"ssh":       &doc.SSH,
+		"nodeAttrs": &doc.NodeAttrs,
 	}
 
 	keys := make([]string, 0, len(fields))

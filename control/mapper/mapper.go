@@ -60,10 +60,11 @@ type Config struct {
 	// of incoming SSH connections, or nil when no SSH rule applies to it.
 	SSHPolicyFor func(self state.Node) *tailcfg.SSHPolicy
 
-	// SSHDestination reports whether a node is named as an SSH destination by
-	// the policy. Such nodes advertise the tailscale.com/cap/ssh capability,
-	// which is what allows them to run the Tailscale SSH server.
-	SSHDestination func(state.Node) bool
+	// NodeCaps returns the capability map a node advertises: the policy's
+	// nodeAttrs grants plus capabilities derived from other policy sections
+	// (such as tailscale.com/cap/ssh for SSH destinations). Nil means the
+	// node advertises no capabilities.
+	NodeCaps func(state.Node) tailcfg.NodeCapMap
 
 	// DERPMap is advertised to clients when non-nil.
 	DERPMap *tailcfg.DERPMap
@@ -187,10 +188,10 @@ func Node(n state.Node, self bool, online OnlineFunc, routes RouteTable, cfg Con
 		out.Hostinfo = n.Hostinfo.View()
 	}
 
-	// A node that the SSH policy names as a destination advertises the
-	// capability that lets it run the Tailscale SSH server.
-	if cfg.SSHDestination != nil && cfg.SSHDestination(n) {
-		out.CapMap = tailcfg.NodeCapMap{tailcfg.CapabilitySSH: nil}
+	if cfg.NodeCaps != nil {
+		if caps := cfg.NodeCaps(n); len(caps) > 0 {
+			out.CapMap = caps
+		}
 	}
 
 	// The requesting node is online by construction; peers are online when they

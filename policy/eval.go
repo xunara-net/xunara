@@ -123,6 +123,8 @@ func (e *Engine) singleNode(nodes []state.Node, sel string) (state.Node, error) 
 		return e.nodeWithAddress(nodes, classed.prefix)
 	case selTag:
 		return pickNode(r.nodesWithTag(classed.raw))
+	case selTagged:
+		return pickNode(r.taggedNodes())
 	case selUser:
 		return pickNode(r.nodesForUser(classed.raw))
 	case selSelf, selMember:

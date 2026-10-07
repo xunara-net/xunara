@@ -310,12 +310,24 @@ reference/{go-oidc,oauth2,dex,webauthn}
   - `Engine.SSHDestinations`：被 ssh 规则点名为目的端的节点获得
     `tailscale.com/cap/ssh`（写入 `tailcfg.Node.CapMap`），客户端才能
     `tailscale up --ssh` 启动 SSH server。
-  - `mapper.Config.SSHPolicyFor` / `SSHDestination`，Full/Update 均下发 SSHPolicy。
+  - `mapper.Config.SSHPolicyFor`，Full/Update 均下发 SSHPolicy。
   - `action: "check"` 目前编译为空并给出 warning（不静默当作 accept）。
   - 顺带修复：`Engine.warnf` 去重，避免每次 netmap 构建重复累积同一 warning。
   - 测试：`policy/ssh_test.go`、`control/ssh_test.go`。
-- `services/` 其余：Serve / Funnel（需 nodeAttrs/CapMap 授权面）、SSH check
-  （需 /machine/ssh/action 长轮询与会话审批）、Discovery。
+- M6b 已完成：`nodeAttrs` 能力授予与 CapMap 下发。
+  - `policy`：解析/校验文档 `nodeAttrs` 段（target × attr），target 支持
+    用户、组、tag、host/prefix、`autogroup:member`、`autogroup:tagged`、`*`;
+    拒绝 `autogroup:self` / `autogroup:internet`，attr 拒绝空值/空白/超长，
+    `funnel` 在加载时 fail-closed 拒绝（本构建没有公网 ingress）。
+  - `Engine.NodeCapMaps` 把授予编译成 `tailcfg.NodeCapMap`；`mapper.Config.NodeCaps`
+    在 self 与 peer 两个方向写入 `tailcfg.Node.CapMap`，并与 SSH 目的端的
+    `tailscale.com/cap/ssh` 合并。
+  - 新增选择器 `autogroup:tagged`（ACL src/dst、SSH、nodeAttrs 通用）。
+  - 测试：`policy/nodeattrs_test.go`、`control/nodeattrs_test.go`。
+  - 说明：`nodeAttrs: ["https"]` 只解锁客户端侧的 `tailscale serve`，控制面
+    仍不下发 DNS/ACME；Funnel 需要公网 ingress，保持不支持。
+- `services/` 其余：Serve / Funnel（Funnel 明确不支持；Serve 控制面无 DNS/ACME）、
+  SSH check（需 /machine/ssh/action 长轮询与会话审批）、Discovery。
 - `client/`：Xunara Agent（自研客户端，独立协议，不侵入 TS2021）。
 - DERP（`Xunara Veil`）、ACL/Zero Trust（`Xunara Warden`）。
 

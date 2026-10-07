@@ -35,6 +35,9 @@ type Engine struct {
 
 	// ssh are the compiled "ssh" rows.
 	ssh []compiledSSHRule
+
+	// nodeAttrs are the compiled "nodeAttrs" rows.
+	nodeAttrs []compiledNodeAttr
 }
 
 // compiledRule keeps selectors unresolved: user, tag and autogroup selectors
@@ -66,6 +69,7 @@ const (
 	selWildcard selKind = iota // "*"
 	selSelf                    // autogroup:self
 	selMember                  // autogroup:member
+	selTagged                  // autogroup:tagged
 	selInternet                // autogroup:internet (destinations only)
 	selTag
 	selGroup
@@ -103,6 +107,9 @@ func NewEngine(doc *Document, opts Options) (*Engine, error) {
 		return nil, err
 	}
 	if err := e.compileSSHRules(); err != nil {
+		return nil, err
+	}
+	if err := e.compileNodeAttrs(); err != nil {
 		return nil, err
 	}
 	for _, field := range doc.Unsupported {
@@ -388,6 +395,8 @@ func (e *Engine) classifyHost(s string, allowInternet bool) (selector, error) {
 		return selector{kind: selSelf, raw: s}, nil
 	case s == "autogroup:member":
 		return selector{kind: selMember, raw: s}, nil
+	case s == "autogroup:tagged":
+		return selector{kind: selTagged, raw: s}, nil
 	case s == "autogroup:internet":
 		if !allowInternet {
 			return selector{}, fmt.Errorf("autogroup:internet is only valid as a destination")
@@ -654,7 +663,7 @@ func (r *resolution) hostIPs(sel selector) []string {
 			return nil
 		}
 		return []string{prefix.String()}
-	case selSelf, selMember:
+	case selSelf, selMember, selTagged:
 		return nodeIPs(r.matchingNodes(sel))
 	case selTag:
 		return nodeIPs(r.nodesWithTag(sel.raw))
@@ -674,6 +683,8 @@ func (r *resolution) matchingNodes(sel selector) []state.Node {
 		return r.nodesForUserID(r.self.UserID)
 	case selMember:
 		return r.nodes
+	case selTagged:
+		return r.taggedNodes()
 	default:
 		return nil
 	}
@@ -714,6 +725,17 @@ func (r *resolution) userMatches(id tailcfg.UserID, sel string) bool {
 		return false
 	}
 	return loginNameMatches(sel, login)
+}
+
+// taggedNodes returns every node that carries at least one tag.
+func (r *resolution) taggedNodes() []state.Node {
+	var out []state.Node
+	for _, n := range r.nodes {
+		if len(n.Tags) > 0 {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 func (r *resolution) nodesWithTag(tag string) []state.Node {
