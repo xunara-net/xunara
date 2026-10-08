@@ -23,6 +23,7 @@ import (
 
 	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/idtoken"
+	"github.com/xunara/xunara/plan"
 	"github.com/xunara/xunara/policy"
 	"github.com/xunara/xunara/state"
 	"github.com/xunara/xunara/webhook"
@@ -132,6 +133,11 @@ type Config struct {
 	// providers are configured. It is enabled automatically when no external
 	// provider is configured at all.
 	AllowLocalLogin bool
+	// PlanSource reports the commercial plan of a tenant, by tenant ID, when
+	// the deployment sells plans (spec section 54). Nil means "no plans":
+	// the server runs on plan.UnlimitedPlan and every quota gate is a no-op.
+	// Multi-tenant deployments get this from the router's PlanRegistry.
+	PlanSource func(tenantID string) plan.Plan
 	// Webhooks deliver audit events to operator-configured receivers. Empty
 	// disables webhook delivery.
 	Webhooks []webhook.Endpoint
@@ -203,6 +209,11 @@ type Server struct {
 	// it from the registered OrgSite; updates are atomic because the platform
 	// API renames organizations while requests read.
 	org atomic.Pointer[OrgIdentity]
+
+	// planSource reports the tenant's commercial plan, or nil when the
+	// deployment sells none. It is a function rather than a value because a
+	// platform operator changes a tenant's plan while the process serves.
+	planSource func(tenantID string) plan.Plan
 
 	// consoleLoc is the timezone the web console prints timestamps in. It is
 	// loaded once at startup so a broken zone name never fails a request.
@@ -456,6 +467,7 @@ func New(cfg Config) (*Server, error) {
 		providerRedirects: redirects,
 		passkeys:          passkeys,
 		flux:              flux,
+		planSource:        cfg.PlanSource,
 		secureCookies:     strings.HasPrefix(strings.ToLower(cfg.ServerURL), "https://"),
 		sessionTTL:        sessionTTL,
 		authTTL:           identity.DefaultAuthTransactionTTL,

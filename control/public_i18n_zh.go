@@ -12,6 +12,17 @@ package control
 
 // consoleZHPublic maps trimmed text nodes and attribute values to Chinese.
 var consoleZHPublic = map[string]string{
+	// Plan gates (section 54). The messages are stable constants in
+	// plan_gate.go: the code prefix is machine-readable, the sentence after it
+	// is what a person reads here.
+	"AUTH_KEY_LIMIT_REACHED: this plan's auth key limit is reached; delete unused keys or upgrade the plan":    "AUTH_KEY_LIMIT_REACHED：当前套餐的密钥数量已达上限，请删除不再使用的密钥或升级套餐。",
+	"DEVICE_LIMIT_REACHED: this plan's device limit is reached; upgrade the plan to add more devices":          "DEVICE_LIMIT_REACHED：当前套餐的设备数量已达上限，升级套餐后可继续添加设备。",
+	"PLAN_FEATURE_DISABLED: API keys are not included in this plan":                                            "PLAN_FEATURE_DISABLED：当前套餐不包含 API 密钥能力。",
+	"PLAN_FEATURE_DISABLED: exit nodes are not included in this plan":                                          "PLAN_FEATURE_DISABLED：当前套餐不包含出口节点（Exit Node）能力。",
+	"PLAN_FEATURE_DISABLED: subnet routers are not included in this plan":                                      "PLAN_FEATURE_DISABLED：当前套餐不包含子网路由（Subnet Router）能力。",
+	"PLAN_FEATURE_DISABLED: the audit log is not included in this plan":                                        "PLAN_FEATURE_DISABLED：当前套餐不包含审计日志能力。",
+	"ROUTE_LIMIT_REACHED: this plan's route limit is reached; withdraw unused routes or upgrade the plan":      "ROUTE_LIMIT_REACHED：当前套餐的子网路由数量已达上限，请撤回不再使用的路由或升级套餐。",
+	"USER_LIMIT_REACHED: this plan's member limit is reached; upgrade the plan to add more members":            "USER_LIMIT_REACHED：当前套餐的成员数量已达上限，升级套餐后可继续添加成员。",
 	"ACLs, grants, SSH checks and sharing are compiled from one policy document, and every change is audited.": "ACL、授权、SSH 审批与共享都由同一份策略文档编译产生，任何改动都会记入审计。",
 	"Email (optional)":                                            "邮箱（可选）",
 	"Access control and audit":                                    "访问控制与审计",

@@ -231,6 +231,12 @@ func (s *Server) handleAPIMachineRoutes(w http.ResponseWriter, r *http.Request) 
 
 	before := node.ApprovedRoutes
 	after := state.ApplyRouteApproval(before, approve, unapprove)
+	if pending, _ := state.RouteDelta(before, after); len(pending) > 0 {
+		if err := s.assertRouteApprovalAllowed(after); err != nil {
+			writeAPIError(w, http.StatusForbidden, err.Error())
+			return
+		}
+	}
 	added, removed := state.RouteDelta(before, after)
 	if len(added) == 0 && len(removed) == 0 {
 		writeJSON(w, http.StatusOK, s.apiMachineView(node))
@@ -852,6 +858,10 @@ func (s *Server) handleAPICreateAPIKey(w http.ResponseWriter, r *http.Request) {
 		opts.TTL = ttl
 	}
 
+	if err := s.assertAPIAllowed(); err != nil {
+		writeAPIError(w, http.StatusForbidden, err.Error())
+		return
+	}
 	key, token, err := s.identity.CreateAPIKey(opts)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, err.Error())

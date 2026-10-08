@@ -339,6 +339,12 @@ func (s *Server) handleConsoleMachineRoutes(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	if added, _ := state.RouteDelta(before, after); len(added) > 0 {
+		if !s.planGateOrRender(w, r, s.assertRouteApprovalAllowed(after), "Route approval rejected") {
+			return
+		}
+	}
+
 	added, removed := state.RouteDelta(before, after)
 	if len(added) == 0 && len(removed) == 0 {
 		notice = "No change."
@@ -587,6 +593,10 @@ func (s *Server) handleConsoleCreateInvite(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if !s.planGateOrRender(w, r, s.assertUserQuota(), "Invitation rejected") {
+		return
+	}
+
 	role, err := identity.ParseRole(strings.TrimSpace(r.PostFormValue("role")))
 	if err != nil || role == identity.RoleOwner {
 		// An owner is promoted deliberately, never handed out in a link.
@@ -747,6 +757,10 @@ func (s *Server) handleConsoleCreateAuthKey(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if !s.consoleCheckCSRF(w, r) {
+		return
+	}
+
+	if !s.planGateOrRender(w, r, s.assertAuthKeyQuota(), "Create failed") {
 		return
 	}
 
@@ -1213,11 +1227,16 @@ func (s *Server) handleConsoleAPIKeys(w http.ResponseWriter, r *http.Request) {
 // and the server still bounds the key's scopes by the owner's role at use
 // time, so a key can never outgrow its creator.
 func (s *Server) handleConsoleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
+	// API access is a plan capability: the gate runs before anything is
+	// parsed so a tenant without it cannot mint a token by accident.
 	session, data, ok := s.consoleSession(w, r, "api-keys")
 	if !ok {
 		return
 	}
 	if !s.consoleCheckCSRF(w, r) {
+		return
+	}
+	if !s.planGateOrRender(w, r, s.assertAPIAllowed(), "Create failed") {
 		return
 	}
 
@@ -1477,6 +1496,9 @@ func (s *Server) handleConsoleSSHCheck(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleConsoleAudit(w http.ResponseWriter, r *http.Request) {
 	_, data, ok := s.consoleSession(w, r, "audit")
 	if !ok {
+		return
+	}
+	if !s.planGateOrRender(w, r, s.assertAuditLogAllowed(), "Audit log unavailable") {
 		return
 	}
 	// The console shows the newest events first; the store returns the audit

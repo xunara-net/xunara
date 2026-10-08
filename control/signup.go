@@ -130,6 +130,16 @@ func (s *Server) handleSignupSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.assertUserQuota(); err != nil {
+		var he HTTPError
+		if errors.As(err, &he) {
+			fail(he.Code, "Registration rejected", s.translateMessage(r, he.Msg))
+			return
+		}
+		fail(http.StatusInternalServerError, "Registration failed", "Please try again.")
+		return
+	}
+
 	user := identity.User{
 		LoginName:   login,
 		DisplayName: display,

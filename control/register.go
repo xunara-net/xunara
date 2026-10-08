@@ -277,6 +277,15 @@ func (s *Server) decideRegistration(ctx context.Context, req tailcfg.RegisterReq
 		return s.waitForFollowup(ctx, req, machineKey)
 	}
 
+	// From here on every branch creates a device, so the tenant's plan is
+	// consulted once, before the first one: re-registrations, logouts and
+	// follow-ups returned above and must keep working when the tenant is at
+	// its limit (the limit is on devices, not on talking to the control
+	// plane).
+	if err := s.assertDeviceQuota(); err != nil {
+		return nil, err
+	}
+
 	// 4. Pre-authentication key: the client can be authorized synchronously.
 	if req.Auth != nil && req.Auth.AuthKey != "" {
 		return s.registerWithAuthKey(req, machineKey)
@@ -382,6 +391,9 @@ func (s *Server) registerWithAuthKey(req tailcfg.RegisterRequest, machineKey key
 		return nil, err
 	}
 	if rotate {
+		// Rotating replaces a device the tenant already has, so the device
+		// quota does not apply; it was checked by the caller for the paths
+		// that create one.
 		rotated, err := s.rotateNodeKey(existing, node, false, actor)
 		if err != nil {
 			return nil, err
@@ -394,6 +406,11 @@ func (s *Server) registerWithAuthKey(req tailcfg.RegisterRequest, machineKey key
 		return s.nodeToRegisterResponse(rotated), nil
 	}
 
+	// The caller checks the quota before choosing this path; checking again
+	// here keeps the invariant local to the code that creates the node.
+	if err := s.assertDeviceQuota(); err != nil {
+		return nil, err
+	}
 	if err := s.store.CreateNode(&node); err != nil {
 		if errors.Is(err, state.ErrNodeKeyExists) {
 			return nil, NewHTTPError(http.StatusConflict, "node key already registered", nil)
@@ -718,6 +735,11 @@ func (s *Server) approveDevice(authID string, userID tailcfg.UserID, actor strin
 		if _, err := s.rotateNodeKey(existing, node, true, actor); err != nil {
 			return da, err
 		}
+	} else if err := s.assertDeviceQuota(); err != nil {
+		// The tenant may have reached its limit while the device waited for
+		// approval; the pending registration stays pending so an upgrade can
+		// approve it later instead of losing it.
+		return da, err
 	} else if err := s.store.CreateNode(&node); err != nil && !errors.Is(err, state.ErrNodeKeyExists) {
 		return da, fmt.Errorf("creating node: %w", err)
 	}
@@ -949,7 +971,7 @@ func (s *Server) handleDenyDevice(w http.ResponseWriter, req *http.Request) {
 func (s *Server) renderDeviceError(w http.ResponseWriter, req *http.Request, err error, title string) {
 	var he HTTPError
 	if errors.As(err, &he) {
-		s.renderError(w, req, he.Code, title, he.Msg)
+		s.renderError(w, req, he.Code, title, s.translateMessage(req, he.Msg))
 		return
 	}
 	s.log.Error("device registration failed", "err", err)

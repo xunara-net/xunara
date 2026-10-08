@@ -297,6 +297,13 @@ func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, tx identity
 	if err != nil {
 		s.log.Error("resolving user", "provider", provider.ID(), "err", err)
 		s.audit("system", identity.AuditLoginFailed, "provider:"+provider.ID(), "user resolution failed")
+		// A quota refusal is the tenant's business, not an internal failure:
+		// the person signing in must see why the account was not created.
+		var he HTTPError
+		if errors.As(err, &he) {
+			s.renderError(w, r, he.Code, "Sign-in failed", s.translateMessage(r, he.Msg))
+			return
+		}
 		s.renderError(w, r, http.StatusInternalServerError, "Sign-in failed", "Please try again.")
 		return
 	}
@@ -375,6 +382,13 @@ func (s *Server) userForIdentity(result *identity.IdentityResult) (identity.User
 			}
 		}
 		return user, nil
+	}
+
+	// A new sign-in may provision a member, so the plan's member quota applies
+	// here exactly as it does to invitations: a tenant must not be able to
+	// grow past its plan through the identity provider.
+	if err := s.assertUserQuota(); err != nil {
+		return identity.User{}, err
 	}
 
 	user := identity.User{
