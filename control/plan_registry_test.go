@@ -127,15 +127,15 @@ func TestPlanRegistryCustomNetworkRules(t *testing.T) {
 	ctx := context.Background()
 	registry, _ := newTestPlanRegistry(t, t.TempDir())
 
-	for org, want := range map[string]string{
-		"acme": "100.100.0.0/24", "globex": "100.100.1.0/24", "initech": "100.100.2.0/24",
+	for _, tc := range []struct{ org, want string }{
+		{"acme", "100.100.0.0/24"}, {"globex", "100.100.1.0/24"}, {"initech", "100.100.2.0/24"},
 	} {
-		got, err := registry.Allocate(ctx, org)
+		got, err := registry.Allocate(ctx, tc.org)
 		if err != nil {
-			t.Fatalf("Allocate(%s): %v", org, err)
+			t.Fatalf("Allocate(%s): %v", tc.org, err)
 		}
-		if got.NetworkPrefix != want {
-			t.Fatalf("Allocate(%s) = %q, want %q", org, got.NetworkPrefix, want)
+		if got.NetworkPrefix != tc.want {
+			t.Fatalf("Allocate(%s) = %q, want %q", tc.org, got.NetworkPrefix, tc.want)
 		}
 	}
 

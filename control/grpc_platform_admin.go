@@ -95,7 +95,7 @@ func (g *grpcPlatformAdminServer) ListOrganizations(ctx context.Context, _ *xuna
 	snapshot := g.router.orgSnapshot()
 	orgs := make([]*xunarav2.Organization, 0, len(snapshot))
 	for _, org := range snapshot {
-		orgs = append(orgs, grpcOrganizationView(org))
+		orgs = append(orgs, g.router.grpcOrganizationView(org))
 	}
 	return &xunarav2.ListOrganizationsResponse{Organizations: orgs}, nil
 }
@@ -114,7 +114,7 @@ func (g *grpcPlatformAdminServer) GetOrganization(ctx context.Context, req *xuna
 	if org == nil {
 		return nil, status.Error(codes.NotFound, "organization not found")
 	}
-	return grpcOrganizationView(org), nil
+	return g.router.grpcOrganizationView(org), nil
 }
 
 // CreateOrganization implements PlatformAdminService.CreateOrganization.
@@ -139,7 +139,7 @@ func (g *grpcPlatformAdminServer) CreateOrganization(ctx context.Context, req *x
 		// the router was closed concurrently.
 		return nil, status.Error(codes.Unavailable, "organization is no longer served")
 	}
-	return grpcOrganizationView(org), nil
+	return g.router.grpcOrganizationView(org), nil
 }
 
 // UpdateOrganization implements PlatformAdminService.UpdateOrganization.
@@ -169,7 +169,7 @@ func (g *grpcPlatformAdminServer) UpdateOrganization(ctx context.Context, req *x
 	if org == nil {
 		return nil, status.Error(codes.Unavailable, "organization is no longer served")
 	}
-	return grpcOrganizationView(org), nil
+	return g.router.grpcOrganizationView(org), nil
 }
 
 // DeleteOrganization implements PlatformAdminService.DeleteOrganization.
@@ -261,8 +261,8 @@ func (g *grpcPlatformAdminServer) ListAudit(ctx context.Context, req *xunarav2.L
 }
 
 // grpcOrganizationView builds the typed view of one organization.
-func grpcOrganizationView(org *routerOrg) *xunarav2.Organization {
-	view := platformOrgView(org)
+func (r *Router) grpcOrganizationView(org *routerOrg) *xunarav2.Organization {
+	view := r.platformOrgView(org)
 	return &xunarav2.Organization{
 		Id:      view.ID,
 		Name:    view.Name,

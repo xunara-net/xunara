@@ -285,6 +285,12 @@ type SQLiteStore struct {
 	// mu makes "read counters, allocate, write" atomic across the two
 	// statements CreateNode needs.
 	mu sync.Mutex
+
+	// ipv4Prefix and ipv6Prefix are the ranges new nodes are allocated from.
+	// They default to the tailnet's well-known ranges and follow the tenant's
+	// commercial network block (see prefix.go).
+	ipv4Prefix netip.Prefix
+	ipv6Prefix netip.Prefix
 }
 
 // OpenSQLite opens (creating if necessary) a SQLite-backed store at path and
@@ -307,7 +313,7 @@ func OpenSQLite(ctx context.Context, path string) (*SQLiteStore, error) {
 	}
 	db.SetMaxOpenConns(1)
 
-	s := &SQLiteStore{db: db}
+	s := &SQLiteStore{db: db, ipv4Prefix: defaultIPv4Prefix, ipv6Prefix: defaultIPv6Prefix}
 	if err := s.migrate(ctx); err != nil {
 		db.Close()
 		return nil, err
@@ -668,40 +674,18 @@ func (s *SQLiteStore) CreateNode(n *Node) error {
 	n.ID = NodeID(nextID)
 
 	if !n.IPv4.IsValid() {
-		// The reserved share ranges are skipped: a synthetic masquerade
-		// address must never equal a real node's address (section 38.4).
-		for {
-			offset, err := nextCounter(ctx, tx, counterNextIPv4Offset, 1)
-			if err != nil {
-				return err
-			}
-			addr, ok := addrAtOffset(defaultIPv4Prefix, uint32(offset))
-			if !ok {
-				return fmt.Errorf("state: IPv4 space exhausted")
-			}
-			if isShareMasqAddr(addr) {
-				continue
-			}
-			n.IPv4 = addr
-			break
+		addr, err := nextNodeAddr(ctx, tx, counterNextIPv4Offset, s.ipv4Prefix, "IPv4", nodeHasIPv4)
+		if err != nil {
+			return err
 		}
+		n.IPv4 = addr
 	}
 	if !n.IPv6.IsValid() {
-		for {
-			offset, err := nextCounter(ctx, tx, counterNextIPv6Offset, 1)
-			if err != nil {
-				return err
-			}
-			addr, ok := addrAtOffset(defaultIPv6Prefix, uint32(offset))
-			if !ok {
-				return fmt.Errorf("state: IPv6 space exhausted")
-			}
-			if isShareMasqAddr(addr) {
-				continue
-			}
-			n.IPv6 = addr
-			break
+		addr, err := nextNodeAddr(ctx, tx, counterNextIPv6Offset, s.ipv6Prefix, "IPv6", nodeHasIPv6)
+		if err != nil {
+			return err
 		}
+		n.IPv6 = addr
 	}
 
 	endpoints, err := encodeEndpoints(*n)

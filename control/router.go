@@ -63,6 +63,11 @@ type RouterConfig struct {
 	// Shares, when non-nil, enables Xunara Share: a machine can be shared with
 	// a user in another organization hosted by this router (spec section 38).
 	Shares *ShareRegistry
+	// Plans, when non-nil, turns on the commercial layer (spec section 54):
+	// every organization is on a plan from the registry's catalog, quotas are
+	// enforced by its control plane, and each tenant's devices are allocated
+	// from the network block the registry holds for it.
+	Plans *PlanRegistry
 	// Logger receives router logs. Defaults to slog.Default.
 	Logger *slog.Logger
 }
@@ -179,6 +184,9 @@ func (r *Router) register(site OrgSite, managed bool) error {
 	org := &routerOrg{site: site, handler: site.Server.Handler(), managed: managed}
 	if r.cfg.Shares != nil {
 		site.Server.enableSharing(r.cfg.Shares, r)
+	}
+	if err := r.applyPlans(org); err != nil {
+		return err
 	}
 	// Host routing is the authority on which organization a request belongs
 	// to, so the server learns its own identity from the site it serves
@@ -449,6 +457,7 @@ func (r *Router) Close() error {
 	r.fallback = nil
 	registry := r.cfg.Registry
 	shares := r.cfg.Shares
+	plans := r.cfg.Plans
 	r.mu.Unlock()
 
 	var errs []error
@@ -465,6 +474,11 @@ func (r *Router) Close() error {
 	if shares != nil {
 		if err := shares.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("share registry: %w", err))
+		}
+	}
+	if plans != nil {
+		if err := plans.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("plan registry: %w", err))
 		}
 	}
 	return errors.Join(errs...)
@@ -557,6 +571,11 @@ func (r *Router) Handler() http.Handler {
 	mux.Route("/api/platform", func(pr chi.Router) {
 		r.mountPlatform(pr)
 	})
+
+	// The platform console lives at /admin on every host, next to the
+	// process-level endpoints: it is not a tenant surface, so no host's
+	// routing decides whether it exists (spec section 54).
+	r.mountAdmin(mux)
 
 	mux.NotFound(func(w http.ResponseWriter, req *http.Request) {
 		org := r.orgForHost(req.Host)

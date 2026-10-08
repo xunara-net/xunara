@@ -197,6 +197,67 @@ func DefaultCatalog() *Catalog {
 	return c
 }
 
+// Errors a catalog mutation reports.
+var (
+	// ErrPlanNotFound is returned when a mutation names a plan the catalog
+	// does not have.
+	ErrPlanNotFound = errors.New("plan: no such plan")
+	// ErrDefaultPlan is returned when a mutation would remove the plan new
+	// tenants start on.
+	ErrDefaultPlan = errors.New("plan: the default plan cannot be removed")
+)
+
+// Clone returns an independent copy of the catalog. It is how a deployment
+// applies a runtime change (a plan added through the platform API) without
+// mutating the catalog other goroutines are reading.
+func (c *Catalog) Clone() *Catalog {
+	if c == nil {
+		return &Catalog{plans: make(map[string]Plan)}
+	}
+	out := &Catalog{plans: make(map[string]Plan, len(c.plans)), order: append([]string(nil), c.order...)}
+	for id, p := range c.plans {
+		out.plans[id] = p
+	}
+	return out
+}
+
+// WithPlan returns a new catalog with p added. A plan with the same ID is
+// replaced in place, so a deployment can reprice or retune a built-in plan
+// without losing its position (in particular its place as the default).
+func (c *Catalog) WithPlan(p Plan) (*Catalog, error) {
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	out := c.Clone()
+	if _, exists := out.plans[p.ID]; !exists {
+		out.order = append(out.order, p.ID)
+	}
+	out.plans[p.ID] = p
+	return out, nil
+}
+
+// WithoutPlan returns a new catalog without the plan. Removing the default
+// plan is refused: tenants without an assignment follow the default, so
+// deleting it would change their rules without anybody deciding to.
+func (c *Catalog) WithoutPlan(id string) (*Catalog, error) {
+	if _, ok := c.Get(id); !ok {
+		return nil, fmt.Errorf("%w: %q", ErrPlanNotFound, id)
+	}
+	if c.Default().ID == id {
+		return nil, fmt.Errorf("%w: %q", ErrDefaultPlan, id)
+	}
+	out := c.Clone()
+	delete(out.plans, id)
+	kept := out.order[:0]
+	for _, existing := range out.order {
+		if existing != id {
+			kept = append(kept, existing)
+		}
+	}
+	out.order = kept
+	return out, nil
+}
+
 // Get returns the plan with the given ID.
 func (c *Catalog) Get(id string) (Plan, bool) {
 	if c == nil {

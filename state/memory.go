@@ -71,7 +71,7 @@ type MemoryStore struct {
 
 // NewMemoryStore returns an empty in-memory store.
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{
+	store := &MemoryStore{
 		nextID:      1,
 		nextKeyID:   1,
 		nextDNSID:   1,
@@ -91,6 +91,12 @@ func NewMemoryStore() *MemoryStore {
 		ip6:         newIPAllocator(defaultIPv6Prefix),
 		share:       newMemoryShareStore(),
 	}
+
+	// Allocation skips addresses that are already assigned, so a changed
+	// tenant range can safely overlap the previous one (prefix.go).
+	store.ip4.skip = store.addrInUseLocked
+	store.ip6.skip = store.addrInUseLocked
+	return store
 }
 
 // EnsureShareNode implements [ShareStore].
@@ -390,6 +396,10 @@ func newStableID() string {
 type ipAllocator struct {
 	prefix netip.Prefix
 	last   netip.Addr
+	// skip reports whether an address is already assigned to a node. It is
+	// consulted after a tenant's range changed, when the previous range may
+	// overlap the new one.
+	skip func(netip.Addr) bool
 }
 
 func newIPAllocator(p netip.Prefix) *ipAllocator {
@@ -405,6 +415,9 @@ func (a *ipAllocator) next() (netip.Addr, bool) {
 		}
 		a.last = next
 		if isShareMasqAddr(next) {
+			continue
+		}
+		if a.skip != nil && a.skip(next) {
 			continue
 		}
 		return next, true

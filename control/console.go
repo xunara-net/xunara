@@ -92,6 +92,7 @@ func (s *Server) consoleRouter() http.Handler {
 	r.Get("/webhooks", s.handleConsoleWebhooks)
 	r.Get("/policy", s.handleConsolePolicy)
 	r.Get("/security", s.handleConsoleSecurity)
+	r.Get("/plan", s.handleConsolePlan)
 	r.Get("/ssh-check", s.handleConsoleSSHCheck)
 	r.Get("/audit", s.handleConsoleAudit)
 	r.Get("/passkeys", s.handleConsolePasskeys)
@@ -1511,4 +1512,57 @@ func (s *Server) handleConsoleAudit(w http.ResponseWriter, r *http.Request) {
 	slices.Reverse(events)
 	data["Events"] = events
 	s.renderConsole(w, consoleAuditTemplate, data)
+}
+
+// handleConsolePlan implements GET /console/plan: the tenant's commercial page
+// (spec section 54). It reports the plan, the quotas it imposes and the
+// network range devices are allocated from — the facts a member needs when a
+// device or an invitation is refused.
+func (s *Server) handleConsolePlan(w http.ResponseWriter, r *http.Request) {
+	_, data, ok := s.consoleSession(w, r, "plan")
+	if !ok {
+		return
+	}
+
+	assigned := s.Plan()
+	known := assigned.ID != "" && assigned.ID != "unlimited"
+	used, limit := s.DeviceUsage()
+	v4, _ := s.store.AddressPrefixes()
+
+	allowance := func(value int) string {
+		if value == -1 {
+			return "∞"
+		}
+		return strconv.Itoa(value)
+	}
+	flag := func(allowed bool) string {
+		if allowed {
+			return "✓"
+		}
+		return "—"
+	}
+
+	data["PlanKnown"] = known
+	data["PlanName"] = assigned.Name
+	data["PlanID"] = assigned.ID
+	data["DevicesUsed"] = used
+	data["DeviceAllowance"] = allowance(limit)
+	data["UsersUsed"] = len(s.identity.ListUsers())
+	data["UserAllowance"] = allowance(assigned.MaxUsers)
+	data["RouteAllowance"] = allowance(assigned.MaxRoutes)
+	data["NetworkPrefix"] = v4.String()
+	data["NetworkManaged"] = !assigned.AllowCustomCIDR
+	data["QuotaReached"] = known && (used >= assigned.MaxDevices && assigned.MaxDevices >= 0 ||
+		len(s.identity.ListUsers()) >= assigned.MaxUsers && assigned.MaxUsers >= 0)
+	data["Feature"] = map[string]string{
+		"Devices":      flag(assigned.MaxDevices != 0),
+		"Users":        flag(assigned.MaxUsers != 0),
+		"SubnetRouter": flag(assigned.AllowSubnetRouter),
+		"ExitNode":     flag(assigned.AllowExitNode),
+		"CustomCIDR":   flag(assigned.AllowCustomCIDR),
+		"API":          flag(assigned.AllowAPI),
+		"Members":      flag(assigned.AllowMultiMember),
+		"Audit":        flag(assigned.AllowAuditLog),
+	}
+	s.renderConsole(w, consolePlanTemplate, data)
 }

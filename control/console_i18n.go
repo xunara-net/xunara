@@ -230,6 +230,9 @@ var consoleNav = []consoleNavGroup{
 		{Key: "ssh-check", Href: "/console/ssh-check"},
 		{Key: "webhooks", Href: "/console/webhooks"},
 	}},
+	{Label: "Account", Items: []consoleNavItem{
+		{Key: "plan", Href: "/console/plan"},
+	}},
 	{Label: "Governance", Items: []consoleNavItem{
 		{Key: "policy", Href: "/console/policy"},
 		{Key: "security", Href: "/console/security"},
@@ -240,6 +243,7 @@ var consoleNav = []consoleNavGroup{
 // consoleLedes is the one-line description under each page title. The values
 // are English message ids translated at render time.
 var consoleLedes = map[string]string{
+	"plan":       "The plan this tailnet is on, what it allows and what it uses.",
 	"overview":   "Your tailnet at a glance.",
 	"machines":   "Devices registered to this tailnet.",
 	"exit-nodes": "Which devices route the default route, and who selected them.",

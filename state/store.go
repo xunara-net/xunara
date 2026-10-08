@@ -52,6 +52,14 @@ type Store interface {
 	// of announcement; see [Node.EffectiveRoutes].
 	SetNodeApprovedRoutes(id NodeID, routes []netip.Prefix) error
 
+	// SetAddressPrefixes replaces the ranges new nodes are allocated from
+	// (spec section 54). An invalid prefix leaves that address family
+	// unchanged; existing nodes keep their addresses. Implementations must
+	// make the change visible to subsequent allocations atomically.
+	SetAddressPrefixes(v4, v6 netip.Prefix) error
+	// AddressPrefixes returns the ranges new nodes are allocated from.
+	AddressPrefixes() (netip.Prefix, netip.Prefix)
+
 	// ConfigRevision returns a counter that increases whenever tailnet
 	// configuration changes outside a control session's request path, such as
 	// when the administration CLI approves a route or edits a user. Servers

@@ -205,3 +205,21 @@ func (s *Server) planGateOrRender(w http.ResponseWriter, r *http.Request, err er
 func (s *Server) translateMessage(r *http.Request, message string) string {
 	return translator(consoleLangFromRequest(r))(message)
 }
+
+// SetAddressPrefix points new device addresses at a network range. It is how
+// a tenant's commercial network block reaches the store that allocates
+// addresses; devices registered before the change keep their addresses.
+//
+// An invalid prefix is a no-op, so a tenant without an assigned block keeps
+// the deployment's built-in range.
+func (s *Server) SetAddressPrefix(prefix netip.Prefix) error {
+	if !prefix.IsValid() {
+		return nil
+	}
+	if err := s.store.SetAddressPrefixes(prefix, netip.Prefix{}); err != nil {
+		return err
+	}
+	s.log.Info("tenant network range applied",
+		"tenant", s.TenantID(), "prefix", prefix.String())
+	return nil
+}

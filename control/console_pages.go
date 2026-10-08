@@ -361,6 +361,7 @@ const consoleJS = `
 // consoleTitles label each section; the nav identifier doubles as the key so a
 // handler cannot forget to set a page title.
 var consoleTitles = map[string]string{
+	"plan":       "Plan and network",
 	"overview":   "Overview",
 	"machines":   "Machines",
 	"exit-nodes": "Exit nodes",

@@ -247,4 +247,11 @@ const (
 	AuditReachFailed   = "reach.failed"
 	AuditReachCanceled = "reach.canceled"
 	AuditReachExpired  = "reach.expired"
+
+	// Commercial plan changes (PROJECT_SPEC section 54). They are written to
+	// the affected tenant's audit log, so a member can see that the platform
+	// moved the tailnet to another plan or network range.
+	AuditPlanChanged  = "plan.changed"
+	AuditNetworkSet   = "plan.network_set"
+	AuditQuotaReached = "plan.quota_reached"
 )

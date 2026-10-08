@@ -3,12 +3,14 @@ package control
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -73,6 +75,35 @@ CREATE TABLE IF NOT EXISTS tenant_plans (
 	updated_at     INTEGER NOT NULL
 );
 `,
+
+	// v2: plans the operator created or changed through the platform API. A
+	// stored row is overlaid on the deployment's catalog (file or built-in),
+	// so a deployment can add a plan without shipping a new binary while the
+	// file stays the baseline.
+	`
+CREATE TABLE IF NOT EXISTS catalog_plans (
+	id         TEXT    PRIMARY KEY,
+	document   TEXT    NOT NULL,
+	created_at INTEGER NOT NULL,
+	updated_at INTEGER NOT NULL
+);
+`,
+
+	// v3: platform console sessions. They are separate from tenant sessions
+	// on purpose: a platform operator's browser must never hold a credential a
+	// tenant accepts, and vice versa (see admin_sessions.go).
+	`
+CREATE TABLE IF NOT EXISTS admin_sessions (
+	id           TEXT    PRIMARY KEY,
+	token_hash   TEXT    NOT NULL UNIQUE,
+	csrf_token   TEXT    NOT NULL,
+	created_at   INTEGER NOT NULL,
+	expires_at   INTEGER NOT NULL,
+	last_seen_at INTEGER NOT NULL,
+	revoked_at   INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at);
+`,
 }
 
 // PlanRegistryConfig configures the tenant plan registry.
@@ -94,7 +125,10 @@ type PlanRegistryConfig struct {
 // PlanRegistry is the durable table of tenant plan assignments.
 type PlanRegistry struct {
 	cfg PlanRegistryConfig
-	cat *plan.Catalog
+	// cat is the deployment's catalog: the configured baseline with the
+	// operator's stored plans overlaid. It is swapped atomically because a
+	// plan edit must be visible to running tenants on their next request.
+	cat atomic.Pointer[plan.Catalog]
 	db  *sql.DB
 }
 
@@ -130,12 +164,55 @@ func OpenPlanRegistry(ctx context.Context, cfg PlanRegistryConfig) (*PlanRegistr
 	}
 	db.SetMaxOpenConns(1)
 
-	registry := &PlanRegistry{cfg: cfg, cat: cat, db: db}
+	registry := &PlanRegistry{cfg: cfg, db: db}
+	registry.cat.Store(cat)
 	if err := registry.migrate(ctx); err != nil {
 		db.Close()
 		return nil, err
 	}
+	if err := registry.loadStoredPlans(ctx); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return registry, nil
+}
+
+// loadStoredPlans overlays the operator's stored plans on the configured
+// catalog, oldest first so the most recent edit of an ID wins.
+func (g *PlanRegistry) loadStoredPlans(ctx context.Context) error {
+	rows, err := g.db.QueryContext(ctx,
+		"SELECT document FROM catalog_plans ORDER BY created_at, id")
+	if err != nil {
+		return fmt.Errorf("control: loading stored plans: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var document string
+		if err := rows.Scan(&document); err != nil {
+			return fmt.Errorf("control: loading stored plans: %w", err)
+		}
+		var p plan.Plan
+		dec := json.NewDecoder(strings.NewReader(document))
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&p); err != nil {
+			return fmt.Errorf("control: stored plan is unreadable: %w", err)
+		}
+		next, err := g.catalog().WithPlan(p)
+		if err != nil {
+			return fmt.Errorf("control: stored plan %q is invalid: %w", p.ID, err)
+		}
+		g.cat.Store(next)
+	}
+	return rows.Err()
+}
+
+// catalog returns the current catalog.
+func (g *PlanRegistry) catalog() *plan.Catalog {
+	if cat := g.cat.Load(); cat != nil {
+		return cat
+	}
+	return plan.DefaultCatalog()
 }
 
 func (g *PlanRegistry) migrate(ctx context.Context) error {
@@ -161,7 +238,7 @@ func (g *PlanRegistry) migrate(ctx context.Context) error {
 func (g *PlanRegistry) Close() error { return g.db.Close() }
 
 // Catalog returns the plans this deployment sells, in catalog order.
-func (g *PlanRegistry) Catalog() *plan.Catalog { return g.cat }
+func (g *PlanRegistry) Catalog() *plan.Catalog { return g.catalog() }
 
 // Pool returns the deployment's tenant network pool.
 func (g *PlanRegistry) Pool() netspace.Pool { return g.cfg.Pool }
@@ -215,7 +292,7 @@ func (g *PlanRegistry) Assignment(ctx context.Context, orgID string) (TenantPlan
 		return TenantPlan{}, err
 	}
 	if !ok {
-		return TenantPlan{OrgID: orgID, PlanID: g.cat.Default().ID}, nil
+		return TenantPlan{OrgID: orgID, PlanID: g.catalog().Default().ID}, nil
 	}
 	return assignment, nil
 }
@@ -226,11 +303,11 @@ func (g *PlanRegistry) Assignment(ctx context.Context, orgID string) (TenantPlan
 func (g *PlanRegistry) Plan(ctx context.Context, orgID string) plan.Plan {
 	assignment, ok, err := g.Get(ctx, orgID)
 	if err != nil || !ok {
-		return g.cat.Default()
+		return g.catalog().Default()
 	}
-	p, ok := g.cat.Get(assignment.PlanID)
+	p, ok := g.catalog().Get(assignment.PlanID)
 	if !ok {
-		return g.cat.Default()
+		return g.catalog().Default()
 	}
 	return p
 }
@@ -256,7 +333,7 @@ func (g *PlanRegistry) NetworkPrefix(ctx context.Context, orgID string) (netip.P
 // addresses they already have: a plan change never re-addresses a live
 // tailnet).
 func (g *PlanRegistry) AssignPlan(ctx context.Context, orgID, planID string) (TenantPlan, error) {
-	next, ok := g.cat.Get(planID)
+	next, ok := g.catalog().Get(planID)
 	if !ok {
 		return TenantPlan{}, fmt.Errorf("%w: %q", ErrPlanUnknown, planID)
 	}
@@ -326,11 +403,11 @@ func (g *PlanRegistry) Allocate(ctx context.Context, orgID string) (TenantPlan, 
 		return TenantPlan{}, err
 	}
 	now := time.Now().UTC()
-	assignment := TenantPlan{OrgID: orgID, PlanID: g.cat.Default().ID, CreatedAt: now, UpdatedAt: now}
+	assignment := TenantPlan{OrgID: orgID, PlanID: g.catalog().Default().ID, CreatedAt: now, UpdatedAt: now}
 	if ok {
 		assignment = current
 		if assignment.PlanID == "" {
-			assignment.PlanID = g.cat.Default().ID
+			assignment.PlanID = g.catalog().Default().ID
 		}
 	}
 	if assignment.NetworkPrefix == "" && !g.cfg.Pool.Zero() {
@@ -371,11 +448,11 @@ func (g *PlanRegistry) SetNetwork(ctx context.Context, orgID string, prefix neti
 		return TenantPlan{}, err
 	}
 	now := time.Now().UTC()
-	assignment := TenantPlan{OrgID: orgID, PlanID: g.cat.Default().ID, CreatedAt: now}
+	assignment := TenantPlan{OrgID: orgID, PlanID: g.catalog().Default().ID, CreatedAt: now}
 	if ok {
 		assignment = current
 		if assignment.PlanID == "" {
-			assignment.PlanID = g.cat.Default().ID
+			assignment.PlanID = g.catalog().Default().ID
 		}
 	}
 
@@ -392,9 +469,9 @@ func (g *PlanRegistry) SetNetwork(ctx context.Context, orgID string, prefix neti
 			assignment.NetworkPrefix = ""
 		}
 	} else {
-		tenantPlan, ok := g.cat.Get(assignment.PlanID)
+		tenantPlan, ok := g.catalog().Get(assignment.PlanID)
 		if !ok {
-			tenantPlan = g.cat.Default()
+			tenantPlan = g.catalog().Default()
 		}
 		if !tenantPlan.AllowCustomCIDR {
 			return TenantPlan{}, fmt.Errorf("%w: plan %s", ErrNetworkNotAllowed, tenantPlan.ID)
@@ -420,6 +497,101 @@ func (g *PlanRegistry) SetNetwork(ctx context.Context, orgID string, prefix neti
 		return TenantPlan{}, fmt.Errorf("control: setting network range of %q: %w", orgID, err)
 	}
 	return assignment, nil
+}
+
+// ErrPlanBuiltIn is returned when the platform API tries to delete a plan
+// that comes from the deployment's configuration: the file (or the built-in
+// catalog) would bring it back on the next start, so it can only be
+// overridden, never deleted.
+var ErrPlanBuiltIn = errors.New("control: this plan comes from the deployment's configuration and can only be overridden")
+
+// UpsertPlan stores a plan definition and makes it visible to every tenant on
+// the plan's next request. A plan whose ID matches a configured one overrides
+// it for this deployment; a new ID extends the catalog.
+func (g *PlanRegistry) UpsertPlan(ctx context.Context, p plan.Plan) (plan.Plan, error) {
+	p.ID = strings.TrimSpace(p.ID)
+	if err := p.Validate(); err != nil {
+		return plan.Plan{}, orgInvalidf("%v", err)
+	}
+	next, err := g.catalog().WithPlan(p)
+	if err != nil {
+		return plan.Plan{}, orgInvalidf("%v", err)
+	}
+	document, err := json.Marshal(p)
+	if err != nil {
+		return plan.Plan{}, fmt.Errorf("control: encoding plan %q: %w", p.ID, err)
+	}
+
+	now := time.Now().UTC()
+	if _, err := g.db.ExecContext(ctx, `
+		INSERT INTO catalog_plans (id, document, created_at, updated_at)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET document = excluded.document, updated_at = excluded.updated_at`,
+		p.ID, string(document), now.UnixNano(), now.UnixNano()); err != nil {
+		return plan.Plan{}, fmt.Errorf("control: storing plan %q: %w", p.ID, err)
+	}
+	g.cat.Store(next)
+	return p, nil
+}
+
+// DeletePlan removes an operator-created plan. A configured plan cannot be
+// deleted (it would return at the next start), the default plan cannot be
+// deleted (unassigned tenants follow it), and a plan tenants are on cannot be
+// deleted until they are moved: deleting it would silently change their rules.
+func (g *PlanRegistry) DeletePlan(ctx context.Context, id string) error {
+	if _, ok := g.catalog().Get(id); !ok {
+		return fmt.Errorf("%w: %q", plan.ErrPlanNotFound, id)
+	}
+	if g.catalog().Default().ID == id {
+		return fmt.Errorf("%w: %q", plan.ErrDefaultPlan, id)
+	}
+	stored, err := g.storedPlan(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !stored {
+		return ErrPlanBuiltIn
+	}
+	tenants, err := g.PlanTenants(ctx, id)
+	if err != nil {
+		return err
+	}
+	if tenants > 0 {
+		return orgConflictf("plan %q still has %d tenant(s); move them to another plan first", id, tenants)
+	}
+	next, err := g.catalog().WithoutPlan(id)
+	if err != nil {
+		return fmt.Errorf("%w: %v", plan.ErrPlanNotFound, err)
+	}
+	if _, err := g.db.ExecContext(ctx, "DELETE FROM catalog_plans WHERE id = ?", id); err != nil {
+		return fmt.Errorf("control: deleting plan %q: %w", id, err)
+	}
+	g.cat.Store(next)
+	return nil
+}
+
+// PlanTenants counts the tenants explicitly assigned to a plan.
+func (g *PlanRegistry) PlanTenants(ctx context.Context, planID string) (int, error) {
+	var count int
+	if err := g.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM tenant_plans WHERE plan_id = ?", planID).Scan(&count); err != nil {
+		return 0, fmt.Errorf("control: counting tenants on plan %q: %w", planID, err)
+	}
+	return count, nil
+}
+
+// storedPlan reports whether a plan comes from the registry rather than the
+// deployment's configuration.
+func (g *PlanRegistry) storedPlan(ctx context.Context, id string) (bool, error) {
+	var one int
+	err := g.db.QueryRowContext(ctx, "SELECT 1 FROM catalog_plans WHERE id = ? LIMIT 1", id).Scan(&one)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("control: reading plan %q: %w", id, err)
+	}
+	return true, nil
 }
 
 // Delete drops a tenant's assignment, which returns it to the catalog default.

@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -18,6 +19,9 @@ import (
 	"github.com/xunara/xunara/control"
 	"github.com/xunara/xunara/dnsprovider"
 	"github.com/xunara/xunara/identity"
+	"github.com/xunara/xunara/netspace"
+	"github.com/xunara/xunara/plan"
+	"github.com/xunara/xunara/state"
 	"github.com/xunara/xunara/webhook"
 )
 
@@ -67,6 +71,10 @@ func main() {
 			"address for the platform gRPC API (xunara.v2); empty disables gRPC")
 		platformStateDir = flag.String("platform-state-dir", "",
 			"directory holding the platform registry and platform-managed organizations; empty disables runtime organization CRUD")
+		plansFile = flag.String("plans", "",
+			"JSON file with the plans this deployment sells (default: the built-in free/pro/business catalog); enables plan quotas")
+		networkPool = flag.String("network-pool", "100.100.0.0/16",
+			"range tenant tailnet blocks are allocated from, carved into /24s; 'none' disables automatic allocation")
 		webhookURL = flag.String("webhook-url", "",
 			"HTTPS endpoint that receives audit events (enables webhook delivery)")
 		webhookSecretEnv = flag.String("webhook-secret-env", "XUNARA_WEBHOOK_SECRET",
@@ -117,7 +125,16 @@ func main() {
 			logger.Error("invalid configuration", "err", err)
 			os.Exit(1)
 		}
-		runRouter(*orgConfigPath, *listen, *grpcListen, *platformTokenEnv, *platformStateDir, *consoleTimezone, logger)
+		runRouter(routerOptions{
+			path:             *orgConfigPath,
+			listen:           *listen,
+			grpcListen:       *grpcListen,
+			platformTokenEnv: *platformTokenEnv,
+			platformStateDir: *platformStateDir,
+			consoleTimezone:  *consoleTimezone,
+			plansFile:        *plansFile,
+			networkPool:      *networkPool,
+		}, logger)
 		return
 	}
 	if *platformStateDir != "" {
@@ -199,6 +216,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Self-hosted deployments do not sell plans, so the commercial layer stays
+	// off unless the operator asks for it with -plans. When it is on, the
+	// single tenant is the deployment itself ("default").
+	var plans *control.PlanRegistry
+	if *plansFile != "" {
+		plans, err = loadPlanRegistry(context.Background(), filepath.Join(*stateDir, "plans.db"), *plansFile, *networkPool)
+		if err != nil {
+			logger.Error("opening the tenant plan registry", "err", err)
+			os.Exit(1)
+		}
+		defer plans.Close()
+	}
+
 	srv, err := control.New(control.Config{
 		ServerURL:           *serverURL,
 		ListenAddr:          *listen,
@@ -223,6 +253,7 @@ func main() {
 		ReachEnabled:        *reachEnabled,
 		Flux:                fluxCfg,
 		Webhooks:            webhooks,
+		PlanSource:          planSourceFor(plans),
 		Logger:              logger,
 	})
 	if err != nil {
@@ -230,6 +261,17 @@ func main() {
 		os.Exit(1)
 	}
 	defer srv.Close()
+
+	if plans != nil {
+		if prefix, ok := plans.NetworkPrefix(context.Background(), srv.TenantID()); ok {
+			if err := srv.SetAddressPrefix(prefix); err != nil {
+				logger.Error("applying the tenant network range", "err", err)
+				os.Exit(1)
+			}
+		}
+		logger.Info("commercial plans enabled",
+			"default", plans.Catalog().Default().ID, "pool", plans.Pool().Prefix().String())
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -283,7 +325,68 @@ func checkOrgScopedFlags(visited []string) error {
 // runRouter serves a multi-tenant deployment until the process is signalled.
 // When platformStateDir is set, the platform API may also create and delete
 // organizations at runtime; their control planes live under that directory.
-func runRouter(path, listen, grpcListen, platformTokenEnv, platformStateDir, consoleTimezone string, logger *slog.Logger) {
+// routerOptions are the multi-tenant deployment's process-level settings.
+type routerOptions struct {
+	path             string
+	listen           string
+	grpcListen       string
+	platformTokenEnv string
+	platformStateDir string
+	consoleTimezone  string
+	plansFile        string
+	networkPool      string
+}
+
+// planSourceFor turns a plan registry into the control plane's plan source.
+// A nil registry keeps the deployment on the unlimited plan.
+func planSourceFor(registry *control.PlanRegistry) func(tenantID string) plan.Plan {
+	if registry == nil {
+		return nil
+	}
+	return func(tenantID string) plan.Plan {
+		return registry.Plan(context.Background(), tenantID)
+	}
+}
+
+// loadPlanRegistry opens the tenant plan registry (spec section 54). It also
+// returns the catalog the deployment sells: the file when -plans names one,
+// the built-in catalog otherwise. It returns (nil, nil) when the deployment
+// does not sell plans, which is the self-hosted default.
+func loadPlanRegistry(ctx context.Context, dbPath, plansFile, networkPool string) (*control.PlanRegistry, error) {
+	catalog := plan.DefaultCatalog()
+	if plansFile != "" {
+		raw, err := os.ReadFile(plansFile)
+		if err != nil {
+			return nil, err
+		}
+		catalog, err = plan.ParseCatalog(raw)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var pool netspace.Pool
+	if !strings.EqualFold(strings.TrimSpace(networkPool), "none") && strings.TrimSpace(networkPool) != "" {
+		prefix, err := netip.ParsePrefix(strings.TrimSpace(networkPool))
+		if err != nil {
+			return nil, fmt.Errorf("-network-pool: %w", err)
+		}
+		if pool, err = netspace.NewPool(prefix, netspace.DefaultBlockBits); err != nil {
+			return nil, err
+		}
+	}
+
+	return control.OpenPlanRegistry(ctx, control.PlanRegistryConfig{
+		Path:     dbPath,
+		Catalog:  catalog,
+		Pool:     pool,
+		Reserved: []netip.Prefix{state.ShareMasqIPv4Prefix, state.ShareMasqIPv6Prefix},
+	})
+}
+
+func runRouter(opts routerOptions, logger *slog.Logger) {
+	path, listen, grpcListen, platformTokenEnv, platformStateDir, consoleTimezone, plansFile, networkPool :=
+		opts.path, opts.listen, opts.grpcListen, opts.platformTokenEnv, opts.platformStateDir, opts.consoleTimezone, opts.plansFile, opts.networkPool
 	sites, err := loadOrgSites(path, logger)
 	if err != nil {
 		logger.Error("loading the organization table", "err", err)
@@ -298,7 +401,20 @@ func runRouter(path, listen, grpcListen, platformTokenEnv, platformStateDir, con
 
 	var registry *control.OrgRegistry
 	var shares *control.ShareRegistry
+	var plans *control.PlanRegistry
+	if plansFile != "" && platformStateDir == "" {
+		logger.Error("-plans needs -platform-state-dir in multi-tenant mode: the registry holds the assignments")
+		os.Exit(1)
+	}
 	if platformStateDir != "" {
+		plans, err = loadPlanRegistry(context.Background(), filepath.Join(platformStateDir, "plans.db"), plansFile, networkPool)
+		if err != nil {
+			for _, site := range sites {
+				_ = site.Server.Close()
+			}
+			logger.Error("opening the tenant plan registry", "err", err)
+			os.Exit(1)
+		}
 		if platformToken == "" {
 			logger.Error("platform-managed organizations need a platform token",
 				"env", platformTokenEnv)
@@ -343,6 +459,7 @@ func runRouter(path, listen, grpcListen, platformTokenEnv, platformStateDir, con
 		PlatformAdminToken: platformToken,
 		Registry:           registry,
 		Shares:             shares,
+		Plans:              plans,
 		Logger:             logger,
 	})
 	if err != nil {
@@ -355,6 +472,9 @@ func runRouter(path, listen, grpcListen, platformTokenEnv, platformStateDir, con
 		if shares != nil {
 			_ = shares.Close()
 		}
+		if plans != nil {
+			_ = plans.Close()
+		}
 		logger.Error("initializing the organization router", "err", err)
 		os.Exit(1)
 	}
@@ -363,6 +483,15 @@ func runRouter(path, listen, grpcListen, platformTokenEnv, platformStateDir, con
 	for _, site := range sites {
 		logger.Info("organization hosted",
 			"id", site.ID, "name", site.Name, "domains", strings.Join(site.Domains, ","))
+	}
+	if plans != nil {
+		ids := make([]string, 0, len(plans.Catalog().List()))
+		for _, p := range plans.Catalog().List() {
+			ids = append(ids, p.ID)
+		}
+		logger.Info("commercial plans enabled",
+			"default", plans.Catalog().Default().ID, "plans", strings.Join(ids, ","),
+			"pool", plans.Pool().Prefix().String())
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

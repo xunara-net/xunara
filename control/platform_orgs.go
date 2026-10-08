@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/xunara/xunara/plan"
 )
 
 // Organization CRUD for the platform API (M7d).
@@ -76,7 +78,7 @@ func (r *Router) handlePlatformCreateOrganization(w http.ResponseWriter, req *ht
 		http.Error(w, "organization is no longer served", http.StatusServiceUnavailable)
 		return
 	}
-	writeJSON(w, http.StatusCreated, platformOrgView(org))
+	writeJSON(w, http.StatusCreated, r.platformOrgView(org))
 }
 
 // handlePlatformUpdateOrganization implements PATCH
@@ -111,7 +113,7 @@ func (r *Router) handlePlatformUpdateOrganization(w http.ResponseWriter, req *ht
 		http.Error(w, "organization is no longer served", http.StatusServiceUnavailable)
 		return
 	}
-	writeJSON(w, http.StatusOK, platformOrgView(org))
+	writeJSON(w, http.StatusOK, r.platformOrgView(org))
 }
 
 // handlePlatformDeleteOrganization implements DELETE
@@ -146,6 +148,20 @@ func (r *Router) writeOrgAPIError(w http.ResponseWriter, err error) {
 		http.Error(w, err.Error(), http.StatusConflict)
 	case errors.Is(err, errManagedOrgsDisabled):
 		http.Error(w, err.Error(), http.StatusForbidden)
+	case errors.Is(err, ErrTenantNotFound):
+		http.Error(w, err.Error(), http.StatusNotFound)
+	case errors.Is(err, plan.ErrPlanNotFound):
+		http.Error(w, err.Error(), http.StatusNotFound)
+	case errors.Is(err, ErrPlanUnknown):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, plan.ErrDefaultPlan), errors.Is(err, ErrPlanBuiltIn):
+		http.Error(w, err.Error(), http.StatusConflict)
+	case errors.Is(err, ErrNetworkNotAllowed):
+		http.Error(w, err.Error(), http.StatusForbidden)
+	case errors.Is(err, ErrNetworkConflict):
+		http.Error(w, err.Error(), http.StatusConflict)
+	case errors.Is(err, ErrNoNetworkBlock):
+		http.Error(w, err.Error(), http.StatusConflict)
 	default:
 		r.log.Error("platform organization request failed", "err", err)
 		http.Error(w, "internal error", http.StatusInternalServerError)

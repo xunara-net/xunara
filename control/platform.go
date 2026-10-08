@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"net/http"
@@ -37,6 +38,18 @@ type PlatformOrgStats struct {
 	Users          int  `json:"users"`
 	PendingDevices int  `json:"pending_devices"`
 	PolicyLoaded   bool `json:"policy_loaded"`
+
+	// Plan is the commercial plan the tenant is on; empty when this
+	// deployment does not sell plans (spec section 54).
+	Plan string `json:"plan,omitempty"`
+	// PlanName is the plan's display name, for surfaces that show a label.
+	PlanName string `json:"plan_name,omitempty"`
+	// NetworkPrefix is the tenant's tailnet address range; empty means the
+	// deployment default.
+	NetworkPrefix string `json:"network_prefix,omitempty"`
+	// DeviceLimit is how many devices the plan allows (-1 for unlimited, 0
+	// when the deployment does not sell plans).
+	DeviceLimit int `json:"device_limit,omitempty"`
 }
 
 // mountPlatform registers the platform API under /api/platform.
@@ -45,6 +58,12 @@ func (r *Router) mountPlatform(pr chi.Router) {
 	pr.Get("/v1/organizations", r.handlePlatformOrganizations)
 	pr.Get("/v1/organizations/{orgID}", r.handlePlatformOrganization)
 	pr.Post("/v1/organizations", r.handlePlatformCreateOrganization)
+	pr.Get("/v1/organizations/{orgID}/plan", r.handlePlatformTenantPlan)
+	pr.Patch("/v1/organizations/{orgID}/plan", r.handlePlatformSetTenantPlan)
+	pr.Post("/v1/organizations/{orgID}/plan/allocate", r.handlePlatformAllocateTenant)
+	pr.Get("/v1/plans", r.handlePlatformPlans)
+	pr.Post("/v1/plans", r.handlePlatformUpsertPlan)
+	pr.Delete("/v1/plans/{planID}", r.handlePlatformDeletePlan)
 	pr.Patch("/v1/organizations/{orgID}", r.handlePlatformUpdateOrganization)
 	pr.Delete("/v1/organizations/{orgID}", r.handlePlatformDeleteOrganization)
 	pr.Get("/v1/audit", r.handlePlatformAudit)
@@ -75,7 +94,7 @@ func (r *Router) handlePlatformOrganizations(w http.ResponseWriter, _ *http.Requ
 	snapshot := r.orgSnapshot()
 	orgs := make([]PlatformOrg, 0, len(snapshot))
 	for _, org := range snapshot {
-		orgs = append(orgs, platformOrgView(org))
+		orgs = append(orgs, r.platformOrgView(org))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"organizations": orgs})
 }
@@ -84,14 +103,14 @@ func (r *Router) handlePlatformOrganizations(w http.ResponseWriter, _ *http.Requ
 func (r *Router) handlePlatformOrganization(w http.ResponseWriter, req *http.Request) {
 	id := chi.URLParam(req, "orgID")
 	if org := r.orgByID(id); org != nil {
-		writeJSON(w, http.StatusOK, platformOrgView(org))
+		writeJSON(w, http.StatusOK, r.platformOrgView(org))
 		return
 	}
 	http.Error(w, "organization not found", http.StatusNotFound)
 }
 
 // platformOrgView snapshots one organization for the platform API.
-func platformOrgView(org *routerOrg) PlatformOrg {
+func (r *Router) platformOrgView(org *routerOrg) PlatformOrg {
 	server := org.site.Server
 	view := PlatformOrg{
 		ID:      org.site.ID,
@@ -110,6 +129,15 @@ func platformOrgView(org *routerOrg) PlatformOrg {
 		}
 	}
 	view.Stats.PendingDevices = len(server.identity.ListPendingDeviceAuthorizations(time.Now().UTC()))
+	if registry := r.cfg.Plans; registry != nil {
+		assigned := registry.Plan(context.Background(), org.site.ID)
+		view.Stats.Plan = assigned.ID
+		view.Stats.PlanName = assigned.Name
+		view.Stats.DeviceLimit = assigned.MaxDevices
+		if prefix, ok := registry.NetworkPrefix(context.Background(), org.site.ID); ok {
+			view.Stats.NetworkPrefix = prefix.String()
+		}
+	}
 	return view
 }
 
