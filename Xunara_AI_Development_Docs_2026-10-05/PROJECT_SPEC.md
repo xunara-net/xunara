@@ -1268,7 +1268,8 @@ argv 与输出**永不**进审计/webhook；它们只在会话记录（参与者
 
 ### 29.4 管理面（只读）
 
-- Console 之后的里程碑再加页面；v1 只有 CLI 与 agent API。
+- 管理面：HTTP `GET /api/v2/reach/sessions`（§31）与 Console `/console/reach`；
+  v1 只有只读视图，取消/重跑不在其中。
 - session 记录保留：终态后 janitor 清理（1 小时）。
 
 ### 29.5 命令面
@@ -1326,3 +1327,52 @@ GET /api/v2/organization        # read scope；与 /api/v2/meta 同一认证与�
   `NOT_FOUND`）。
 - 不做（v1）：组织级配额/计量、跨组织目录（那是 `/api/platform/v1` 的
   ListOrganizations，只接受平台令牌）。
+
+## 31. Xunara Reach 管理面（只读，v1）
+
+目标：管理员能回答"谁在什么时候对哪台节点跑了什么、结果如何"（合规与排障）。
+只读：没有任何写入口（取消/重跑都不在 v1）。延续 §29 的边界——argv 与输出
+**对管理面可见**（§29.3），但永不进审计/webhook。
+
+### 31.1 HTTP（`/api/v2`，read scope）
+
+```text
+GET /api/v2/reach/sessions?state=&node=&limit=&cursor=   # 最新在前，游标分页
+GET /api/v2/reach/sessions/{id}                          # 详情（含 argv 与输出字节数）
+GET /api/v2/reach/sessions/{id}/chunks?out=&err=         # 输出块（每流每请求 ≤64 块）
+```
+
+- 列表条目与 agent 端会话视图同构（id/state/sender/target/argv/timeoutSec/
+  exitCode/error/createdAt/updatedAt/expiresAt），另加 `outputBytes`
+  （`{\"stdout\":n,\"stderr\":n}`，只有计数，没有内容）。
+- 过滤 fail-closed：`state=` 未知值 400（不是"忽略"）；`node=` 接受节点 id 或
+  stable ID，未知节点返回空集（与 §22.3 的 v2 列表一致）。列表按
+  `(createdAt, id)` 最新在前，游标不透明、带 kind 校验。
+- `chunks` 与 agent 端同一形状（`out`/`err`/`nextOut`/`nextErr`）：管理面不需要
+  无限拉取，2 MiB 的输出用多次请求读；每流每请求至多 64 块。
+- Reach 未启用（`reach_enabled=false`）时三个端点一律 404（与 agent 端点一致，
+  不为未启用功能保留探测面）。
+- 响应 `Cache-Control: no-store`（内容可能含敏感 argv/输出）。永不返回：机器/
+  节点密钥、agent token、其它 secret。
+- 会话不存在 → 404；坏 id 形状 → 404（与其它 v2 详情端点一致，不区分"格式错"
+  与"不存在"）。
+
+### 31.2 gRPC
+
+`PlatformService.ListReachSessions` / `GetReachSession`：语义、认证、游标与错误
+映射与 HTTP 一致（未知会话/未启用 `NOT_FOUND`）。输出块只在 HTTP 暴露：2 MiB
+的调试文本不值得进自动化的类型化 API。
+
+### 31.3 Console
+
+`/console/reach` 列表（state 过滤、最新在前）与 `/console/reach/{id}` 详情：
+显示 argv、状态、exit code、error 与输出（HTML 转义、单条截断到 64 KiB 并显式
+标注截断）。Reach 未启用时页面说明功能未开启；页面只读，没有任何写按钮。
+
+### 31.4 保留与隐私
+
+- 终态会话连同输出由 janitor 在 1 小时后删除（§29.4 不变）：管理面看到的是
+  同一份记录，不产生第二份副本。
+- argv/输出可能含敏感参数，所以端点受 read scope 与角色规则约束（与其它 v2
+  端点相同），且不写入审计、webhook、日志。
+- 不做（v1）：管理面取消/重跑、输出导出下载、按 argv 全文搜索、长期归档。

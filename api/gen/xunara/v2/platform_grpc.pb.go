@@ -52,6 +52,8 @@ const (
 	PlatformService_GetMachineDeviceAttrs_FullMethodName   = "/xunara.v2.PlatformService/GetMachineDeviceAttrs"
 	PlatformService_ListMachines_FullMethodName            = "/xunara.v2.PlatformService/ListMachines"
 	PlatformService_ListServices_FullMethodName            = "/xunara.v2.PlatformService/ListServices"
+	PlatformService_ListReachSessions_FullMethodName       = "/xunara.v2.PlatformService/ListReachSessions"
+	PlatformService_GetReachSession_FullMethodName         = "/xunara.v2.PlatformService/GetReachSession"
 	PlatformService_ListAudit_FullMethodName               = "/xunara.v2.PlatformService/ListAudit"
 	PlatformService_ListWebhooks_FullMethodName            = "/xunara.v2.PlatformService/ListWebhooks"
 	PlatformService_RevokeAgentToken_FullMethodName        = "/xunara.v2.PlatformService/RevokeAgentToken"
@@ -93,6 +95,16 @@ type PlatformServiceClient interface {
 	// (Xunara Atlas), ordered by name and resumable with page_token. Publishing
 	// happens over the native client protocol; this surface is read-only.
 	ListServices(ctx context.Context, in *ListServicesRequest, opts ...grpc.CallOption) (*ListServicesResponse, error)
+	// ListReachSessions returns the remote command sessions of this
+	// organization (Xunara Reach), newest first and resumable with page_token.
+	// The surface is read-only: sessions are created and driven by the two
+	// agents. argv is included (the management plane may see it); output content
+	// stays on the HTTP chunks endpoint.
+	ListReachSessions(ctx context.Context, in *ListReachSessionsRequest, opts ...grpc.CallOption) (*ListReachSessionsResponse, error)
+	// GetReachSession returns one session by ID. An unknown session is
+	// NOT_FOUND, and it is a 404/NOT_FOUND on every management endpoint when
+	// Reach is not enabled.
+	GetReachSession(ctx context.Context, in *GetReachSessionRequest, opts ...grpc.CallOption) (*ReachSession, error)
 	// ListAudit returns audit events ordered by id, resumable with page_token.
 	ListAudit(ctx context.Context, in *ListAuditRequest, opts ...grpc.CallOption) (*ListAuditResponse, error)
 	// ListWebhooks returns the configured and managed webhook receivers. The
@@ -181,6 +193,26 @@ func (c *platformServiceClient) ListServices(ctx context.Context, in *ListServic
 	return out, nil
 }
 
+func (c *platformServiceClient) ListReachSessions(ctx context.Context, in *ListReachSessionsRequest, opts ...grpc.CallOption) (*ListReachSessionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListReachSessionsResponse)
+	err := c.cc.Invoke(ctx, PlatformService_ListReachSessions_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) GetReachSession(ctx context.Context, in *GetReachSessionRequest, opts ...grpc.CallOption) (*ReachSession, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReachSession)
+	err := c.cc.Invoke(ctx, PlatformService_GetReachSession_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *platformServiceClient) ListAudit(ctx context.Context, in *ListAuditRequest, opts ...grpc.CallOption) (*ListAuditResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListAuditResponse)
@@ -247,6 +279,16 @@ type PlatformServiceServer interface {
 	// (Xunara Atlas), ordered by name and resumable with page_token. Publishing
 	// happens over the native client protocol; this surface is read-only.
 	ListServices(context.Context, *ListServicesRequest) (*ListServicesResponse, error)
+	// ListReachSessions returns the remote command sessions of this
+	// organization (Xunara Reach), newest first and resumable with page_token.
+	// The surface is read-only: sessions are created and driven by the two
+	// agents. argv is included (the management plane may see it); output content
+	// stays on the HTTP chunks endpoint.
+	ListReachSessions(context.Context, *ListReachSessionsRequest) (*ListReachSessionsResponse, error)
+	// GetReachSession returns one session by ID. An unknown session is
+	// NOT_FOUND, and it is a 404/NOT_FOUND on every management endpoint when
+	// Reach is not enabled.
+	GetReachSession(context.Context, *GetReachSessionRequest) (*ReachSession, error)
 	// ListAudit returns audit events ordered by id, resumable with page_token.
 	ListAudit(context.Context, *ListAuditRequest) (*ListAuditResponse, error)
 	// ListWebhooks returns the configured and managed webhook receivers. The
@@ -285,6 +327,12 @@ func (UnimplementedPlatformServiceServer) ListMachines(context.Context, *ListMac
 }
 func (UnimplementedPlatformServiceServer) ListServices(context.Context, *ListServicesRequest) (*ListServicesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListServices not implemented")
+}
+func (UnimplementedPlatformServiceServer) ListReachSessions(context.Context, *ListReachSessionsRequest) (*ListReachSessionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListReachSessions not implemented")
+}
+func (UnimplementedPlatformServiceServer) GetReachSession(context.Context, *GetReachSessionRequest) (*ReachSession, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetReachSession not implemented")
 }
 func (UnimplementedPlatformServiceServer) ListAudit(context.Context, *ListAuditRequest) (*ListAuditResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListAudit not implemented")
@@ -442,6 +490,42 @@ func _PlatformService_ListServices_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlatformService_ListReachSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListReachSessionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).ListReachSessions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_ListReachSessions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).ListReachSessions(ctx, req.(*ListReachSessionsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_GetReachSession_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetReachSessionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).GetReachSession(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_GetReachSession_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).GetReachSession(ctx, req.(*GetReachSessionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PlatformService_ListAudit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListAuditRequest)
 	if err := dec(in); err != nil {
@@ -530,6 +614,14 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListServices",
 			Handler:    _PlatformService_ListServices_Handler,
+		},
+		{
+			MethodName: "ListReachSessions",
+			Handler:    _PlatformService_ListReachSessions_Handler,
+		},
+		{
+			MethodName: "GetReachSession",
+			Handler:    _PlatformService_GetReachSession_Handler,
 		},
 		{
 			MethodName: "ListAudit",

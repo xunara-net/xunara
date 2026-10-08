@@ -78,6 +78,8 @@ func (s *Server) consoleRouter() http.Handler {
 	r.Get("/auth-keys", s.handleConsoleAuthKeys)
 	r.Get("/agents", s.handleConsoleAgents)
 	r.Get("/services", s.handleConsoleServices)
+	r.Get("/reach", s.handleConsoleReach)
+	r.Get("/reach/{id}", s.handleConsoleReachSession)
 	r.Get("/webhooks", s.handleConsoleWebhooks)
 	r.Get("/policy", s.handleConsolePolicy)
 	r.Get("/audit", s.handleConsoleAudit)
@@ -703,6 +705,159 @@ func (s *Server) handleConsoleServices(w http.ResponseWriter, r *http.Request) {
 	}
 	data["Services"] = services
 	s.renderConsole(w, consoleServicesTemplate, data)
+}
+
+// consoleReachOutputLimit is how much of each stream the console detail page
+// renders. A session may hold up to 2 MiB (spec section 29); the console is a
+// supervision view, so it truncates and says so instead of shipping megabytes
+// of debugging text to a browser.
+const consoleReachOutputLimit = 64 << 10
+
+// consoleReachStates is the filter menu on the Reach list; it is built from
+// the state constants so the page cannot offer a state the store rejects.
+var consoleReachStates = []string{
+	string(state.ReachOffered), string(state.ReachAccepted), string(state.ReachRunning),
+	string(state.ReachSucceeded), string(state.ReachFailed), string(state.ReachDenied),
+	string(state.ReachCanceled), string(state.ReachExpired),
+}
+
+// consoleReachListLimit caps the list page. The console is a supervision view,
+// not an archival read; the API pages through everything (spec section 31.4).
+const consoleReachListLimit = 200
+
+// handleConsoleReach implements GET /console/reach: the read-only Reach
+// management list (spec section 31.3), newest first, optionally filtered by
+// state. Output text stays on the detail page.
+func (s *Server) handleConsoleReach(w http.ResponseWriter, r *http.Request) {
+	_, data, ok := s.consoleSession(w, r, "reach")
+	if !ok {
+		return
+	}
+	data["Enabled"] = s.cfg.ReachEnabled
+	if !s.cfg.ReachEnabled {
+		s.renderConsole(w, consoleReachTemplate, data)
+		return
+	}
+	data["States"] = consoleReachStates
+
+	// The filter is fail-closed for the same reason the API's is: a filter
+	// that silently widens its result is a security bug.
+	var filter state.ReachState
+	if raw := r.URL.Query().Get("state"); raw != "" {
+		filter = state.ReachState(raw)
+		if !filter.Valid() {
+			s.renderError(w, http.StatusBadRequest, "Unknown state",
+				"That is not a Reach session state.")
+			return
+		}
+	}
+	data["StateFilter"] = string(filter)
+
+	sessions := make([]reachAdminSession, 0, 16)
+	for _, session := range s.store.ListAllReachSessions() {
+		if filter != "" && session.State != filter {
+			continue
+		}
+		if len(sessions) == consoleReachListLimit {
+			data["More"] = true
+			break
+		}
+		view, ok := s.reachAdminView(session)
+		if !ok {
+			// A participant's node row is gone; the session cascade removes
+			// it too, so this is only a race with the deletion.
+			continue
+		}
+		sessions = append(sessions, view)
+	}
+	data["Sessions"] = sessions
+	s.renderConsole(w, consoleReachTemplate, data)
+}
+
+// handleConsoleReachSession implements GET /console/reach/{id}: the session,
+// argv included (the approver saw it; the administrator may too), with a
+// bounded read of the output. Still read-only: no cancel, no re-run.
+func (s *Server) handleConsoleReachSession(w http.ResponseWriter, r *http.Request) {
+	_, data, ok := s.consoleSession(w, r, "reach")
+	if !ok {
+		return
+	}
+	data["Enabled"] = s.cfg.ReachEnabled
+
+	id := chi.URLParam(r, "id")
+	session, found := s.store.GetReachSession(id)
+	if !s.cfg.ReachEnabled {
+		// The page explains the disabled feature rather than 404ing, like
+		// the list page; only the API hides behind 404.
+		s.renderConsole(w, consoleReachSessionTemplate, data)
+		return
+	}
+	if !found {
+		s.renderError(w, http.StatusNotFound, "Unknown session",
+			"No Reach session has that ID.")
+		return
+	}
+	view, ok := s.reachAdminView(session)
+	if !ok {
+		s.renderError(w, http.StatusNotFound, "Unknown session",
+			"No Reach session has that ID.")
+		return
+	}
+	stdout, stderr, truncatedOut, truncatedErr := s.consoleReachOutput(id)
+
+	data["Session"] = view
+	data["Stdout"] = string(stdout)
+	data["Stderr"] = string(stderr)
+	data["TruncatedOut"] = truncatedOut
+	data["TruncatedErr"] = truncatedErr
+	data["OutputLimit"] = consoleReachOutputLimit
+	s.renderConsole(w, consoleReachSessionTemplate, data)
+}
+
+// consoleReachOutput reads a session's output through the same bounded pages
+// the API serves, stopping at consoleReachOutputLimit bytes per stream. It
+// reports per-stream whether further output was dropped.
+func (s *Server) consoleReachOutput(id string) (stdout, stderr []byte, truncatedOut, truncatedErr bool) {
+	afterOut, afterErr := int64(-1), int64(-1)
+	for {
+		page, err := s.reachChunksPage(id, afterOut, afterErr)
+		if err != nil {
+			// The page still renders what was read; the API is the complete
+			// read path, so a partial failure is not worth an error page.
+			s.log.Warn("reading reach output for the console", "session", id, "err", err)
+			break
+		}
+		for _, chunk := range page.Out {
+			stdout, truncatedOut = appendConsoleOutput(stdout, chunk.Data, truncatedOut)
+		}
+		for _, chunk := range page.Err {
+			stderr, truncatedErr = appendConsoleOutput(stderr, chunk.Data, truncatedErr)
+		}
+		if len(page.Out) == 0 && len(page.Err) == 0 {
+			break
+		}
+		if page.NextOut == afterOut && page.NextErr == afterErr {
+			// Defensive: a page must advance at least one cursor.
+			break
+		}
+		afterOut, afterErr = page.NextOut, page.NextErr
+		if truncatedOut && truncatedErr {
+			break
+		}
+	}
+	return stdout, stderr, truncatedOut, truncatedErr
+}
+
+// appendConsoleOutput appends one chunk to dst, capping the total at
+// consoleReachOutputLimit and flagging the first byte that did not fit.
+func appendConsoleOutput(dst, chunk []byte, truncated bool) ([]byte, bool) {
+	if remaining := consoleReachOutputLimit - len(dst); remaining > 0 {
+		if len(chunk) > remaining {
+			return append(dst, chunk[:remaining]...), true
+		}
+		return append(dst, chunk...), truncated
+	}
+	return dst, true
 }
 
 // handleConsoleAgents implements GET /console/agents.

@@ -459,6 +459,131 @@ func (g *grpcPlatformServer) ListServices(ctx context.Context, req *xunarav2.Lis
 	return &xunarav2.ListServicesResponse{Services: out, NextPageToken: next}, nil
 }
 
+// ListReachSessions implements PlatformService.ListReachSessions: the same
+// read-only listing as GET /api/v2/reach/sessions, with the same filters and
+// cursor. Reach must be enabled; otherwise the call is NOT_FOUND, matching the
+// HTTP 404.
+func (g *grpcPlatformServer) ListReachSessions(ctx context.Context, req *xunarav2.ListReachSessionsRequest) (*xunarav2.ListReachSessionsResponse, error) {
+	s, _, err := g.authorize(ctx, identity.ScopeRead)
+	if err != nil {
+		return nil, err
+	}
+	if !s.cfg.ReachEnabled {
+		return nil, status.Error(codes.NotFound, "reach is not enabled")
+	}
+
+	limit := grpcPageSize(req.GetPageSize(), 100)
+	afterCreated, afterID, ok := grpcCursorReach(req.GetPageToken())
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "invalid page token")
+	}
+	var stateFilter state.ReachState
+	if raw := strings.TrimSpace(req.GetState()); raw != "" {
+		stateFilter = state.ReachState(raw)
+		if !stateFilter.Valid() {
+			return nil, status.Error(codes.InvalidArgument, "invalid state filter")
+		}
+	}
+	var nodeFilter state.NodeID
+	if raw := strings.TrimSpace(req.GetNode()); raw != "" {
+		if id, err := strconv.ParseUint(raw, 10, 64); err == nil {
+			nodeFilter = state.NodeID(id)
+		} else if node, ok := s.store.GetNodeByStableID(raw); ok {
+			nodeFilter = node.ID
+		} else {
+			// An unknown node matches nothing rather than being ignored.
+			nodeFilter = ^state.NodeID(0)
+		}
+	}
+
+	out := make([]*xunarav2.ReachSession, 0, limit)
+	var last state.ReachSession
+	next := ""
+	for _, session := range s.store.ListAllReachSessions() {
+		if !reachAfterCursor(session, afterCreated, afterID) {
+			continue
+		}
+		if stateFilter != "" && session.State != stateFilter {
+			continue
+		}
+		if nodeFilter != 0 && session.Sender != nodeFilter && session.Target != nodeFilter {
+			continue
+		}
+		if len(out) == limit {
+			next = reachEncodePageCursor(last)
+			break
+		}
+		view, ok := s.reachAdminView(session)
+		if !ok {
+			continue
+		}
+		out = append(out, grpcReachSession(view))
+		last = session
+	}
+
+	return &xunarav2.ListReachSessionsResponse{Sessions: out, NextPageToken: next}, nil
+}
+
+// GetReachSession implements PlatformService.GetReachSession.
+func (g *grpcPlatformServer) GetReachSession(ctx context.Context, req *xunarav2.GetReachSessionRequest) (*xunarav2.ReachSession, error) {
+	s, _, err := g.authorize(ctx, identity.ScopeRead)
+	if err != nil {
+		return nil, err
+	}
+	if !s.cfg.ReachEnabled {
+		return nil, status.Error(codes.NotFound, "reach is not enabled")
+	}
+
+	session, ok := s.store.GetReachSession(req.GetId())
+	if !ok {
+		return nil, status.Error(codes.NotFound, "no such session")
+	}
+	view, ok := s.reachAdminView(session)
+	if !ok {
+		return nil, status.Error(codes.NotFound, "no such session")
+	}
+	return grpcReachSession(view), nil
+}
+
+// grpcReachSession converts one management view.
+func grpcReachSession(view reachAdminSession) *xunarav2.ReachSession {
+	out := &xunarav2.ReachSession{
+		Id:             view.ID,
+		State:          view.State,
+		Sender:         &xunarav2.ReachPeer{NodeId: view.Sender.NodeID, StableId: view.Sender.StableID, Hostname: view.Sender.Hostname},
+		Target:         &xunarav2.ReachPeer{NodeId: view.Target.NodeID, StableId: view.Target.StableID, Hostname: view.Target.Hostname},
+		Argv:           slices.Clone(view.Argv),
+		TimeoutSeconds: uint32(view.TimeoutSec),
+		Error:          view.Error,
+		Created:        timestamppb.New(view.CreatedAt),
+		Updated:        timestamppb.New(view.UpdatedAt),
+		Expires:        timestamppb.New(view.ExpiresAt),
+		OutputBytes:    &xunarav2.ReachOutputBytes{Stdout: view.OutputBytes.Stdout, Stderr: view.OutputBytes.Stderr},
+	}
+	if view.ExitCode != nil {
+		code := int32(*view.ExitCode)
+		out.ExitCode = &code
+	}
+	return out
+}
+
+// grpcCursorReach decodes a reach list page token; an empty token starts at
+// the top of the list.
+func grpcCursorReach(raw string) (time.Time, string, bool) {
+	kind, parts, ok := apiV2DecodeCursor(raw)
+	if !ok || (kind != "" && (kind != "reach" || len(parts) != 2)) {
+		return time.Time{}, "", false
+	}
+	if kind == "" {
+		return time.Time{}, "", true
+	}
+	nanos, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return time.Time{}, "", false
+	}
+	return time.Unix(0, nanos).UTC(), parts[1], true
+}
+
 // ListAudit implements PlatformService.ListAudit. Filters and cursor semantics
 // match GET /api/v2/audit, including the scan bound that keeps a filtered page
 // from walking the whole log.

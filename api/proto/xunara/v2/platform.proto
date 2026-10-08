@@ -72,6 +72,18 @@ service PlatformService {
   // happens over the native client protocol; this surface is read-only.
   rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
 
+  // ListReachSessions returns the remote command sessions of this
+  // organization (Xunara Reach), newest first and resumable with page_token.
+  // The surface is read-only: sessions are created and driven by the two
+  // agents. argv is included (the management plane may see it); output content
+  // stays on the HTTP chunks endpoint.
+  rpc ListReachSessions(ListReachSessionsRequest) returns (ListReachSessionsResponse);
+
+  // GetReachSession returns one session by ID. An unknown session is
+  // NOT_FOUND, and it is a 404/NOT_FOUND on every management endpoint when
+  // Reach is not enabled.
+  rpc GetReachSession(GetReachSessionRequest) returns (ReachSession);
+
   // ListAudit returns audit events ordered by id, resumable with page_token.
   rpc ListAudit(ListAuditRequest) returns (ListAuditResponse);
 
@@ -208,6 +220,59 @@ message MachineDeviceAttrs {
   uint64 machine_id = 1;
   string stable_id = 2;
   map<string, google.protobuf.Value> attrs = 3;
+}
+
+// ReachSession mirrors GET /api/v2/reach/sessions/{id} (and the agent's
+// session view). argv is the command the target approved; output content is
+// not part of this message.
+message ReachSession {
+  string id = 1;
+  string state = 2;
+  ReachPeer sender = 3;
+  ReachPeer target = 4;
+  repeated string argv = 5;
+  uint32 timeout_seconds = 6;
+  // exit_code is absent until the command finished.
+  optional int32 exit_code = 7;
+  string error = 8;
+  google.protobuf.Timestamp created = 9;
+  google.protobuf.Timestamp updated = 10;
+  google.protobuf.Timestamp expires = 11;
+  ReachOutputBytes output_bytes = 12;
+}
+
+// ReachPeer identifies one participant of a session.
+message ReachPeer {
+  uint64 node_id = 1;
+  string stable_id = 2;
+  string hostname = 3;
+}
+
+// ReachOutputBytes counts a session's output per stream without carrying it.
+message ReachOutputBytes {
+  int64 stdout = 1;
+  int64 stderr = 2;
+}
+
+message ListReachSessionsRequest {
+  // page_size defaults to 100 and is bounded by Meta.max_page_size.
+  uint32 page_size = 1;
+  // page_token is the next_page_token of the previous response.
+  string page_token = 2;
+  // state filters on a session state (offered, accepted, running, succeeded,
+  // failed, denied, canceled, expired); an unknown value is INVALID_ARGUMENT.
+  string state = 3;
+  // node filters on a node id or stable ID; an unknown node matches nothing.
+  string node = 4;
+}
+
+message ListReachSessionsResponse {
+  repeated ReachSession sessions = 1;
+  string next_page_token = 2;
+}
+
+message GetReachSessionRequest {
+  string id = 1;
 }
 
 message ListMachinesRequest {

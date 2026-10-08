@@ -85,6 +85,37 @@ func (s *MemoryStore) ListReachSessions(nodeID NodeID) []ReachSession {
 	return out
 }
 
+// ListAllReachSessions implements [ReachStore]. Newest first.
+func (s *MemoryStore) ListAllReachSessions() []ReachSession {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]ReachSession, 0, len(s.reach))
+	for _, session := range s.reach {
+		out = append(out, copyReachSession(session))
+	}
+	sortReachSessions(out)
+	return out
+}
+
+// ReachOutputBytes implements [ReachStore].
+func (s *MemoryStore) ReachOutputBytes(id string) (int64, int64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var stdout, stderr int64
+	for stream, chunks := range s.reachChunks[id] {
+		for _, chunk := range chunks {
+			if stream == ReachStreamStdout {
+				stdout += int64(len(chunk.Data))
+			} else {
+				stderr += int64(len(chunk.Data))
+			}
+		}
+	}
+	return stdout, stderr, nil
+}
+
 // SetReachSessionState implements [ReachStore].
 func (s *MemoryStore) SetReachSessionState(id string, from, to ReachState, now time.Time) (bool, error) {
 	if !from.Valid() || !to.Valid() {

@@ -3,6 +3,7 @@ package control
 import (
 	"html/template"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -58,6 +59,7 @@ button { font: inherit; padding: .35rem .7rem; border-radius: .35rem; border: 0;
 button.danger { background: #fff; color: #b42318; border: 1px solid #d0d5dd; }
 button + button { margin-left: .35rem; }
 code { background: #f1f2f4; padding: .1rem .3rem; border-radius: .25rem; }
+pre { background: #fff; border-radius: .35rem; padding: .75rem; overflow-x: auto; font-size: .85rem; }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: .4rem 1rem; }
 dt { color: #5b616e; }
 .field { display: flex; gap: .75rem; align-items: center; margin: .5rem 0; flex-wrap: wrap; }
@@ -77,6 +79,7 @@ footer { text-align: center; color: #5b616e; font-size: .8rem; }
 <a href="/console/dns"{{if eq .Nav "dns"}} class="active"{{end}}>DNS</a>
 <a href="/console/auth-keys"{{if eq .Nav "auth-keys"}} class="active"{{end}}>Auth keys</a>
 <a href="/console/agents"{{if eq .Nav "agents"}} class="active"{{end}}>Agents</a>
+<a href="/console/reach"{{if eq .Nav "reach"}} class="active"{{end}}>Reach</a>
 <a href="/console/webhooks"{{if eq .Nav "webhooks"}} class="active"{{end}}>Webhooks</a>
 <a href="/console/policy"{{if eq .Nav "policy"}} class="active"{{end}}>Policy</a>
 <a href="/console/audit"{{if eq .Nav "audit"}} class="active"{{end}}>Audit</a>
@@ -106,6 +109,7 @@ var consoleTitles = map[string]string{
 	"dns":       "DNS",
 	"auth-keys": "Auth keys",
 	"agents":    "Agents",
+	"reach":     "Reach",
 	"webhooks":  "Webhooks",
 	"policy":    "Policy",
 	"audit":     "Audit",
@@ -113,8 +117,23 @@ var consoleTitles = map[string]string{
 
 // consolePage assembles a console template from the shared shell and a body.
 func consolePage(name, body string) *template.Template {
-	tmpl := template.New(name).Funcs(template.FuncMap{"fmtTime": consoleTime})
+	tmpl := template.New(name).Funcs(template.FuncMap{"fmtTime": consoleTime, "argvLine": consoleArgvLine})
 	return template.Must(tmpl.Parse(consoleHead + body + consoleFoot))
+}
+
+// consoleArgvPreviewLimit bounds the one-line argv preview on the Reach list.
+const consoleArgvPreviewLimit = 120
+
+// consoleArgvLine renders a one-line command preview: the same argv the agent
+// executed, joined with spaces and cut on a rune boundary. The session page
+// shows every argument on its own.
+func consoleArgvLine(argv []string) string {
+	line := strings.Join(argv, " ")
+	runes := []rune(line)
+	if len(runes) > consoleArgvPreviewLimit {
+		return string(runes[:consoleArgvPreviewLimit]) + "…"
+	}
+	return line
 }
 
 // consoleTime formats a timestamp; the zero time reads as "never".
@@ -541,6 +560,85 @@ sealed and is never shown again after creation.</p>
 <button type="submit">Create webhook</button>
 </form>
 {{end}}
+`)
+
+	consoleReachTemplate = consolePage("reach", `
+<h2>Reach</h2>
+<p>Xunara Reach sessions between nodes: who offered which command to which
+node, how it ended, and how much output it produced. A command runs on the
+target only after that node approves the offer, and only the two participants
+can drive a session; this page is read-only. The audit log records the
+decisions, never the command line or the output.</p>
+{{if not .Enabled}}
+<p>Reach is not enabled on this deployment, so no sessions can exist. An
+operator enables it per organization (<code>reach_enabled</code>) and runs
+<code>xunarad -reach</code>.</p>
+{{else}}
+<form method="get" action="/console/reach">
+<div class="field"><label for="reach-state">State</label>
+<select id="reach-state" name="state">
+<option value="">all</option>
+{{range .States}}<option value="{{.}}"{{if eq . $.StateFilter}} selected{{end}}>{{.}}</option>{{end}}
+</select>
+<button type="submit">Filter</button></div>
+</form>
+{{if .Sessions}}
+<table>
+<thead><tr><th>Created</th><th>State</th><th>Sender</th><th>Target</th><th>Command</th><th>stdout / stderr</th><th>Exit</th></tr></thead>
+<tbody>
+{{range .Sessions}}
+<tr>
+<td><a href="/console/reach/{{.ID}}">{{fmtTime .CreatedAt}}</a></td>
+<td>{{.State}}</td>
+<td>{{.Sender.Hostname}}<br><code>{{.Sender.StableID}}</code></td>
+<td>{{.Target.Hostname}}<br><code>{{.Target.StableID}}</code></td>
+<td><code>{{argvLine .Argv}}</code></td>
+<td>{{.OutputBytes.Stdout}} B / {{.OutputBytes.Stderr}} B</td>
+<td>{{if .ExitCode}}{{.ExitCode}}{{else}}—{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{if .More}}<p>Only the newest {{len .Sessions}} sessions are shown; filter by
+state or use the API to page through the rest.</p>{{end}}
+{{else}}
+<p>No Reach sessions match.</p>
+{{end}}
+{{end}}
+`)
+
+	consoleReachSessionTemplate = consolePage("reach", `
+<h2>Reach session</h2>
+{{if not .Enabled}}
+<p>Reach is not enabled on this deployment, so there are no sessions to show.</p>
+{{else}}{{with .Session}}
+<dl>
+<dt>ID</dt><dd><code>{{.ID}}</code></dd>
+<dt>State</dt><dd>{{.State}}</dd>
+<dt>Sender</dt><dd>{{.Sender.Hostname}} <code>{{.Sender.StableID}}</code></dd>
+<dt>Target</dt><dd>{{.Target.Hostname}} <code>{{.Target.StableID}}</code></dd>
+<dt>Command</dt><dd>{{range .Argv}}<code>{{.}}</code> {{end}}</dd>
+<dt>Timeout</dt><dd>{{.TimeoutSec}}s</dd>
+<dt>Exit code</dt><dd>{{if .ExitCode}}{{.ExitCode}}{{else}}—{{end}}</dd>
+{{if .Error}}<dt>Error</dt><dd class="warn">{{.Error}}</dd>{{end}}
+<dt>Created</dt><dd>{{fmtTime .CreatedAt}}</dd>
+<dt>Updated</dt><dd>{{fmtTime .UpdatedAt}}</dd>
+<dt>Expires</dt><dd>{{fmtTime .ExpiresAt}}</dd>
+<dt>Output</dt><dd>{{.OutputBytes.Stdout}} bytes on stdout, {{.OutputBytes.Stderr}} bytes on stderr</dd>
+</dl>
+<p>The output is retained with the session (one hour after the last update)
+and may contain sensitive data; it never enters the audit log.</p>
+<h3>stdout</h3>
+{{if $.TruncatedOut}}<p class="warn">Showing the first {{$.OutputLimit}} bytes;
+more output was written.</p>{{end}}
+{{if $.Stdout}}<pre>{{$.Stdout}}</pre>{{else}}<p>No stdout output.</p>{{end}}
+<h3>stderr</h3>
+{{if $.TruncatedErr}}<p class="warn">Showing the first {{$.OutputLimit}} bytes;
+more output was written.</p>{{end}}
+{{if $.Stderr}}<pre>{{$.Stderr}}</pre>{{else}}<p>No stderr output.</p>{{end}}
+{{else}}
+<p>No Reach session has that ID.</p>
+{{end}}{{end}}
 `)
 
 	consolePolicyTemplate = consolePage("policy", `

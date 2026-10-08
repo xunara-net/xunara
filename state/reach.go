@@ -181,6 +181,14 @@ type ReachStore interface {
 	// ListReachSessions returns every session the node participates in
 	// (sender or target), newest first.
 	ListReachSessions(nodeID NodeID) []ReachSession
+	// ListAllReachSessions returns every session, newest first. It backs the
+	// read-only management surface (spec section 31), which sees both sides
+	// of every session of this organization.
+	ListAllReachSessions() []ReachSession
+	// ReachOutputBytes returns how many bytes of output one session holds per
+	// stream. An unknown session reports zeros; callers check existence
+	// through GetReachSession.
+	ReachOutputBytes(id string) (stdout, stderr int64, err error)
 	// SetReachSessionState performs a compare-and-set transition. It returns
 	// false when the session is not in the from state.
 	SetReachSessionState(id string, from, to ReachState, now time.Time) (bool, error)

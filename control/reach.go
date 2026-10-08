@@ -363,33 +363,8 @@ func (s *Server) handleReachChunksRead(w http.ResponseWriter, req *http.Request)
 		return
 	}
 
-	resp := reachChunksResponse{
-		Out:     []reachChunkView{},
-		Err:     []reachChunkView{},
-		NextOut: afterOut,
-		NextErr: afterErr,
-	}
-	fill := func(stream string, after int64, out *[]reachChunkView, next *int64) error {
-		chunks, err := s.store.ReachChunks(session.ID, stream, after, state.ReachMaxChunksPerRead)
-		if err != nil {
-			return err
-		}
-		for _, chunk := range chunks {
-			*out = append(*out, reachChunkView{
-				Stream:    chunk.Stream,
-				Seq:       chunk.Seq,
-				Data:      chunk.Data,
-				CreatedAt: chunk.CreatedAt,
-			})
-			*next = chunk.Seq
-		}
-		return nil
-	}
-	if err := fill(state.ReachStreamStdout, afterOut, &resp.Out, &resp.NextOut); err != nil {
-		s.reachStateError(w, err)
-		return
-	}
-	if err := fill(state.ReachStreamStderr, afterErr, &resp.Err, &resp.NextErr); err != nil {
+	resp, err := s.reachChunksPage(session.ID, afterOut, afterErr)
+	if err != nil {
 		s.reachStateError(w, err)
 		return
 	}

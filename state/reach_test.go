@@ -280,6 +280,56 @@ func runReachConformance(t *testing.T, newStore storeFactory) {
 		}
 	})
 
+	t.Run("management views cover every session and its output sizes", func(t *testing.T) {
+		s := newStore(t)
+		first := createTestNode(t, s, "first")
+		second := createTestNode(t, s, "second")
+
+		one := reachTestSession(first.ID, second.ID)
+		if err := s.CreateReachSession(&one, ReachQuotas{}); err != nil {
+			t.Fatalf("CreateReachSession: %v", err)
+		}
+		other := reachTestSession(second.ID, first.ID)
+		if err := s.CreateReachSession(&other, ReachQuotas{}); err != nil {
+			t.Fatalf("CreateReachSession: %v", err)
+		}
+		ids := map[string]bool{}
+		for _, session := range s.ListAllReachSessions() {
+			ids[session.ID] = true
+		}
+		if !ids[one.ID] || !ids[other.ID] {
+			t.Fatalf("ListAllReachSessions = %v", ids)
+		}
+
+		if stdout, stderr, err := s.ReachOutputBytes(one.ID); err != nil || stdout != 0 || stderr != 0 {
+			t.Fatalf("output bytes before any chunk = %d/%d (%v)", stdout, stderr, err)
+		}
+		if ok, _ := s.SetReachSessionState(one.ID, ReachOffered, ReachAccepted, time.Now()); !ok {
+			t.Fatal("accept failed")
+		}
+		if ok, _ := s.StartReachSession(one.ID, time.Now().Add(time.Minute), time.Now()); !ok {
+			t.Fatal("start failed")
+		}
+		for _, chunk := range []struct {
+			stream string
+			seq    int64
+			size   int
+		}{
+			{ReachStreamStdout, 0, 10},
+			{ReachStreamStdout, 1, 5},
+			{ReachStreamStderr, 0, 7},
+		} {
+			data := bytes.Repeat([]byte("x"), chunk.size)
+			if err := s.AppendReachChunk(one.ID, chunk.stream, chunk.seq, data, ReachMaxOutputBytes, time.Now()); err != nil {
+				t.Fatalf("AppendReachChunk: %v", err)
+			}
+		}
+		stdout, stderr, err := s.ReachOutputBytes(one.ID)
+		if err != nil || stdout != 15 || stderr != 7 {
+			t.Fatalf("output bytes = %d/%d (%v), want 15/7", stdout, stderr, err)
+		}
+	})
+
 	t.Run("returned sessions are copies", func(t *testing.T) {
 		s := newStore(t)
 		first := createTestNode(t, s, "first")

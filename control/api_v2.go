@@ -57,6 +57,10 @@ func (s *Server) apiV2Router() http.Handler {
 	r.Get("/services", s.handleAPIV2Services)
 	r.Get("/audit", s.handleAPIV2Audit)
 
+	r.Get("/reach/sessions", s.handleAPIV2ReachSessions)
+	r.Get("/reach/sessions/{id}", s.handleAPIV2ReachSession)
+	r.Get("/reach/sessions/{id}/chunks", s.handleAPIV2ReachChunks)
+
 	r.Get("/agent-tokens", s.handleAPIV2AgentTokens)
 	r.Delete("/agent-tokens/{id}", s.handleAPIV2RevokeAgentToken)
 

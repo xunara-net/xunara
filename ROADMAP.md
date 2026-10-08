@@ -1345,7 +1345,7 @@ M16e 的 Consul 导入同一模式：导入器在节点侧运行，控制面拿�
   （真实控制面端到端 run + 退出码映射、拒绝路径、argv/参数解析、退出码映射、
   表格渲染）。
 - 明确不做（v1）：交互式终端、sudo/runas、持久会话、控制面代理数据面、
-  Console 页面（只有 CLI 与 agent API）。
+  写操作式的 Console 页面；只读管理面在 M24 补上（规格 §31）。
 
 ---
 
@@ -1372,6 +1372,39 @@ M16e 的 Consul 导入同一模式：导入器在节点侧运行，控制面拿�
   组织改名后身份跟随、gRPC 语义与权限）。
 - 明确不做（v1）：组织级配额/计量、跨组织目录（`/api/platform/v1` 的
   ListOrganizations 只接受平台令牌）。
+
+---
+
+## M24 — Xunara Reach 管理面（只读，v1，已完成）
+
+目标：管理员能回答"谁在什么时候对哪台节点跑了什么、结果如何"，供合规与
+排障使用。规格见 `Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §31。
+只读：没有任何写入口（取消/重跑都不在 v1）。
+
+- state：`ListAllReachSessions`（全部会话最新在前）与 `ReachOutputBytes`
+  （每流字节数；SQLite 用 `SUM(LENGTH(data))`），内存与 SQLite 语义一致，
+  纳入 conformance 子测试。
+- HTTP `/api/v2/reach/sessions`（read scope）：列表支持 `state=`/`node=`
+  过滤（未知 state 400、未知 node 空集，fail-closed）与 `(createdAt, id)`
+  不透明游标；详情含 argv 与 `outputBytes`（只有计数）；`chunks` 与 agent
+  端同形（`out`/`err` 游标，每流每请求 ≤64 块）；响应一律
+  `Cache-Control: no-store`；Reach 未启用三个端点都是 404；坏 id 与不存在
+  同为 404；永不返回密钥/agent token。
+- gRPC `PlatformService.ListReachSessions`/`GetReachSession`：语义、认证、
+  游标与错误映射与 HTTP 一致（未启用/未知会话 `NOT_FOUND`，坏 state/游标
+  `INVALID_ARGUMENT`）；输出块只在 HTTP 暴露（2 MiB 调试文本不值得进
+  类型化 API）。
+- Console `/console/reach` 与 `/console/reach/{id}`：列表（state 过滤、最新
+  在前、最多 200 条、argv 单行摘要）、详情（完整 argv、exit code、error、
+  双流输出；HTML 转义、每流截断到 64 KiB 并显式标注、同时给出完整字节数）；
+  只读、无写按钮；未启用时页面说明功能未开启（不是 404）。
+- 边界（v1 明确不做）：管理面取消/重跑、输出导出下载、按 argv 全文搜索、
+  长期归档。会话记录与输出就是 agent 用的那一份（janitor 1 小时后删除），
+  管理面不产生第二份副本；argv/输出永不进审计/webhook/日志。
+- 测试：`control/api_v2_reach_test.go`（HTTP 401/403、列表/过滤/游标、详情
+  argv、chunks 游标、404、未启用 404、no-store；gRPC 认证/权限/分页/
+  NotFound/未启用）、`control/console_test.go`（列表/详情渲染、argv 转义、
+  state 过滤、输出截断与完整字节数、未启用说明页）。
 
 ---
 

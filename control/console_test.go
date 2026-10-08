@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/netip"
@@ -27,7 +28,7 @@ func TestConsoleRequiresSession(t *testing.T) {
 	hs := newTestHTTPServer(t, s)
 	client := noRedirectClient()
 
-	for _, path := range []string{"/console/", "/console/machines", "/console/devices", "/console/audit"} {
+	for _, path := range []string{"/console/", "/console/machines", "/console/devices", "/console/audit", "/console/reach", "/console/reach/deadbeef"} {
 		resp := getRequest(t, client, hs.URL+path, nil)
 		if resp.StatusCode != http.StatusFound {
 			t.Fatalf("GET %s status = %d, want 302", path, resp.StatusCode)
@@ -60,6 +61,7 @@ func TestConsolePagesRender(t *testing.T) {
 		{"/console/dns", "No extra DNS records."},
 		{"/console/auth-keys", "Create key"},
 		{"/console/agents", "No agent credentials."},
+		{"/console/reach", "Reach is not enabled"},
 		{"/console/webhooks", "No webhook receivers are configured."},
 		{"/console/policy", "No policy document is configured"},
 		{"/console/audit", identity.AuditNodeApproved},
@@ -788,5 +790,125 @@ func TestConsoleServicesPageEmpty(t *testing.T) {
 	page := bodyString(t, getRequest(t, client, hs.URL+"/console/services", cookie))
 	if !strings.Contains(page, "No services have been advertised") {
 		t.Errorf("empty services page = %s", page)
+	}
+}
+
+// TestConsoleReachPage covers the read-only Reach management page: the list
+// links to a detail page that shows argv, state and the output, and neither
+// page offers a write control.
+func TestConsoleReachPage(t *testing.T) {
+	_, hs, sender, target, _ := startReach(t)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/reach")
+
+	session := offerReach(t, hs, sender, target, []string{"df", "-h", "<script>alert(1)</script>"})
+	target.doReach(t, hs.Client(), http.MethodPost, reachURL(hs, session.ID, "accept"), nil)
+	target.doReach(t, hs.Client(), http.MethodPost, reachURL(hs, session.ID, "start"), nil)
+	if _, status := target.doReach(t, hs.Client(), http.MethodPost, reachURL(hs, session.ID, "chunks"),
+		map[string]any{"stream": "stdout", "seq": 0, "data": []byte("Filesystem  Size\n")}); status != http.StatusNoContent {
+		t.Fatalf("storing reach output = %d", status)
+	}
+	target.doReach(t, hs.Client(), http.MethodPost, reachURL(hs, session.ID, "finish"), map[string]any{"exitCode": 0})
+
+	// The refusing session proves the state filter narrows the list.
+	denied := offerReach(t, hs, sender, target, []string{"rm", "-rf", "/"})
+	target.doReach(t, hs.Client(), http.MethodPost, reachURL(hs, denied.ID, "deny"), nil)
+
+	list := bodyString(t, getRequest(t, client, hs.URL+"/console/reach", cookie))
+	for _, want := range []string{
+		"Reach", session.ID, denied.ID, "df -h", sender.node.StableID, target.node.StableID,
+		"succeeded", "denied", "&lt;script&gt;alert(1)&lt;/script&gt;",
+	} {
+		if !strings.Contains(list, want) {
+			t.Errorf("reach list lacks %q:\n%s", want, list)
+		}
+	}
+	if strings.Contains(list, "<script>alert(1)</script>") {
+		t.Errorf("the reach list does not escape argv:\n%s", list)
+	}
+	if strings.Contains(list, "Filesystem") {
+		t.Errorf("the reach list renders output text:\n%s", list)
+	}
+	// The only form on the page is the state filter; there is no write path.
+	if strings.Contains(list, `action="/console/reach/`) {
+		t.Errorf("the reach list offers a write control:\n%s", list)
+	}
+
+	filtered := bodyString(t, getRequest(t, client, hs.URL+"/console/reach?state=denied", cookie))
+	if strings.Contains(filtered, session.ID) || !strings.Contains(filtered, denied.ID) {
+		t.Errorf("state filter = %s", filtered)
+	}
+	if resp := getRequest(t, client, hs.URL+"/console/reach?state=bogus", cookie); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("unknown state filter = %d, want 400", resp.StatusCode)
+	}
+
+	detail := bodyString(t, getRequest(t, client, hs.URL+"/console/reach/"+session.ID, cookie))
+	for _, want := range []string{
+		session.ID, "succeeded", "<code>df</code>", "<code>-h</code>",
+		"&lt;script&gt;alert(1)&lt;/script&gt;", "Filesystem  Size", "Exit code",
+		fmt.Sprintf("%d bytes on stdout", len("Filesystem  Size\n")),
+	} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("reach detail lacks %q:\n%s", want, detail)
+		}
+	}
+	if strings.Contains(detail, `action="/console/reach/`) {
+		t.Errorf("the reach detail offers a write control:\n%s", detail)
+	}
+	if resp := getRequest(t, client, hs.URL+"/console/reach/nosuchsession", cookie); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown session = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestConsoleReachOutputTruncation checks that a long session is cut to the
+// page's budget and says so, instead of rendering the whole record.
+func TestConsoleReachOutputTruncation(t *testing.T) {
+	_, hs, sender, target, _ := startReach(t)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/reach")
+
+	session := offerReach(t, hs, sender, target, []string{"yes"})
+	target.doReach(t, hs.Client(), http.MethodPost, reachURL(hs, session.ID, "accept"), nil)
+	target.doReach(t, hs.Client(), http.MethodPost, reachURL(hs, session.ID, "start"), nil)
+	// Three chunks of 24 KiB: more than the 64 KiB the page renders.
+	chunk := bytes.Repeat([]byte("x"), state.ReachMaxChunkBytes)
+	for seq := range 3 {
+		if _, status := target.doReach(t, hs.Client(), http.MethodPost, reachURL(hs, session.ID, "chunks"),
+			map[string]any{"stream": "stdout", "seq": seq, "data": chunk}); status != http.StatusNoContent {
+			t.Fatalf("storing chunk %d = %d", seq, status)
+		}
+	}
+	target.doReach(t, hs.Client(), http.MethodPost, reachURL(hs, session.ID, "finish"), map[string]any{"exitCode": 0})
+
+	detail := bodyString(t, getRequest(t, client, hs.URL+"/console/reach/"+session.ID, cookie))
+	if !strings.Contains(detail, "more output was written") {
+		t.Errorf("truncated detail does not say so:\n%.400s", detail)
+	}
+	if !strings.Contains(detail, fmt.Sprintf("%d bytes on stdout", 3*len(chunk))) {
+		t.Errorf("detail does not report the full output size:\n%.400s", detail)
+	}
+	// The rendered body must stay bounded: the page never carries all 72 KiB.
+	if body := len(detail); body > consoleReachOutputLimit+16<<10 {
+		t.Errorf("truncated page is %d bytes, want far below %d", body, consoleReachOutputLimit)
+	}
+}
+
+// TestConsoleReachPageDisabled checks that a deployment without Reach explains
+// itself on both pages instead of rendering 404s or empty tables.
+func TestConsoleReachPageDisabled(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/reach")
+
+	for _, path := range []string{"/console/reach", "/console/reach/deadbeef"} {
+		resp := getRequest(t, client, hs.URL+path, cookie)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s status = %d, want 200", path, resp.StatusCode)
+		}
+		page := bodyString(t, resp)
+		if !strings.Contains(page, "Reach is not enabled") {
+			t.Errorf("GET %s does not explain the disabled feature:\n%s", path, page)
+		}
 	}
 }

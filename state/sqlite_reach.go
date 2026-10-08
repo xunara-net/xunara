@@ -136,6 +136,62 @@ func (s *SQLiteStore) ListReachSessions(nodeID NodeID) []ReachSession {
 	return out
 }
 
+// ListAllReachSessions implements [ReachStore]. Newest first.
+func (s *SQLiteStore) ListAllReachSessions() []ReachSession {
+	rows, err := s.db.QueryContext(context.Background(), `
+		SELECT `+reachColumns+` FROM reach_sessions
+		ORDER BY created_at DESC, id ASC`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var out []ReachSession
+	for rows.Next() {
+		session, err := scanReachSession(rows)
+		if err != nil {
+			return nil
+		}
+		out = append(out, session)
+	}
+	if rows.Err() != nil {
+		return nil
+	}
+	return out
+}
+
+// ReachOutputBytes implements [ReachStore].
+func (s *SQLiteStore) ReachOutputBytes(id string) (int64, int64, error) {
+	rows, err := s.db.QueryContext(context.Background(), `
+		SELECT stream, COALESCE(SUM(LENGTH(data)), 0) FROM reach_chunks
+		WHERE session_id = ? GROUP BY stream`, id)
+	if err != nil {
+		return 0, 0, fmt.Errorf("state: reading reach output sizes: %w", err)
+	}
+	defer rows.Close()
+
+	var stdout, stderr int64
+	for rows.Next() {
+		var (
+			stream string
+			bytes  int64
+		)
+		if err := rows.Scan(&stream, &bytes); err != nil {
+			return 0, 0, fmt.Errorf("state: reading reach output sizes: %w", err)
+		}
+		switch stream {
+		case ReachStreamStdout:
+			stdout = bytes
+		case ReachStreamStderr:
+			stderr = bytes
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, 0, fmt.Errorf("state: reading reach output sizes: %w", err)
+	}
+	return stdout, stderr, nil
+}
+
 // SetReachSessionState implements [ReachStore].
 func (s *SQLiteStore) SetReachSessionState(id string, from, to ReachState, now time.Time) (bool, error) {
 	if !from.Valid() || !to.Valid() {
