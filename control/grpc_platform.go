@@ -267,6 +267,38 @@ func (g *grpcPlatformServer) GetIDTokenIssuer(ctx context.Context, _ *xunarav2.G
 // GET /api/v2/machines/{id}/device-attrs. Values are the JSON scalars the node
 // reported; the machine must belong to the organization this call authorized
 // against.
+// GetDERPStatus implements PlatformService.GetDERPStatus: the same read-only
+// DERP state as GET /api/v2/derp (spec section 32.1). The request carries no
+// parameters: the organization follows from the authority, and the policy is
+// configuration.
+func (g *grpcPlatformServer) GetDERPStatus(ctx context.Context, _ *xunarav2.GetDERPStatusRequest) (*xunarav2.DERPStatus, error) {
+	s, _, err := g.authorize(ctx, identity.ScopeRead)
+	if err != nil {
+		return nil, err
+	}
+
+	view, _ := s.derpStatus()
+	out := &xunarav2.DERPStatus{
+		PolicyMode:            view.PolicyMode,
+		PolicyRegions:         view.PolicyRegions,
+		MapConfigured:         view.MapConfigured,
+		RegionsServed:         uint32(view.RegionsServed),
+		Regions:               make([]*xunarav2.DERPRegion, 0, len(view.Regions)),
+		NodesWithoutHome:      uint32(view.NodesWithoutHome),
+		NodesWithUnservedHome: uint32(view.NodesWithUnservedHome),
+	}
+	for _, region := range view.Regions {
+		out.Regions = append(out.Regions, &xunarav2.DERPRegion{
+			Id:        region.ID,
+			Code:      region.Code,
+			Name:      region.Name,
+			Hosts:     region.Hosts,
+			NodeCount: uint32(region.NodeCount),
+		})
+	}
+	return out, nil
+}
+
 func (g *grpcPlatformServer) GetMachineDeviceAttrs(ctx context.Context, req *xunarav2.GetMachineDeviceAttrsRequest) (*xunarav2.MachineDeviceAttrs, error) {
 	s, _, err := g.authorize(ctx, identity.ScopeRead)
 	if err != nil {

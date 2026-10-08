@@ -1408,6 +1408,37 @@ M16e 的 Consul 导入同一模式：导入器在节点侧运行，控制面拿�
 
 ---
 
+## M25 — DERP 管理面（只读，v1，已完成）
+
+目标：管理员能回答"这个组织给客户端下发了哪些 DERP 区域、节点现在落在哪个
+区域"，用于排障与容量核对（spec §20 的 DERP Console）。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §32。只读：策略仍然
+只由启动配置/组织表决定。
+
+- HTTP `GET /api/v2/derp`（read scope、`Cache-Control: no-store`）：
+  `policyMode`（inherit|none|regions，未配置策略渲染为 `inherit`，不是空
+  字符串）、`policyRegions`（恒为数组）、`mapConfigured`（区分"部署未配置
+  map，客户端保持内置默认区域"与"策略明确告诉客户端没有 DERP"）、
+  `regionsServed`、`regions`（按 ID 排序，含 code/name/公开 relay
+  `host:port`（去重排序）与该区域 HomeDERP 节点数）、`nodesWithoutHome`、
+  `nodesWithUnservedHome`（策略收紧后的过渡态，下一次 map 请求清空并重新
+  归属）。不含任何 secret。
+- gRPC `PlatformService.GetDERPStatus`（api/proto 重新生成）：语义、认证与
+  错误映射与 HTTP 一致（未认证 `UNAUTHENTICATED`、缺 scope
+  `PERMISSION_DENIED`）；组织由 authority 决定，请求不带参数。
+- Console `/console/derp`：策略摘要、区域表（ID/code/名称/relay/节点数）与
+  节点归属表（hostname、stable ID、在线、HomeDERP；未归属与不再服务显式
+  标注）；只读、无按钮。
+- 无新状态：区域来自策略应用后的 map，节点归属来自现有节点记录；渲染器
+  HTTP/gRPC/Console 三处共用，页面与端点不会不一致。
+- 测试：`control/api_v2_derp_test.go`（401/403、no-store、区域与 relay 去重
+  排序、节点计数与未归属/不再服务、regions/none/无 map 三种策略、gRPC
+  认证/权限与字段）、`control/console_test.go`（页面渲染、只读、无 map 文案）。
+- 明确不做（v1）：修改策略、按区域断连/重定位、DERP 中继流量统计（那是
+  Veil 的运行指标，不在控制面）、历史趋势。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。

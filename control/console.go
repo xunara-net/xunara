@@ -75,6 +75,7 @@ func (s *Server) consoleRouter() http.Handler {
 	r.Get("/devices", s.handleConsoleDevices)
 	r.Get("/users", s.handleConsoleUsers)
 	r.Get("/dns", s.handleConsoleDNS)
+	r.Get("/derp", s.handleConsoleDERP)
 	r.Get("/auth-keys", s.handleConsoleAuthKeys)
 	r.Get("/agents", s.handleConsoleAgents)
 	r.Get("/services", s.handleConsoleServices)
@@ -574,6 +575,20 @@ func (s *Server) handleConsoleDeleteDNS(w http.ResponseWriter, r *http.Request) 
 	data["Notice"] = "DNS record deleted."
 	data["Records"] = s.store.ListDNSRecords()
 	s.renderConsole(w, consoleDNSTemplate, data)
+}
+
+// handleConsoleDERP implements GET /console/derp: the read-only DERP view of
+// this organization (spec section 32.2), built from the same renderer the API
+// uses so the page and the endpoint cannot disagree.
+func (s *Server) handleConsoleDERP(w http.ResponseWriter, r *http.Request) {
+	_, data, ok := s.consoleSession(w, r, "derp")
+	if !ok {
+		return
+	}
+	status, nodes := s.derpStatus()
+	data["Status"] = status
+	data["Nodes"] = nodes
+	s.renderConsole(w, consoleDERPTemplate, data)
 }
 
 // handleConsoleAuthKeys implements GET /console/auth-keys.

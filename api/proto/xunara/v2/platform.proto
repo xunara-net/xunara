@@ -59,6 +59,12 @@ service PlatformService {
   // material.
   rpc GetIDTokenIssuer(GetIDTokenIssuerRequest) returns (IDTokenIssuerStatus);
 
+  // GetDERPStatus reports which DERP regions this organization serves its
+  // clients and where its machines are homed (GET /api/v2/derp). The policy
+  // itself is configuration: this surface is read-only. Relay host names are
+  // public netmap information; no secret is returned.
+  rpc GetDERPStatus(GetDERPStatusRequest) returns (DERPStatus);
+
   // GetMachineDeviceAttrs returns the device posture attributes a machine
   // reported about itself (PATCH /machine/set-device-attr). Values are the
   // JSON scalars the node sent. Another organization's machine is NOT_FOUND.
@@ -182,6 +188,37 @@ message IDTokenSigningKey {
   // Retired is set once the key stopped signing; an absent value means the
   // key is active.
   google.protobuf.Timestamp retired = 3;
+}
+
+message GetDERPStatusRequest {}
+
+// DERPStatus mirrors GET /api/v2/derp. Both "no map configured" and "a map
+// that serves nothing" report regions_served == 0; map_configured tells them
+// apart, because clients treat the two differently.
+message DERPStatus {
+  // PolicyMode is inherit, none or regions.
+  string policy_mode = 1;
+  // PolicyRegions is the allowlist in regions mode; empty otherwise.
+  repeated int32 policy_regions = 2;
+  bool map_configured = 3;
+  uint32 regions_served = 4;
+  // Regions are the regions actually served, ordered by ID.
+  repeated DERPRegion regions = 5;
+  // NodesWithoutHome counts machines that have not chosen a home region.
+  uint32 nodes_without_home = 6;
+  // NodesWithUnservedHome counts machines still homed to a region the served
+  // map no longer contains; their next map request re-homes them.
+  uint32 nodes_with_unserved_home = 7;
+}
+
+message DERPRegion {
+  int32 id = 1;
+  string code = 2;
+  string name = 3;
+  // Hosts are the relay host:port entries of the region (public).
+  repeated string hosts = 4;
+  // NodeCount is how many machines are homed here.
+  uint32 node_count = 5;
 }
 
 message Machine {

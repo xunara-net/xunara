@@ -1376,3 +1376,60 @@ GET /api/v2/reach/sessions/{id}/chunks?out=&err=         # 输出块（每流每
 - argv/输出可能含敏感参数，所以端点受 read scope 与角色规则约束（与其它 v2
   端点相同），且不写入审计、webhook、日志。
 - 不做（v1）：管理面取消/重跑、输出导出下载、按 argv 全文搜索、长期归档。
+
+## 32. DERP 管理面（只读，v1）
+
+目标：管理员能回答"这个组织给客户端下发了哪些 DERP 区域、节点现在落在哪个
+区域"，用于排障与容量核对。只读：DERP 策略仍然只能通过启动配置/组织表修改
+（§M7b），这里没有任何写入口。
+
+### 32.1 HTTP（`/api/v2`，read scope）
+
+```text
+GET /api/v2/derp
+```
+
+```json
+{
+  "policyMode": "inherit",
+  "policyRegions": [],
+  "mapConfigured": true,
+  "regionsServed": 1,
+  "regions": [
+    {
+      "id": 1,
+      "code": "xunara-veil-1",
+      "name": "Xunara Veil Frankfurt",
+      "hosts": ["veil.example.com:443"],
+      "nodeCount": 3
+    }
+  ],
+  "nodesWithoutHome": 4,
+  "nodesWithUnservedHome": 1
+}
+```
+
+- `policyMode` ∈ `inherit|none|regions`（与 `-derp-policy` / 组织表一致；未配置
+  策略渲染为 `inherit`，不是空字符串）；`policyRegions` 只在 `regions` 模式
+  非空，其它模式恒为 `[]`。
+- `mapConfigured` 区分 nil 与空 map：false 表示部署没有配置 DERP map
+  （客户端保持内置默认区域，nil = 不变）；true 且 `regionsServed=0` 表示
+  策略明确告诉客户端"没有 DERP"（`none`）。两种"没有区域"语义不同，客户端
+  行为也不同，管理面必须能区分。
+- `regions` 按 ID 排序，只含**实际下发**的区域（策略过滤后的 map）；`hosts`
+  是 relay 的 `host:port`，属于 netmap 的公开信息，不含 secret。
+- `nodeCount` 是该区域作为节点 HomeDERP 的节点数；`nodesWithoutHome` 是
+  HomeDERP 为 0 的节点数；`nodesWithUnservedHome` 是 HomeDERP 已设置但不
+  在当前下发 map 里的节点数（策略收紧后的过渡态，下一次 map 请求会清空并
+  重新归属）。
+- 认证/角色与其它 v2 read 端点一致；响应 `Cache-Control: no-store`。
+- gRPC 对应 `PlatformService.GetDERPStatus`（语义、认证、错误映射与 HTTP
+  一致：未认证 `UNAUTHENTICATED`，缺 scope `PERMISSION_DENIED`）。
+- 不做（v1）：修改策略、按区域断连/重定位、DERP 中继流量统计（那是 Veil
+  的运行指标，不在控制面）、历史趋势。
+
+### 32.2 Console
+
+`/console/derp`：策略摘要（模式、白名单、是否配置 map）、区域表
+（ID/code/名称/relay 地址/节点数）与节点归属表（hostname、stable ID、在线、
+HomeDERP，未归属/不再服务的显式标注）。只读，页面不提供任何按钮。

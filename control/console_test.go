@@ -62,6 +62,7 @@ func TestConsolePagesRender(t *testing.T) {
 		{"/console/auth-keys", "Create key"},
 		{"/console/agents", "No agent credentials."},
 		{"/console/reach", "Reach is not enabled"},
+		{"/console/derp", "No DERP map is configured"},
 		{"/console/webhooks", "No webhook receivers are configured."},
 		{"/console/policy", "No policy document is configured"},
 		{"/console/audit", identity.AuditNodeApproved},
@@ -910,5 +911,44 @@ func TestConsoleReachPageDisabled(t *testing.T) {
 		if !strings.Contains(page, "Reach is not enabled") {
 			t.Errorf("GET %s does not explain the disabled feature:\n%s", path, page)
 		}
+	}
+}
+
+// TestConsoleDERPPage checks the read-only DERP page: the policy summary, the
+// served regions with their public relays, and where machines are homed.
+func TestConsoleDERPPage(t *testing.T) {
+	s := newServerWithConfig(t, Config{DERPMap: derpTestMap()})
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/derp")
+
+	seedDERPNode(t, s, "derp-fra", 1)
+	seedDERPNode(t, s, "derp-nohome", 0)
+
+	page := bodyString(t, getRequest(t, client, hs.URL+"/console/derp", cookie))
+	for _, want := range []string{
+		"inherit", "fra", "Frankfurt", "veil1.example.com:443", "veil2a.example.com:443",
+		"derp-fra", "derp-nohome", "none chosen yet", "Regions served",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("derp page lacks %q:\n%s", want, page)
+		}
+	}
+	if strings.Contains(page, `action="/console/derp/`) {
+		t.Errorf("the derp page offers a write control:\n%s", page)
+	}
+}
+
+// TestConsoleDERPPageNoMap checks the copy when no DERP map is configured:
+// clients keep their built-in defaults, which is not the same as an empty map.
+func TestConsoleDERPPageNoMap(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/derp")
+
+	page := bodyString(t, getRequest(t, client, hs.URL+"/console/derp", cookie))
+	if !strings.Contains(page, "No DERP map is configured") {
+		t.Errorf("no-map derp page = %s", page)
 	}
 }

@@ -77,6 +77,7 @@ footer { text-align: center; color: #5b616e; font-size: .8rem; }
 <a href="/console/users"{{if eq .Nav "users"}} class="active"{{end}}>Users</a>
 <a href="/console/passkeys"{{if eq .Nav "passkeys"}} class="active"{{end}}>Passkeys</a>
 <a href="/console/dns"{{if eq .Nav "dns"}} class="active"{{end}}>DNS</a>
+<a href="/console/derp"{{if eq .Nav "derp"}} class="active"{{end}}>DERP</a>
 <a href="/console/auth-keys"{{if eq .Nav "auth-keys"}} class="active"{{end}}>Auth keys</a>
 <a href="/console/agents"{{if eq .Nav "agents"}} class="active"{{end}}>Agents</a>
 <a href="/console/reach"{{if eq .Nav "reach"}} class="active"{{end}}>Reach</a>
@@ -107,6 +108,7 @@ var consoleTitles = map[string]string{
 	"users":     "Users",
 	"passkeys":  "Passkeys",
 	"dns":       "DNS",
+	"derp":      "DERP",
 	"auth-keys": "Auth keys",
 	"agents":    "Agents",
 	"reach":     "Reach",
@@ -639,6 +641,61 @@ more output was written.</p>{{end}}
 {{else}}
 <p>No Reach session has that ID.</p>
 {{end}}{{end}}
+`)
+
+	consoleDERPTemplate = consolePage("derp", `
+<h2>DERP</h2>
+<p>Which DERP regions this organization serves its clients, and where the
+machines are homed. The policy comes from the deployment's
+<code>-derp-policy</code> / organization table; this page is read-only.
+Serving a filtered map is advisory - the admission controller is the
+enforceable half, and it only covers the relay Xunara runs.</p>
+<dl>
+<dt>Policy</dt><dd><code>{{.Status.PolicyMode}}</code>{{if eq .Status.PolicyMode "inherit"}} — the configured map is served unchanged{{end}}{{if eq .Status.PolicyMode "none"}} — clients are told this organization has no DERP{{end}}</dd>
+{{if .Status.PolicyRegions}}<dt>Allowed regions</dt><dd>{{range .Status.PolicyRegions}}<code>{{.}}</code> {{end}}</dd>{{end}}
+<dt>Map</dt><dd>{{if .Status.MapConfigured}}configured{{else}}not configured — clients keep their built-in default regions{{end}}</dd>
+<dt>Regions served</dt><dd>{{.Status.RegionsServed}}</dd>
+<dt>Machines</dt><dd>{{len .Nodes}} total; {{.Status.NodesWithoutHome}} without a home region; {{.Status.NodesWithUnservedHome}} homed to a region no longer served</dd>
+</dl>
+{{if .Status.Regions}}
+<table>
+<thead><tr><th>ID</th><th>Code</th><th>Name</th><th>Relays</th><th>Machines</th></tr></thead>
+<tbody>
+{{range .Status.Regions}}
+<tr>
+<td>{{.ID}}</td>
+<td>{{if .Code}}<code>{{.Code}}</code>{{else}}—{{end}}</td>
+<td>{{if .Name}}{{.Name}}{{else}}—{{end}}</td>
+<td>{{if .Hosts}}{{range .Hosts}}<code>{{.}}</code> {{end}}{{else}}—{{end}}</td>
+<td>{{.NodeCount}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else if .Status.MapConfigured}}
+<p>No regions are served: the policy tells clients this organization has no
+DERP at all.</p>
+{{else}}
+<p>No DERP map is configured, so clients keep their built-in default regions
+until one is.</p>
+{{end}}
+<h3>Machine placement</h3>
+{{if .Nodes}}
+<table>
+<thead><tr><th>Machine</th><th>Status</th><th>Home region</th></tr></thead>
+<tbody>
+{{range .Nodes}}
+<tr>
+<td>{{.Hostname}}<br><code>{{.StableID}}</code></td>
+<td>{{if .Online}}<span class="ok">online</span>{{else}}<span class="off">offline</span>{{end}}</td>
+<td>{{if .Unserved}}<span class="warn">region {{.Home}} (no longer served)</span>{{else if .Home}}{{.Home}}{{else}}<span class="off">none chosen yet</span>{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>No machines yet.</p>
+{{end}}
 `)
 
 	consolePolicyTemplate = consolePage("policy", `

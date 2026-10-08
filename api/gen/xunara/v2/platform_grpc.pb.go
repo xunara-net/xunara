@@ -49,6 +49,7 @@ const (
 	PlatformService_GetOrganizationIdentity_FullMethodName = "/xunara.v2.PlatformService/GetOrganizationIdentity"
 	PlatformService_GetTailnetLock_FullMethodName          = "/xunara.v2.PlatformService/GetTailnetLock"
 	PlatformService_GetIDTokenIssuer_FullMethodName        = "/xunara.v2.PlatformService/GetIDTokenIssuer"
+	PlatformService_GetDERPStatus_FullMethodName           = "/xunara.v2.PlatformService/GetDERPStatus"
 	PlatformService_GetMachineDeviceAttrs_FullMethodName   = "/xunara.v2.PlatformService/GetMachineDeviceAttrs"
 	PlatformService_ListMachines_FullMethodName            = "/xunara.v2.PlatformService/ListMachines"
 	PlatformService_ListServices_FullMethodName            = "/xunara.v2.PlatformService/ListServices"
@@ -85,6 +86,11 @@ type PlatformServiceClient interface {
 	// keys a relying party verifies tokens with. It never returns private key
 	// material.
 	GetIDTokenIssuer(ctx context.Context, in *GetIDTokenIssuerRequest, opts ...grpc.CallOption) (*IDTokenIssuerStatus, error)
+	// GetDERPStatus reports which DERP regions this organization serves its
+	// clients and where its machines are homed (GET /api/v2/derp). The policy
+	// itself is configuration: this surface is read-only. Relay host names are
+	// public netmap information; no secret is returned.
+	GetDERPStatus(ctx context.Context, in *GetDERPStatusRequest, opts ...grpc.CallOption) (*DERPStatus, error)
 	// GetMachineDeviceAttrs returns the device posture attributes a machine
 	// reported about itself (PATCH /machine/set-device-attr). Values are the
 	// JSON scalars the node sent. Another organization's machine is NOT_FOUND.
@@ -157,6 +163,16 @@ func (c *platformServiceClient) GetIDTokenIssuer(ctx context.Context, in *GetIDT
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(IDTokenIssuerStatus)
 	err := c.cc.Invoke(ctx, PlatformService_GetIDTokenIssuer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) GetDERPStatus(ctx context.Context, in *GetDERPStatusRequest, opts ...grpc.CallOption) (*DERPStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DERPStatus)
+	err := c.cc.Invoke(ctx, PlatformService_GetDERPStatus_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -269,6 +285,11 @@ type PlatformServiceServer interface {
 	// keys a relying party verifies tokens with. It never returns private key
 	// material.
 	GetIDTokenIssuer(context.Context, *GetIDTokenIssuerRequest) (*IDTokenIssuerStatus, error)
+	// GetDERPStatus reports which DERP regions this organization serves its
+	// clients and where its machines are homed (GET /api/v2/derp). The policy
+	// itself is configuration: this surface is read-only. Relay host names are
+	// public netmap information; no secret is returned.
+	GetDERPStatus(context.Context, *GetDERPStatusRequest) (*DERPStatus, error)
 	// GetMachineDeviceAttrs returns the device posture attributes a machine
 	// reported about itself (PATCH /machine/set-device-attr). Values are the
 	// JSON scalars the node sent. Another organization's machine is NOT_FOUND.
@@ -318,6 +339,9 @@ func (UnimplementedPlatformServiceServer) GetTailnetLock(context.Context, *GetTa
 }
 func (UnimplementedPlatformServiceServer) GetIDTokenIssuer(context.Context, *GetIDTokenIssuerRequest) (*IDTokenIssuerStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetIDTokenIssuer not implemented")
+}
+func (UnimplementedPlatformServiceServer) GetDERPStatus(context.Context, *GetDERPStatusRequest) (*DERPStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetDERPStatus not implemented")
 }
 func (UnimplementedPlatformServiceServer) GetMachineDeviceAttrs(context.Context, *GetMachineDeviceAttrsRequest) (*MachineDeviceAttrs, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetMachineDeviceAttrs not implemented")
@@ -432,6 +456,24 @@ func _PlatformService_GetIDTokenIssuer_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).GetIDTokenIssuer(ctx, req.(*GetIDTokenIssuerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_GetDERPStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetDERPStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).GetDERPStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_GetDERPStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).GetDERPStatus(ctx, req.(*GetDERPStatusRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -602,6 +644,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetIDTokenIssuer",
 			Handler:    _PlatformService_GetIDTokenIssuer_Handler,
+		},
+		{
+			MethodName: "GetDERPStatus",
+			Handler:    _PlatformService_GetDERPStatus_Handler,
 		},
 		{
 			MethodName: "GetMachineDeviceAttrs",
