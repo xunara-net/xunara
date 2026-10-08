@@ -70,6 +70,8 @@ func (s *Server) consoleRouter() http.Handler {
 
 	r.Get("/", s.handleConsoleOverview)
 
+	r.Get("/prefs", s.handleConsolePrefs)
+
 	r.Get("/machines", s.handleConsoleMachines)
 	r.Get("/exit-nodes", s.handleConsoleExitNodes)
 	r.Get("/relays", s.handleConsoleRelays)
@@ -142,7 +144,7 @@ func (s *Server) consoleWriteAccess(next http.Handler) http.Handler {
 		}
 		user, ok := s.identity.GetUser(session.UserID)
 		if !ok || !user.Role.CanWrite() {
-			s.renderError(w, http.StatusForbidden, "Read-only access",
+			s.renderError(w, r, http.StatusForbidden, "Read-only access",
 				"Your role does not allow changing the tailnet.")
 			return
 		}
@@ -164,6 +166,11 @@ func (s *Server) consoleSession(w http.ResponseWriter, r *http.Request, nav stri
 	return session, map[string]any{
 		"Nav":       nav,
 		"Title":     consoleTitles[nav],
+		"Lede":      consoleLedes[nav],
+		"NavGroups": consoleNavGroups(nav),
+		"Lang":      consoleLangFromRequest(r),
+		"Accent":    consoleAccentFromRequest(r),
+		"Path":      r.URL.RequestURI(),
 		"User":      profile.LoginName,
 		"Role":      role.String(),
 		"CanWrite":  role.CanWrite(),
@@ -178,7 +185,7 @@ func (s *Server) consoleSession(w http.ResponseWriter, r *http.Request, nav stri
 // consoleCheckCSRF verifies the form token of a console POST.
 func (s *Server) consoleCheckCSRF(w http.ResponseWriter, r *http.Request) bool {
 	if !checkCSRF(r, sessionToken(r)) {
-		s.renderError(w, http.StatusForbidden, "Request rejected",
+		s.renderError(w, r, http.StatusForbidden, "Request rejected",
 			"The form token is invalid. Reload the page and try again.")
 		return false
 	}
@@ -266,12 +273,12 @@ func (s *Server) handleConsoleDeleteMachine(w http.ResponseWriter, r *http.Reque
 
 	node, ok := s.lookupAPINode(chi.URLParam(r, "id"))
 	if !ok {
-		s.renderError(w, http.StatusNotFound, "Unknown machine", "This machine does not exist.")
+		s.renderError(w, r, http.StatusNotFound, "Unknown machine", "This machine does not exist.")
 		return
 	}
 	if err := s.store.DeleteNode(node.ID); err != nil {
 		s.log.Error("deleting machine", "node", int(node.ID), "err", err)
-		s.renderError(w, http.StatusInternalServerError, "Delete failed", "Please try again.")
+		s.renderError(w, r, http.StatusInternalServerError, "Delete failed", "Please try again.")
 		return
 	}
 	s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditNodeDeleted, nodeTarget(node),
@@ -308,7 +315,7 @@ func (s *Server) handleConsoleMachineRoutes(w http.ResponseWriter, r *http.Reque
 
 	node, ok := s.lookupAPINode(chi.URLParam(r, "id"))
 	if !ok {
-		s.renderError(w, http.StatusNotFound, "Unknown machine", "This machine does not exist.")
+		s.renderError(w, r, http.StatusNotFound, "Unknown machine", "This machine does not exist.")
 		return
 	}
 
@@ -325,7 +332,7 @@ func (s *Server) handleConsoleMachineRoutes(w http.ResponseWriter, r *http.Reque
 		after = nil
 		notice = "All route approvals withdrawn."
 	default:
-		s.renderError(w, http.StatusBadRequest, "Unknown action", "The form action is not recognised.")
+		s.renderError(w, r, http.StatusBadRequest, "Unknown action", "The form action is not recognised.")
 		return
 	}
 
@@ -335,7 +342,7 @@ func (s *Server) handleConsoleMachineRoutes(w http.ResponseWriter, r *http.Reque
 	} else {
 		if err := s.store.SetNodeApprovedRoutes(node.ID, after); err != nil {
 			s.log.Error("setting approved routes", "node", int(node.ID), "err", err)
-			s.renderError(w, http.StatusInternalServerError, "Update failed", "Please try again.")
+			s.renderError(w, r, http.StatusInternalServerError, "Update failed", "Please try again.")
 			return
 		}
 		if err := s.store.BumpConfigRevision(); err != nil {
@@ -389,11 +396,11 @@ func (s *Server) handleConsoleDevice(approve bool) http.HandlerFunc {
 		if err != nil {
 			var he HTTPError
 			if errors.As(err, &he) {
-				s.renderError(w, he.Code, "Device decision failed", he.Msg)
+				s.renderError(w, r, he.Code, "Device decision failed", he.Msg)
 				return
 			}
 			s.log.Error("deciding device", "device", id, "err", err)
-			s.renderError(w, http.StatusInternalServerError, "Device decision failed", "Please try again.")
+			s.renderError(w, r, http.StatusInternalServerError, "Device decision failed", "Please try again.")
 			return
 		}
 
@@ -460,7 +467,7 @@ func (s *Server) handleConsoleUpdateUser(w http.ResponseWriter, r *http.Request)
 
 	user, ok := s.lookupAPIUser(chi.URLParam(r, "id"))
 	if !ok {
-		s.renderError(w, http.StatusNotFound, "Unknown user", "This user does not exist.")
+		s.renderError(w, r, http.StatusNotFound, "Unknown user", "This user does not exist.")
 		return
 	}
 
@@ -478,18 +485,18 @@ func (s *Server) handleConsoleUpdateUser(w http.ResponseWriter, r *http.Request)
 	if raw := strings.TrimSpace(r.PostFormValue("role")); raw != "" {
 		actor, ok := s.identity.GetUser(session.UserID)
 		if !ok || !actor.Role.IsOwner() {
-			s.renderError(w, http.StatusForbidden, "Owner role required",
+			s.renderError(w, r, http.StatusForbidden, "Owner role required",
 				"Only an owner may change roles.")
 			return
 		}
 		role, err := identity.ParseRole(raw)
 		if err != nil {
-			s.renderError(w, http.StatusBadRequest, "Invalid role", err.Error())
+			s.renderError(w, r, http.StatusBadRequest, "Invalid role", err.Error())
 			return
 		}
 		if role != user.Role {
 			if user.Role.IsOwner() && role != identity.RoleOwner && !s.otherOwnerExists(user.ID) {
-				s.renderError(w, http.StatusConflict, "Cannot demote the last owner",
+				s.renderError(w, r, http.StatusConflict, "Cannot demote the last owner",
 					"A tailnet needs at least one owner.")
 				return
 			}
@@ -503,7 +510,7 @@ func (s *Server) handleConsoleUpdateUser(w http.ResponseWriter, r *http.Request)
 		data["Notice"] = "No change."
 	} else if err := s.identity.UpdateUser(user); err != nil {
 		s.log.Error("updating user", "user", int(user.ID), "err", err)
-		s.renderError(w, http.StatusInternalServerError, "Update failed", "Please try again.")
+		s.renderError(w, r, http.StatusInternalServerError, "Update failed", "Please try again.")
 		return
 	} else {
 		action := identity.AuditUserUpdated
@@ -551,7 +558,7 @@ func (s *Server) handleConsoleDeleteDNS(w http.ResponseWriter, r *http.Request) 
 
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		s.renderError(w, http.StatusBadRequest, "Invalid record", "The record ID is not valid.")
+		s.renderError(w, r, http.StatusBadRequest, "Invalid record", "The record ID is not valid.")
 		return
 	}
 
@@ -563,13 +570,13 @@ func (s *Server) handleConsoleDeleteDNS(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if record == nil {
-		s.renderError(w, http.StatusNotFound, "Unknown record", "This DNS record does not exist.")
+		s.renderError(w, r, http.StatusNotFound, "Unknown record", "This DNS record does not exist.")
 		return
 	}
 
 	if err := s.store.DeleteDNSRecord(id); err != nil {
 		s.log.Error("deleting DNS record", "record", id, "err", err)
-		s.renderError(w, http.StatusInternalServerError, "Delete failed", "Please try again.")
+		s.renderError(w, r, http.StatusInternalServerError, "Delete failed", "Please try again.")
 		return
 	}
 	if err := s.store.BumpConfigRevision(); err != nil {
@@ -621,7 +628,7 @@ func (s *Server) handleConsoleCreateAuthKey(w http.ResponseWriter, r *http.Reque
 	secret, err := state.NewPreAuthKeySecret()
 	if err != nil {
 		s.log.Error("generating pre-auth key", "err", err)
-		s.renderError(w, http.StatusInternalServerError, "Create failed", "Please try again.")
+		s.renderError(w, r, http.StatusInternalServerError, "Create failed", "Please try again.")
 		return
 	}
 
@@ -633,21 +640,21 @@ func (s *Server) handleConsoleCreateAuthKey(w http.ResponseWriter, r *http.Reque
 	}
 	tags, err := s.validateKeyTags(splitTagInput(r.PostFormValue("tags")))
 	if err != nil {
-		s.renderError(w, http.StatusBadRequest, "Invalid tags", err.Error())
+		s.renderError(w, r, http.StatusBadRequest, "Invalid tags", err.Error())
 		return
 	}
 	key.Tags = tags
 	if ttlRaw := strings.TrimSpace(r.PostFormValue("ttl")); ttlRaw != "" {
 		ttl, err := time.ParseDuration(ttlRaw)
 		if err != nil || ttl <= 0 {
-			s.renderError(w, http.StatusBadRequest, "Invalid lifetime", "The key lifetime is not a valid duration.")
+			s.renderError(w, r, http.StatusBadRequest, "Invalid lifetime", "The key lifetime is not a valid duration.")
 			return
 		}
 		key.Expiry = time.Now().Add(ttl).UTC()
 	}
 	if err := s.store.CreatePreAuthKey(&key); err != nil {
 		s.log.Error("storing pre-auth key", "err", err)
-		s.renderError(w, http.StatusInternalServerError, "Create failed", "Please try again.")
+		s.renderError(w, r, http.StatusInternalServerError, "Create failed", "Please try again.")
 		return
 	}
 	s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditPreAuthKeyCreated,
@@ -671,7 +678,7 @@ func (s *Server) handleConsoleDeleteAuthKey(w http.ResponseWriter, r *http.Reque
 
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
-		s.renderError(w, http.StatusBadRequest, "Invalid key", "The key ID is not valid.")
+		s.renderError(w, r, http.StatusBadRequest, "Invalid key", "The key ID is not valid.")
 		return
 	}
 
@@ -683,12 +690,12 @@ func (s *Server) handleConsoleDeleteAuthKey(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if secret == "" {
-		s.renderError(w, http.StatusNotFound, "Unknown key", "This pre-auth key does not exist.")
+		s.renderError(w, r, http.StatusNotFound, "Unknown key", "This pre-auth key does not exist.")
 		return
 	}
 	if err := s.store.DeletePreAuthKey(secret); err != nil {
 		s.log.Error("deleting pre-auth key", "key", id, "err", err)
-		s.renderError(w, http.StatusInternalServerError, "Delete failed", "Please try again.")
+		s.renderError(w, r, http.StatusInternalServerError, "Delete failed", "Please try again.")
 		return
 	}
 	s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditPreAuthKeyDeleted,
@@ -777,7 +784,7 @@ func (s *Server) handleConsoleFlux(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("state"); raw != "" {
 		filter = state.FluxTransferState(raw)
 		if !filter.Valid() {
-			s.renderError(w, http.StatusBadRequest, "Unknown state",
+			s.renderError(w, r, http.StatusBadRequest, "Unknown state",
 				"That is not a Flux transfer state.")
 			return
 		}
@@ -821,13 +828,13 @@ func (s *Server) handleConsoleFluxTransfer(w http.ResponseWriter, r *http.Reques
 	}
 	transfer, ok := s.store.GetFluxTransfer(chi.URLParam(r, "id"))
 	if !ok {
-		s.renderError(w, http.StatusNotFound, "Unknown transfer",
+		s.renderError(w, r, http.StatusNotFound, "Unknown transfer",
 			"No Flux transfer has that ID.")
 		return
 	}
 	view, ok := s.fluxAdminView(transfer)
 	if !ok {
-		s.renderError(w, http.StatusNotFound, "Unknown transfer",
+		s.renderError(w, r, http.StatusNotFound, "Unknown transfer",
 			"No Flux transfer has that ID.")
 		return
 	}
@@ -856,7 +863,7 @@ func (s *Server) handleConsoleReach(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("state"); raw != "" {
 		filter = state.ReachState(raw)
 		if !filter.Valid() {
-			s.renderError(w, http.StatusBadRequest, "Unknown state",
+			s.renderError(w, r, http.StatusBadRequest, "Unknown state",
 				"That is not a Reach session state.")
 			return
 		}
@@ -903,13 +910,13 @@ func (s *Server) handleConsoleReachSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if !found {
-		s.renderError(w, http.StatusNotFound, "Unknown session",
+		s.renderError(w, r, http.StatusNotFound, "Unknown session",
 			"No Reach session has that ID.")
 		return
 	}
 	view, ok := s.reachAdminView(session)
 	if !ok {
-		s.renderError(w, http.StatusNotFound, "Unknown session",
+		s.renderError(w, r, http.StatusNotFound, "Unknown session",
 			"No Reach session has that ID.")
 		return
 	}
@@ -1000,14 +1007,14 @@ func (s *Server) handleConsoleRevokeAgentToken(w http.ResponseWriter, r *http.Re
 		}
 	}
 	if found == nil {
-		s.renderError(w, http.StatusNotFound, "Unknown credential",
+		s.renderError(w, r, http.StatusNotFound, "Unknown credential",
 			"This agent credential does not exist.")
 		return
 	}
 	if found.RevokedAt.IsZero() {
 		if err := s.identity.RevokeAgentToken(id, time.Now().UTC()); err != nil {
 			s.log.Error("revoking agent token", "token", id, "err", err)
-			s.renderError(w, http.StatusInternalServerError, "Revoke failed", "Please try again.")
+			s.renderError(w, r, http.StatusInternalServerError, "Revoke failed", "Please try again.")
 			return
 		}
 		s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditAgentTokenRevoked,
@@ -1096,7 +1103,7 @@ func (s *Server) handleConsoleCreateAPIKey(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	if len(scopes) == 0 {
-		s.renderError(w, http.StatusBadRequest, "Invalid scopes",
+		s.renderError(w, r, http.StatusBadRequest, "Invalid scopes",
 			"Select at least one scope for the key.")
 		return
 	}
@@ -1107,14 +1114,14 @@ func (s *Server) handleConsoleCreateAPIKey(w http.ResponseWriter, r *http.Reques
 		Scopes: scopes,
 	}
 	if opts.Name == "" {
-		s.renderError(w, http.StatusBadRequest, "Invalid name",
+		s.renderError(w, r, http.StatusBadRequest, "Invalid name",
 			"Give the key a name that says which automation holds it.")
 		return
 	}
 	if ttlRaw := strings.TrimSpace(r.PostFormValue("ttl")); ttlRaw != "" {
 		ttl, err := time.ParseDuration(ttlRaw)
 		if err != nil || ttl <= 0 {
-			s.renderError(w, http.StatusBadRequest, "Invalid lifetime",
+			s.renderError(w, r, http.StatusBadRequest, "Invalid lifetime",
 				"The key lifetime is not a valid duration.")
 			return
 		}
@@ -1124,7 +1131,7 @@ func (s *Server) handleConsoleCreateAPIKey(w http.ResponseWriter, r *http.Reques
 	key, token, err := s.identity.CreateAPIKey(opts)
 	if err != nil {
 		s.log.Error("creating API key", "err", err)
-		s.renderError(w, http.StatusBadRequest, "Create failed", err.Error())
+		s.renderError(w, r, http.StatusBadRequest, "Create failed", err.Error())
 		return
 	}
 	s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditAPIKeyCreated,
@@ -1150,13 +1157,13 @@ func (s *Server) handleConsoleRevokeAPIKey(w http.ResponseWriter, r *http.Reques
 	id := chi.URLParam(r, "id")
 	key, ok := s.identity.GetAPIKeyByID(id)
 	if !ok {
-		s.renderError(w, http.StatusNotFound, "Unknown key", "This API key does not exist.")
+		s.renderError(w, r, http.StatusNotFound, "Unknown key", "This API key does not exist.")
 		return
 	}
 	if key.RevokedAt.IsZero() {
 		if err := s.identity.RevokeAPIKey(id); err != nil {
 			s.log.Error("revoking API key", "key", id, "err", err)
-			s.renderError(w, http.StatusInternalServerError, "Revoke failed", "Please try again.")
+			s.renderError(w, r, http.StatusInternalServerError, "Revoke failed", "Please try again.")
 			return
 		}
 		s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditAPIKeyRevoked,
@@ -1236,26 +1243,26 @@ func (s *Server) handleConsoleCreateWebhook(w http.ResponseWriter, r *http.Reque
 	)
 	switch {
 	case errors.Is(err, errWebhookIDInvalid):
-		s.renderError(w, http.StatusBadRequest, "Invalid webhook ID",
+		s.renderError(w, r, http.StatusBadRequest, "Invalid webhook ID",
 			"The ID must start with a letter or digit and may contain letters, digits, dots, dashes and underscores.")
 		return
 	case errors.Is(err, errWebhookIDManaged):
-		s.renderError(w, http.StatusConflict, "Webhook exists",
+		s.renderError(w, r, http.StatusConflict, "Webhook exists",
 			"A managed webhook already uses this ID.")
 		return
 	case errors.Is(err, errWebhookConfigured):
-		s.renderError(w, http.StatusConflict, "Webhook exists",
+		s.renderError(w, r, http.StatusConflict, "Webhook exists",
 			"This ID belongs to a webhook configured at startup.")
 		return
 	case err != nil:
-		s.renderError(w, http.StatusBadRequest, "Invalid webhook", err.Error())
+		s.renderError(w, r, http.StatusBadRequest, "Invalid webhook", err.Error())
 		return
 	}
 
 	managed, err := s.storeManagedWebhook(endpoint, true)
 	if err != nil {
 		s.log.Error("creating webhook endpoint", "webhook", endpoint.ID, "err", err)
-		s.renderError(w, http.StatusInternalServerError, "Create failed", "Please try again.")
+		s.renderError(w, r, http.StatusInternalServerError, "Create failed", "Please try again.")
 		return
 	}
 	s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditWebhookCreated,
@@ -1279,15 +1286,15 @@ func (s *Server) handleConsoleDeleteWebhook(w http.ResponseWriter, r *http.Reque
 	id := chi.URLParam(r, "id")
 	switch err := s.deleteManagedWebhook(id); {
 	case errors.Is(err, errWebhookConfigured):
-		s.renderError(w, http.StatusConflict, "Configured webhook",
+		s.renderError(w, r, http.StatusConflict, "Configured webhook",
 			"This receiver comes from the server configuration. Remove it there and restart.")
 		return
 	case errors.Is(err, errWebhookUnknown):
-		s.renderError(w, http.StatusNotFound, "Unknown webhook", "This webhook does not exist.")
+		s.renderError(w, r, http.StatusNotFound, "Unknown webhook", "This webhook does not exist.")
 		return
 	case err != nil:
 		s.log.Error("deleting webhook endpoint", "webhook", id, "err", err)
-		s.renderError(w, http.StatusInternalServerError, "Delete failed", "Please try again.")
+		s.renderError(w, r, http.StatusInternalServerError, "Delete failed", "Please try again.")
 		return
 	}
 	s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditWebhookDeleted,
@@ -1324,13 +1331,13 @@ func (s *Server) handleConsoleSSHCheck(w http.ResponseWriter, r *http.Request) {
 	// that silently widens its result is a security bug.
 	stateFilter := r.URL.Query().Get("state")
 	if stateFilter != "" && !sshCheckStateValid(stateFilter) {
-		s.renderError(w, http.StatusBadRequest, "Unknown state",
+		s.renderError(w, r, http.StatusBadRequest, "Unknown state",
 			"That is not an SSH check state.")
 		return
 	}
 	sessions, next, err := s.sshCheckPage(stateFilter, 0, consoleSSHCheckLimit, time.Time{}, "")
 	if err != nil {
-		s.renderError(w, http.StatusInternalServerError, "SSH checks unavailable",
+		s.renderError(w, r, http.StatusInternalServerError, "SSH checks unavailable",
 			"The identity store could not be read. Please try again.")
 		return
 	}

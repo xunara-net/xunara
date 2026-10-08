@@ -851,17 +851,17 @@ func (s *Server) handleRegisterPage(w http.ResponseWriter, req *http.Request) {
 
 	da, ok := s.identity.GetDeviceAuthorization(authID)
 	if !ok {
-		s.renderError(w, http.StatusNotFound, "Unknown login link",
+		s.renderError(w, req, http.StatusNotFound, "Unknown login link",
 			"This login link is unknown or has expired. Re-run `tailscale up` to get a new one.")
 		return
 	}
 	switch {
 	case da.Expired(time.Now()):
-		s.renderError(w, http.StatusGone, "Login link expired",
+		s.renderError(w, req, http.StatusGone, "Login link expired",
 			"This login link has expired. Re-run `tailscale up` to get a new one.")
 		return
 	case da.State != identity.DevicePending:
-		s.renderDecidedPage(w, string(da.State))
+		s.renderDecidedPage(w, req, string(da.State))
 		return
 	}
 
@@ -882,12 +882,12 @@ func (s *Server) handleRegisterPage(w http.ResponseWriter, req *http.Request) {
 		os = "unknown"
 	}
 
-	s.renderApprovePage(w, map[string]any{
+	s.renderApprovePage(w, req, map[string]any{
 		"AuthID":    authID,
 		"CanWrite":  s.userCanWrite(session.UserID),
 		"Hostname":  hostname,
 		"OS":        os,
-		"Created":   da.CreatedAt.Format(time.RFC3339),
+		"Created":   s.consoleTime(da.CreatedAt),
 		"LoginName": profile.LoginName,
 		"CSRF":      csrfTokenFor(sessionToken(req)),
 	})
@@ -902,21 +902,21 @@ func (s *Server) handleApproveDevice(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if !s.userCanWrite(session.UserID) {
-		s.renderError(w, http.StatusForbidden, "Approval rejected",
+		s.renderError(w, req, http.StatusForbidden, "Approval rejected",
 			"Your role does not allow admitting devices.")
 		return
 	}
 	if !checkCSRF(req, token) {
-		s.renderError(w, http.StatusForbidden, "Approval rejected",
+		s.renderError(w, req, http.StatusForbidden, "Approval rejected",
 			"The form token is invalid. Reload the page and try again.")
 		return
 	}
 
 	if _, err := s.approveDevice(authID, session.UserID, fmt.Sprintf("user:%d", session.UserID)); err != nil {
-		s.renderDeviceError(w, err, "Approval failed")
+		s.renderDeviceError(w, req, err, "Approval failed")
 		return
 	}
-	s.renderDecidedPage(w, string(identity.DeviceApproved))
+	s.renderDecidedPage(w, req, string(identity.DeviceApproved))
 }
 
 // handleDenyDevice implements POST /register/{authID}/deny.
@@ -928,32 +928,32 @@ func (s *Server) handleDenyDevice(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if !s.userCanWrite(session.UserID) {
-		s.renderError(w, http.StatusForbidden, "Denial rejected",
+		s.renderError(w, req, http.StatusForbidden, "Denial rejected",
 			"Your role does not allow deciding device registrations.")
 		return
 	}
 	if !checkCSRF(req, token) {
-		s.renderError(w, http.StatusForbidden, "Denial rejected",
+		s.renderError(w, req, http.StatusForbidden, "Denial rejected",
 			"The form token is invalid. Reload the page and try again.")
 		return
 	}
 
 	if _, err := s.denyDevice(authID, session.UserID, fmt.Sprintf("user:%d", session.UserID)); err != nil {
-		s.renderDeviceError(w, err, "Denial failed")
+		s.renderDeviceError(w, req, err, "Denial failed")
 		return
 	}
-	s.renderDecidedPage(w, string(identity.DeviceDenied))
+	s.renderDecidedPage(w, req, string(identity.DeviceDenied))
 }
 
 // renderDeviceError maps a device approval error to a page.
-func (s *Server) renderDeviceError(w http.ResponseWriter, err error, title string) {
+func (s *Server) renderDeviceError(w http.ResponseWriter, req *http.Request, err error, title string) {
 	var he HTTPError
 	if errors.As(err, &he) {
-		s.renderError(w, he.Code, title, he.Msg)
+		s.renderError(w, req, he.Code, title, he.Msg)
 		return
 	}
 	s.log.Error("device registration failed", "err", err)
-	s.renderError(w, http.StatusInternalServerError, title, "Please try again.")
+	s.renderError(w, req, http.StatusInternalServerError, title, "Please try again.")
 }
 
 // newAuthID returns an unguessable registration identifier.

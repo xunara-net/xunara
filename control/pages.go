@@ -1,14 +1,16 @@
 package control
 
 import (
+	"bytes"
 	"html/template"
+	"io"
 	"net/http"
 )
 
 // pageHead is shared by every page: the console's design tokens, no external
 // assets, a strict referrer policy.
 const pageHead = `<!doctype html>
-<html lang="en">
+<html lang="{{.Lang}}" data-accent="{{.Accent}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -149,50 +151,74 @@ proceed; the decision is recorded in the audit log.</p>
 
 // renderLoginPage lists the configured providers, and the passkey button when
 // passkey sign-in is enabled.
-func (s *Server) renderLoginPage(w http.ResponseWriter, providers []providerView, passkey bool) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := loginPageTemplate.Execute(w, map[string]any{
+func (s *Server) renderLoginPage(w http.ResponseWriter, r *http.Request, providers []providerView, passkey bool) {
+	s.renderPage(w, r, loginPageTemplate, map[string]any{
 		"Title": "Sign in", "Providers": providers, "Passkey": passkey,
-	}); err != nil {
-		s.log.Error("rendering login page", "err", err)
+	})
+}
+
+// renderPage renders one standalone page (sign-in, errors, approvals) in the
+// language and accent the operator selected in the console. The output is
+// buffered so the localization step sees the whole page.
+func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, tmpl *template.Template, data map[string]any) {
+	lang, accent := consoleLangFromRequest(r), consoleAccentFromRequest(r)
+	data["Lang"], data["Accent"] = lang, accent
+	if title, ok := data["Title"].(string); ok {
+		data["Title"] = translateTitle(lang, title)
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		s.log.Error("rendering page", "template", tmpl.Name(), "err", err)
+		return
+	}
+	io.WriteString(w, translateHTML(lang, buf.String()))
 }
 
 // renderError shows a plain error page. The message must be static, never
 // provider- or request-controlled text.
-func (s *Server) renderError(w http.ResponseWriter, status int, title, message string) {
+func (s *Server) renderError(w http.ResponseWriter, r *http.Request, status int, title, message string) {
+	lang := consoleLangFromRequest(r)
+	page := translateHTML(lang, renderToString(errorPageTemplate, map[string]any{
+		"Title": translateTitle(lang, title), "Message": message,
+		"Lang": lang, "Accent": consoleAccentFromRequest(r),
+	}))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	if err := errorPageTemplate.Execute(w, map[string]any{
-		"Title": title, "Message": message,
-	}); err != nil {
-		s.log.Error("rendering error page", "err", err)
+	io.WriteString(w, page)
+}
+
+// translateTitle localizes a page title: the console's T helper is not
+// available to the standalone pages, and the browser tab should read the same
+// language as the page.
+func translateTitle(lang, title string) string {
+	return translator(lang)(title)
+}
+
+// renderToString renders one template to a string; on error it logs and
+// returns what was rendered so far, which keeps error pages best-effort.
+func renderToString(tmpl *template.Template, data map[string]any) string {
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return buf.String()
 	}
+	return buf.String()
 }
 
 // renderApprovePage shows the device approval form.
-func (s *Server) renderApprovePage(w http.ResponseWriter, data map[string]any) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := approvePageTemplate.Execute(w, data); err != nil {
-		s.log.Error("rendering approval page", "err", err)
-	}
+func (s *Server) renderApprovePage(w http.ResponseWriter, r *http.Request, data map[string]any) {
+	s.renderPage(w, r, approvePageTemplate, data)
 }
 
 // renderSSHCheckPage shows the SSH check approval form.
-func (s *Server) renderSSHCheckPage(w http.ResponseWriter, data map[string]any) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := sshCheckPageTemplate.Execute(w, data); err != nil {
-		s.log.Error("rendering ssh check page", "err", err)
-	}
+func (s *Server) renderSSHCheckPage(w http.ResponseWriter, r *http.Request, data map[string]any) {
+	s.renderPage(w, r, sshCheckPageTemplate, data)
 }
 
 // renderDecidedPage shows the outcome of a device decision.
-func (s *Server) renderDecidedPage(w http.ResponseWriter, state string) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := decidedPageTemplate.Execute(w, map[string]any{
+func (s *Server) renderDecidedPage(w http.ResponseWriter, r *http.Request, state string) {
+	s.renderPage(w, r, decidedPageTemplate, map[string]any{
 		"Title": "Registration " + state,
 		"State": state,
-	}); err != nil {
-		s.log.Error("rendering decided page", "err", err)
-	}
+	})
 }

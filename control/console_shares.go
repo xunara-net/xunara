@@ -147,7 +147,7 @@ func (s *Server) handleConsoleShares(w http.ResponseWriter, r *http.Request) {
 
 	principal, ok := s.sessionPrincipal(session)
 	if !ok {
-		s.renderError(w, http.StatusInternalServerError, "Share unavailable",
+		s.renderError(w, r, http.StatusInternalServerError, "Share unavailable",
 			"The signed-in user no longer exists.")
 		return
 	}
@@ -156,34 +156,34 @@ func (s *Server) handleConsoleShares(w http.ResponseWriter, r *http.Request) {
 }
 
 // consoleShareError renders a share failure as the console's error page.
-func (s *Server) consoleShareError(w http.ResponseWriter, err error) {
+func (s *Server) consoleShareError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, errShareDisabled):
-		s.renderError(w, http.StatusNotFound, "Sharing disabled",
+		s.renderError(w, r, http.StatusNotFound, "Sharing disabled",
 			"This deployment has no platform share registry.")
 	case errors.Is(err, errShareNodeUnknown):
-		s.renderError(w, http.StatusNotFound, "Unknown node",
+		s.renderError(w, r, http.StatusNotFound, "Unknown node",
 			"No local machine has that ID or stable ID.")
 	case errors.Is(err, errShareOrgUnknown):
-		s.renderError(w, http.StatusNotFound, "Unknown organization",
+		s.renderError(w, r, http.StatusNotFound, "Unknown organization",
 			"That organization is not hosted by this router.")
 	case errors.Is(err, errShareIdentityInvalid):
-		s.renderError(w, http.StatusBadRequest, "Invalid target identity",
+		s.renderError(w, r, http.StatusBadRequest, "Invalid target identity",
 			"Provider and subject are required, and the built-in local provider is not a share target.")
 	case errors.Is(err, errShareSelf):
-		s.renderError(w, http.StatusBadRequest, "Same organization",
+		s.renderError(w, r, http.StatusBadRequest, "Same organization",
 			"A machine cannot be shared with its own organization.")
 	case errors.Is(err, errShareNotMine):
-		s.renderError(w, http.StatusNotFound, "Unknown share",
+		s.renderError(w, r, http.StatusNotFound, "Unknown share",
 			"No share with that ID belongs to you or your organization.")
 	case errors.Is(err, errShareForbidden):
-		s.renderError(w, http.StatusForbidden, "Not allowed",
+		s.renderError(w, r, http.StatusForbidden, "Not allowed",
 			"Your role does not allow withdrawing this share.")
 	case errors.Is(err, errShareTKA), errors.Is(err, ErrShareExists), errors.Is(err, errShareDecision):
-		s.renderError(w, http.StatusConflict, "Share conflict", err.Error())
+		s.renderError(w, r, http.StatusConflict, "Share conflict", err.Error())
 	default:
 		s.log.Error("share action", "err", err)
-		s.renderError(w, http.StatusInternalServerError, "Share failed", "Please try again.")
+		s.renderError(w, r, http.StatusInternalServerError, "Share failed", "Please try again.")
 	}
 }
 
@@ -197,13 +197,13 @@ func (s *Server) handleConsoleCreateShare(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !s.sharingEnabled() {
-		s.renderError(w, http.StatusNotFound, "Sharing disabled",
+		s.renderError(w, r, http.StatusNotFound, "Sharing disabled",
 			"This deployment has no platform share registry.")
 		return
 	}
 	principal, ok := s.sessionPrincipal(session)
 	if !ok {
-		s.renderError(w, http.StatusUnauthorized, "Session expired", "Sign in again.")
+		s.renderError(w, r, http.StatusUnauthorized, "Session expired", "Sign in again.")
 		return
 	}
 
@@ -214,7 +214,7 @@ func (s *Server) handleConsoleCreateShare(w http.ResponseWriter, r *http.Request
 		r.PostFormValue("subject"),
 	)
 	if err != nil {
-		s.consoleShareError(w, err)
+		s.consoleShareError(w, r, err)
 		return
 	}
 	data["Notice"] = fmt.Sprintf("Share %s created; waiting for %s to accept.", share.ID, s.shareOrgLabel(share.TargetOrg))
@@ -250,13 +250,13 @@ func (s *Server) consoleShareAction(w http.ResponseWriter, r *http.Request,
 	}
 	principal, ok := s.sessionPrincipal(session)
 	if !ok {
-		s.renderError(w, http.StatusUnauthorized, "Session expired", "Sign in again.")
+		s.renderError(w, r, http.StatusUnauthorized, "Session expired", "Sign in again.")
 		return
 	}
 
 	share, err := action(r.Context(), principal, chi.URLParam(r, "id"))
 	if err != nil {
-		s.consoleShareError(w, err)
+		s.consoleShareError(w, r, err)
 		return
 	}
 	data["Notice"] = fmt.Sprintf("Share %s is now %s.", share.ID, share.Status)

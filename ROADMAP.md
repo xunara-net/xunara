@@ -1928,6 +1928,27 @@ A/AAAA 记录；ACL 仍是唯一授权来源（发现不等于授权）。规格
 - 测试：`control/console_ui_test.go`（壳层契约、令牌共享、无外部资源、
   列头 scope）；既有 Console/角色/登录测试全部保持通过。
 
+
+## M44 — Console 中英双语与双主题（v2，已完成）
+
+目标：用户要求 Console「符合国人审美与操作习惯」，并对比公开的中文管理台确认
+信息层级；同时交付中英切换与蓝/墨绿双配色。范围仍是表现层（协议、`/api/v2`、
+handler 数据语义与存储不动）。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §51。
+
+- 语言：cookie `xunara_lang` > 浏览器 `Accept-Language` > 英文；模板只写英文
+  原文（即 message id），缺翻译回落英文。
+- 翻译：壳层用 `T` 模板函数；页面正文在渲染后由
+  `control/console_i18n_html.go` 本地化（文本节点、整段 `<p>`、可见属性），
+  跳过 `script`/`style`/`code`/`pre`；词典在 `control/console_i18n_zh.go`
+  （含错误页标题与说明）。
+- 主题：蓝（默认）/墨绿，浅色与深色各一套令牌；切换用纯链接
+  `GET /console/prefs`（无 JS 可用，`return_to` 只允许站内路径）。
+- 时间：`-console-timezone`（默认 `Asia/Shanghai`）渲染本地时间，未知时区回退
+  UTC 并告警；CLI 不变。
+- 测试：`control/console_i18n_test.go`（语言解析、中文页面、偏好与开放重定向、
+  本地化跳过规则、时区、错误页）；既有测试保持通过。
+
 ---
 
 ## 后续计划（用户指定的排序）

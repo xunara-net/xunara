@@ -2637,3 +2637,63 @@ Consul 的 Meta 键必须匹配 `^[a-zA-Z0-9_-]+$`（≤128 字节），值不�
   深浅色令牌、渐进增强控件默认隐藏、无外部资源、所有列头带 `scope`；
   登录页与 Console 共用设计令牌。
 - 既有 Console/角色/登录/审批测试全部保持通过（行为与文案未变）。
+
+## 51. Web Console 中英双语与双主题（v2，M44）
+
+目标：让"用户控制中心"同时满足中英文用户的使用习惯（对照公开的中文管理台做法
+确认了信息层级），并给出第二套配色。范围同样严格限定在**表现层**：不改任何
+协议、`/api/v2`、存储与处理逻辑，禁 JS 时仍然完整可用。
+
+### 51.1 语言解析
+
+- 优先级：操作员在 Console 中选择的语言 cookie（`xunara_lang`）→ 浏览器
+  `Accept-Language` 的主语言子标签（`zh-CN` 命中 `zh`）→ 英文。
+- 只支持 `zh` 与 `en`；未知取值不写入 cookie，回落到默认值。解析是纯函数
+  （`consoleLangFromRequest` / `acceptLanguage`），不引入任何身份语义。
+- 语言与身份无关：不写审计、不影响 `/api/v2`、不影响客户端协议。
+
+### 51.2 翻译机制
+
+- 模板只写英文原文，英文原文即 message id；缺翻译时回落英文，页面永远不会
+  出现空白或 key。
+- `T` 模板函数（`translator(lang)`）用于需要按语言拼接的壳层与导航。
+- 渲染后本地化（`control/console_i18n_html.go`）覆盖页面正文：
+  - 文本节点按 trim 后的原文查表，保留前后空白，只替换可见文字；
+  - `<p>` 段落按"内部标记"整段查表（`consoleZHBlock`），使含 `<code>`/`<em>`
+    的说明文字在两种语言下都是完整句子；
+  - `placeholder` / `title` / `aria-label` / `alt` 属性值同样查表；
+  - **不进入** `<script>`、`<style>`、`<code>`、`<pre>`、`<title>`：命令示例、
+    一次性密钥、内联脚本与代码样本保持原样；未命中的字符串原样保留。
+- 词典集中在 `control/console_i18n_zh.go`，由模板与错误文案生成/校对，
+  错误页标题与说明也在其中。
+
+### 51.3 主题配色
+
+- 默认蓝（`data-accent="blue"`），可选墨绿（`data-accent="teal"`）；每种配色在
+  浅色/深色下各有一套取值，同样只使用 CSS 令牌，不引入外部资源。
+- 选择保存在 `xunara_accent` cookie（一年、`SameSite=Lax`、`Path=/`，与
+  session cookie 同样受 Secure 约束）。
+- 语言与配色通过 `GET /console/prefs?lang=&accent=&return_to=` 切换：纯链接、
+  无 JS 可用；`return_to` 只接受以单个 `/` 开头的站内路径，拒绝 `//` 与绝对
+  URL（防开放重定向）。
+
+### 51.4 时间显示
+
+- Console 的时间戳按 `-console-timezone`（IANA 名称，默认 `Asia/Shanghai`）
+  渲染为 `2006-01-02 15:04 MST`；未知名称回退 UTC 并在启动日志中告警。
+- 零值时间显示为「从未 / never」。CLI 输出格式不变。
+
+### 51.5 明确不做（v2）
+
+- 不引入前端框架、构建步骤、CDN 或外部字体；不改变 HTML 的结构语义。
+- 不改 `/api/v2`、协议字段、审计内容；不翻译机器名、用户名、策略内容等
+  运营数据（只在必要时按原文精确匹配，例如状态词）。
+- 不提供按组织/按用户的语言偏好存储：语言是浏览器偏好，不是身份属性。
+
+### 51.6 测试
+
+- `control/console_i18n_test.go`：语言解析顺序（cookie > Accept-Language > 默认）、
+  中文页面（壳层 + 导航 + 标题 + 表头 + 按钮 + 空状态）、偏好切换与开放重定向
+  防护、`translateHTML` 的跳过规则（script/style/code/pre 与英文直通）、时区
+  格式化与回退、错误页与登录页的本地化。
+- 既有 Console/角色/登录/审批测试保持通过（默认英文输出字节不变）。

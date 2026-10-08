@@ -9,7 +9,7 @@ tailscale up --login-server=https://control.example.com
 
 ## 状态
 
-v1/v2 规格范围（M1–M43）已全部实现：`go test ./...` 与关键包的 `go test -race`
+v1/v2 规格范围（M1–M44）已全部实现：`go test ./...` 与关键包的 `go test -race`
 通过。规格 [PROJECT_SPEC.md](Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md)、
 进度 [ROADMAP.md](ROADMAP.md)、开发约束 [AGENTS.md](AGENTS.md)。
 
@@ -26,7 +26,8 @@ v1/v2 规格范围（M1–M43）已全部实现：`go test ./...` 与关键包�
   MagicDNS 可见范围、按 ACL 自动收敛的可见性、跨组织服务名投影）、Flux
   端到端加密文件投递、Reach 远程命令（目标显式审批）、Share 跨组织机器共享、
   Workload Identity。
-- **运维**：Web Console（22 页，响应式/暗色模式/可访问性/渐进增强）、
+- **运维**：Web Console（22 页，中英双语、蓝/墨绿双配色、本地时区、
+  响应式/暗色模式/可访问性/渐进增强）、
   HTTP `/api/v2` + gRPC、Webhooks（签名 + 重试）、
   审计日志、Security Center，以及路由 / DERP / Relay / Serve / Reach / Flux
   等只读管理面。
@@ -65,8 +66,8 @@ go run ./cmd/xunara-veil -h
 
 ## 文档
 
-- [PROJECT_SPEC.md](Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md) — 产品与协议规格（§1–§50）
-- [ROADMAP.md](ROADMAP.md) — 里程碑与进度（M1–M43）
+- [PROJECT_SPEC.md](Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md) — 产品与协议规格（§1–§51）
+- [ROADMAP.md](ROADMAP.md) — 里程碑与进度（M1–M44）
 - [IDENTITY_LOGIN.md](Xunara_AI_Development_Docs_2026-10-05/IDENTITY_LOGIN.md) — 身份与登录设计
 - [AGENTS.md](AGENTS.md) — 开发规则与约束
 

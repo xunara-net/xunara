@@ -291,12 +291,12 @@ func (s *Server) handleConsoleDeletePasskey(w http.ResponseWriter, r *http.Reque
 	}
 	if err := s.identity.DeletePasskey(id, session.UserID); err != nil {
 		if errors.Is(err, identity.ErrPasskeyNotFound) {
-			s.renderError(w, http.StatusNotFound, "Passkey not found",
+			s.renderError(w, r, http.StatusNotFound, "Passkey not found",
 				"That passkey does not exist on this account.")
 			return
 		}
 		s.log.Error("deleting passkey", "user", int(session.UserID), "err", err)
-		s.renderError(w, http.StatusInternalServerError, "Delete failed", "Please try again.")
+		s.renderError(w, r, http.StatusInternalServerError, "Delete failed", "Please try again.")
 		return
 	}
 

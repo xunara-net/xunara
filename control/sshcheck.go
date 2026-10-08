@@ -268,18 +268,18 @@ func (s *Server) handleSSHCheckPage(w http.ResponseWriter, req *http.Request) {
 
 	sess, ok := s.identity.GetSSHCheckSession(authID)
 	if !ok {
-		s.renderError(w, http.StatusNotFound, "Unknown SSH check",
+		s.renderError(w, req, http.StatusNotFound, "Unknown SSH check",
 			"This SSH check is unknown or has expired. The SSH connection will ask again.")
 		return
 	}
 	now := time.Now()
 	if sess.Expired(now) && sess.Pending() {
-		s.renderError(w, http.StatusGone, "SSH check expired",
+		s.renderError(w, req, http.StatusGone, "SSH check expired",
 			"This SSH check has expired. The SSH connection will ask again.")
 		return
 	}
 	if !sess.Pending() {
-		s.renderDecidedPage(w, string(sess.Verdict))
+		s.renderDecidedPage(w, req, string(sess.Verdict))
 		return
 	}
 
@@ -292,14 +292,14 @@ func (s *Server) handleSSHCheckPage(w http.ResponseWriter, req *http.Request) {
 	src, _ := s.store.GetNodeByID(state.NodeID(sess.SrcNodeID))
 	dst, _ := s.store.GetNodeByID(state.NodeID(sess.DstNodeID))
 
-	s.renderSSHCheckPage(w, map[string]any{
+	s.renderSSHCheckPage(w, req, map[string]any{
 		"AuthID":      authID,
 		"CanWrite":    s.userCanWrite(session.UserID),
 		"Source":      nodeLabel(src, sess.SrcNodeID),
 		"Destination": nodeLabel(dst, sess.DstNodeID),
 		"LocalUser":   sess.LocalUser,
-		"Created":     sess.CreatedAt.Format(time.RFC3339),
-		"Expires":     sess.ExpiresAt.Format(time.RFC3339),
+		"Created":     s.consoleTime(sess.CreatedAt),
+		"Expires":     s.consoleTime(sess.ExpiresAt),
 		"LoginName":   s.UserProfile(session.UserID).LoginName,
 		"CSRF":        csrfTokenFor(sessionToken(req)),
 	})
@@ -324,12 +324,12 @@ func (s *Server) decideSSHCheck(w http.ResponseWriter, req *http.Request, verdic
 		return
 	}
 	if !s.userCanWrite(session.UserID) {
-		s.renderError(w, http.StatusForbidden, "SSH check rejected",
+		s.renderError(w, req, http.StatusForbidden, "SSH check rejected",
 			"Your role does not allow deciding SSH checks.")
 		return
 	}
 	if !checkCSRF(req, token) {
-		s.renderError(w, http.StatusForbidden, "SSH check rejected",
+		s.renderError(w, req, http.StatusForbidden, "SSH check rejected",
 			"The form token is invalid. Reload the page and try again.")
 		return
 	}
@@ -338,22 +338,22 @@ func (s *Server) decideSSHCheck(w http.ResponseWriter, req *http.Request, verdic
 	if err != nil {
 		switch {
 		case errors.Is(err, identity.ErrSSHCheckNotFound):
-			s.renderError(w, http.StatusNotFound, "Unknown SSH check",
+			s.renderError(w, req, http.StatusNotFound, "Unknown SSH check",
 				"This SSH check is unknown or has expired.")
 		case errors.Is(err, identity.ErrSSHCheckExpired):
-			s.renderError(w, http.StatusGone, "SSH check expired",
+			s.renderError(w, req, http.StatusGone, "SSH check expired",
 				"This SSH check has expired. The SSH connection will ask again.")
 		case errors.Is(err, identity.ErrSSHCheckDecided):
 			// A second tab or a replay: show the recorded outcome.
 			if got, ok := s.identity.GetSSHCheckSession(authID); ok {
-				s.renderDecidedPage(w, string(got.Verdict))
+				s.renderDecidedPage(w, req, string(got.Verdict))
 				return
 			}
-			s.renderError(w, http.StatusConflict, "SSH check already decided",
+			s.renderError(w, req, http.StatusConflict, "SSH check already decided",
 				"This SSH check was already decided.")
 		default:
 			s.log.Error("deciding ssh check", "err", err)
-			s.renderError(w, http.StatusInternalServerError, "SSH check failed", "Please try again.")
+			s.renderError(w, req, http.StatusInternalServerError, "SSH check failed", "Please try again.")
 		}
 		return
 	}
@@ -365,7 +365,7 @@ func (s *Server) decideSSHCheck(w http.ResponseWriter, req *http.Request, verdic
 	s.audit(fmt.Sprintf("user:%d", session.UserID), action, "sshcheck:"+authID,
 		fmt.Sprintf("src_node=%d dst_node=%d local_user=%s", sess.SrcNodeID, sess.DstNodeID, sess.LocalUser))
 
-	s.renderDecidedPage(w, string(verdict))
+	s.renderDecidedPage(w, req, string(verdict))
 }
 
 // nodeLabel names a node for a page, falling back to its ID when the node is

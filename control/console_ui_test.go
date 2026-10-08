@@ -1,6 +1,7 @@
 package control
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -40,9 +41,12 @@ func TestConsoleUIShell(t *testing.T) {
 		}
 	}
 
-	// The modernization keeps the console free of external assets.
-	for _, banned := range []string{`href="http`, `src="http`, "@import"} {
-		if strings.Contains(body, banned) {
+	// The modernization keeps the console free of external assets. Links are
+	// fine (the footer points at the project pages), but nothing may be
+	// loaded from another origin.
+	linked := regexp.MustCompile(`<a\b[^>]*>`).ReplaceAllString(body, "")
+	for _, banned := range []string{`href="http`, `src="http`, "@import", "url(http"} {
+		if strings.Contains(linked, banned) {
 			t.Errorf("console shell references an external asset (%q)", banned)
 		}
 	}

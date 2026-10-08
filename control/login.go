@@ -30,7 +30,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	ids := s.providers.IDs()
 	if len(ids) == 0 && s.passkeys == nil {
-		s.renderError(w, http.StatusServiceUnavailable, "Sign-in unavailable",
+		s.renderError(w, r, http.StatusServiceUnavailable, "Sign-in unavailable",
 			"No identity provider is configured on this server.")
 		return
 	}
@@ -52,13 +52,13 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 				URL:  "/login?provider=" + url.QueryEscape(id) + "&return_to=" + url.QueryEscape(returnTo),
 			})
 		}
-		s.renderLoginPage(w, views, s.passkeys != nil)
+		s.renderLoginPage(w, r, views, s.passkeys != nil)
 		return
 	}
 
 	provider, ok := s.providers.Get(providerID)
 	if !ok {
-		s.renderError(w, http.StatusBadRequest, "Unknown provider",
+		s.renderError(w, r, http.StatusBadRequest, "Unknown provider",
 			"The requested identity provider is not configured on this server.")
 		return
 	}
@@ -71,7 +71,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		s.log.Error("creating auth transaction", "provider", providerID, "err", err)
-		s.renderError(w, http.StatusInternalServerError, "Sign-in failed", "Please try again.")
+		s.renderError(w, r, http.StatusInternalServerError, "Sign-in failed", "Please try again.")
 		return
 	}
 
@@ -79,7 +79,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.audit("system", identity.AuditLoginFailed, "provider:"+providerID, loginFailureReason(err))
 		s.log.Warn("starting login", "provider", providerID, "err", err)
-		s.renderError(w, http.StatusBadGateway, "Provider unavailable",
+		s.renderError(w, r, http.StatusBadGateway, "Provider unavailable",
 			"The identity provider could not be reached. Please try again later.")
 		return
 	}
@@ -104,7 +104,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	provider, ok := s.providers.Get(providerID)
 	if !ok {
-		s.renderError(w, http.StatusNotFound, "Unknown provider",
+		s.renderError(w, r, http.StatusNotFound, "Unknown provider",
 			"The requested identity provider is not configured on this server.")
 		return
 	}
@@ -112,7 +112,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	txID, browserSecret, ok := authCookieValue(r)
 	if !ok {
 		s.audit("system", identity.AuditLoginFailed, "provider:"+providerID, "missing browser binding")
-		s.renderError(w, http.StatusBadRequest, "Sign-in expired",
+		s.renderError(w, r, http.StatusBadRequest, "Sign-in expired",
 			"This sign-in link is incomplete or has expired. Start again from your device.")
 		return
 	}
@@ -120,7 +120,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	tx, ok := s.identity.GetAuthTransaction(txID)
 	if !ok || tx.ProviderID != providerID {
 		s.audit("system", identity.AuditLoginFailed, "provider:"+providerID, "unknown transaction")
-		s.renderError(w, http.StatusBadRequest, "Sign-in expired",
+		s.renderError(w, r, http.StatusBadRequest, "Sign-in expired",
 			"This sign-in link is incomplete or has expired. Start again from your device.")
 		return
 	}
@@ -128,19 +128,19 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	// URL stolen from another browser cannot be completed here.
 	if !identity.SecretEqual(tx.BrowserSessionHash, browserSecret) {
 		s.audit("system", identity.AuditLoginFailed, "provider:"+providerID, "browser binding mismatch")
-		s.renderError(w, http.StatusBadRequest, "Sign-in rejected",
+		s.renderError(w, r, http.StatusBadRequest, "Sign-in rejected",
 			"This sign-in was started in a different browser. Start again from your device.")
 		return
 	}
 	if tx.Consumed() {
 		s.audit("system", identity.AuditLoginFailed, "provider:"+providerID, "transaction replayed")
-		s.renderError(w, http.StatusBadRequest, "Sign-in already used",
+		s.renderError(w, r, http.StatusBadRequest, "Sign-in already used",
 			"This sign-in link has already been used. Start again from your device.")
 		return
 	}
 	if tx.Expired(time.Now()) {
 		s.audit("system", identity.AuditLoginFailed, "provider:"+providerID, "transaction expired")
-		s.renderError(w, http.StatusBadRequest, "Sign-in expired",
+		s.renderError(w, r, http.StatusBadRequest, "Sign-in expired",
 			"This sign-in link has expired. Start again from your device.")
 		return
 	}
@@ -164,7 +164,7 @@ func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, tx identity
 	if err != nil {
 		s.audit("system", identity.AuditLoginFailed, "provider:"+provider.ID(), loginFailureReason(err))
 		s.log.Warn("login rejected", "provider", provider.ID(), "err", err)
-		s.renderError(w, http.StatusForbidden, "Sign-in failed",
+		s.renderError(w, r, http.StatusForbidden, "Sign-in failed",
 			"The identity provider did not confirm this sign-in. Start again from your device.")
 		return
 	}
@@ -173,7 +173,7 @@ func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, tx identity
 	// the identity: replayed callbacks and reused codes stop here.
 	if _, err := s.identity.ConsumeAuthTransaction(tx.ID); err != nil {
 		s.audit("system", identity.AuditLoginFailed, "provider:"+provider.ID(), loginFailureReason(err))
-		s.renderError(w, http.StatusForbidden, "Sign-in failed",
+		s.renderError(w, r, http.StatusForbidden, "Sign-in failed",
 			"This sign-in was already completed. Start again from your device.")
 		return
 	}
@@ -182,7 +182,7 @@ func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, tx identity
 	if err != nil {
 		s.log.Error("resolving user", "provider", provider.ID(), "err", err)
 		s.audit("system", identity.AuditLoginFailed, "provider:"+provider.ID(), "user resolution failed")
-		s.renderError(w, http.StatusInternalServerError, "Sign-in failed", "Please try again.")
+		s.renderError(w, r, http.StatusInternalServerError, "Sign-in failed", "Please try again.")
 		return
 	}
 
@@ -193,7 +193,7 @@ func (s *Server) finishLogin(w http.ResponseWriter, r *http.Request, tx identity
 	})
 	if err != nil {
 		s.log.Error("creating session", "user", int(user.ID), "err", err)
-		s.renderError(w, http.StatusInternalServerError, "Sign-in failed", "Please try again.")
+		s.renderError(w, r, http.StatusInternalServerError, "Sign-in failed", "Please try again.")
 		return
 	}
 

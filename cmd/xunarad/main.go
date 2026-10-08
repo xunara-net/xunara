@@ -23,17 +23,19 @@ import (
 
 func main() {
 	var (
-		listen       = flag.String("listen", "0.0.0.0:8080", "address to listen on")
-		stateDir     = flag.String("state-dir", "data", "directory for persistent state")
-		serverURL    = flag.String("server-url", "", "externally reachable base URL (defaults to http://<listen>)")
-		domain       = flag.String("domain", "", "tailnet MagicDNS domain (empty disables MagicDNS)")
-		derpMapPath  = flag.String("derp-map", "", "path to a tailcfg.DERPMap JSON file to advertise to clients")
-		derpPolicy   = flag.String("derp-policy", "", "DERP policy: empty serves -derp-map, none disables DERP, regions serves only -derp-regions")
-		derpRegions  = flag.String("derp-regions", "", "comma-separated DERP region IDs served when -derp-policy=regions")
-		clientVer    = flag.String("client-version", "", "latest client version to advertise to clients (e.g. 1.88.3); empty disables the advisory")
-		clientVerURL = flag.String("client-version-url", "", "URL opened by the client's update notification (optional)")
-		policyPath   = flag.String("policy", "", "path to an ACL policy document (HuJSON); empty allows everything")
-		logLevel     = flag.String("log-level", "info", "log level: debug|info|warn|error")
+		listen          = flag.String("listen", "0.0.0.0:8080", "address to listen on")
+		stateDir        = flag.String("state-dir", "data", "directory for persistent state")
+		serverURL       = flag.String("server-url", "", "externally reachable base URL (defaults to http://<listen>)")
+		domain          = flag.String("domain", "", "tailnet MagicDNS domain (empty disables MagicDNS)")
+		derpMapPath     = flag.String("derp-map", "", "path to a tailcfg.DERPMap JSON file to advertise to clients")
+		derpPolicy      = flag.String("derp-policy", "", "DERP policy: empty serves -derp-map, none disables DERP, regions serves only -derp-regions")
+		derpRegions     = flag.String("derp-regions", "", "comma-separated DERP region IDs served when -derp-policy=regions")
+		clientVer       = flag.String("client-version", "", "latest client version to advertise to clients (e.g. 1.88.3); empty disables the advisory")
+		clientVerURL    = flag.String("client-version-url", "", "URL opened by the client's update notification (optional)")
+		policyPath      = flag.String("policy", "", "path to an ACL policy document (HuJSON); empty allows everything")
+		logLevel        = flag.String("log-level", "info", "log level: debug|info|warn|error")
+		consoleTimezone = flag.String("console-timezone", "Asia/Shanghai",
+			"IANA timezone the web console prints timestamps in; empty or unknown falls back to UTC")
 		oidcIssuer   = flag.String("oidc-issuer", "", "OIDC issuer URL; enables OIDC login when set")
 		oidcID       = flag.String("oidc-id", "oidc", "provider ID for the OIDC issuer")
 		oidcClient   = flag.String("oidc-client-id", "", "OIDC client ID")
@@ -107,7 +109,7 @@ func main() {
 			logger.Error("invalid configuration", "err", err)
 			os.Exit(1)
 		}
-		runRouter(*orgConfigPath, *listen, *grpcListen, *platformTokenEnv, *platformStateDir, logger)
+		runRouter(*orgConfigPath, *listen, *grpcListen, *platformTokenEnv, *platformStateDir, *consoleTimezone, logger)
 		return
 	}
 	if *platformStateDir != "" {
@@ -202,6 +204,7 @@ func main() {
 		DERPPolicy:          derpPolicyValue,
 		LatestClientVersion: *clientVer,
 		ClientVersionURL:    *clientVerURL,
+		ConsoleTimezone:     *consoleTimezone,
 		OIDCProviders:       oidcProviders,
 		AllowLocalLogin:     *allowLocalLogin,
 		Passkeys:            passkeyCfg,
@@ -272,7 +275,7 @@ func checkOrgScopedFlags(visited []string) error {
 // runRouter serves a multi-tenant deployment until the process is signalled.
 // When platformStateDir is set, the platform API may also create and delete
 // organizations at runtime; their control planes live under that directory.
-func runRouter(path, listen, grpcListen, platformTokenEnv, platformStateDir string, logger *slog.Logger) {
+func runRouter(path, listen, grpcListen, platformTokenEnv, platformStateDir, consoleTimezone string, logger *slog.Logger) {
 	sites, err := loadOrgSites(path, logger)
 	if err != nil {
 		logger.Error("loading the organization table", "err", err)
@@ -300,10 +303,11 @@ func runRouter(path, listen, grpcListen, platformTokenEnv, platformStateDir stri
 			// settings (the logger and nothing that carries a secret).
 			NewServer: func(org control.ManagedOrg, stateDir string) (*control.Server, error) {
 				return control.New(control.Config{
-					ServerURL: org.ServerURL,
-					Domain:    org.Domain,
-					StateDir:  stateDir,
-					Logger:    logger,
+					ServerURL:       org.ServerURL,
+					Domain:          org.Domain,
+					StateDir:        stateDir,
+					ConsoleTimezone: consoleTimezone,
+					Logger:          logger,
 				})
 			},
 		})

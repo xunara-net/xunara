@@ -1,7 +1,9 @@
 package control
 
 import (
+	"bytes"
 	"html/template"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -31,6 +33,7 @@ const siteTokens = `
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
   --wrap: 76rem;
+  --chrome: #1b2422; --chrome-fg: #eef3f1; --chrome-muted: #9db0aa;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -41,6 +44,7 @@ const siteTokens = `
     --ok: #6bd08a; --ok-bg: #12291c;
     --warn: #ff9a90; --warn-bg: #31181a;
     --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 2px 8px rgba(0, 0, 0, .3);
+    --chrome: #0f1614; --chrome-fg: #eef3f1; --chrome-muted: #8fa39d;
   }
 }
 :root[data-theme="dark"] {
@@ -51,81 +55,136 @@ const siteTokens = `
   --ok: #6bd08a; --ok-bg: #12291c;
   --warn: #ff9a90; --warn-bg: #31181a;
   --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 2px 8px rgba(0, 0, 0, .3);
+  --chrome: #0f1614; --chrome-fg: #eef3f1; --chrome-muted: #8fa39d;
+}
+/* Accent palettes: blue is the default, teal matches the warmer
+   Chinese-admin look. Both keep the same contrast in light and dark. */
+:root[data-accent="teal"] {
+  --accent: #0f766e; --accent-fg: #ffffff; --accent-soft: #e5f3f1;
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-accent="teal"]:not([data-theme="light"]) {
+    --accent: #5eead4; --accent-fg: #062a26; --accent-soft: #12312c;
+  }
+}
+:root[data-accent="teal"][data-theme="dark"] {
+  --accent: #5eead4; --accent-fg: #062a26; --accent-soft: #12312c;
 }
 * { box-sizing: border-box; }
 `
 
 const consoleHead = `<!doctype html>
-<html lang="en">
+<html lang="{{.Lang}}" data-accent="{{.Accent}}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>{{.Title}} — Xunara console</title>
+<title>{{T .Title}} — Xunara console</title>
 <style>` + siteTokens + `
 body { font-family: var(--font); margin: 0; background: var(--bg); color: var(--fg);
-       line-height: 1.5; -webkit-text-size-adjust: 100%; }
+       line-height: 1.6; -webkit-text-size-adjust: 100%; }
 .skip { position: absolute; left: -999px; top: 0; z-index: 100; background: var(--surface);
         color: var(--fg); padding: .6rem .9rem; border-radius: 0 0 var(--radius-sm) 0; }
 .skip:focus { left: 0; }
-.topbar { position: sticky; top: 0; z-index: 50; display: flex; flex-wrap: wrap; align-items: center;
-          gap: .35rem .9rem; padding: .7rem 1.4rem; background: var(--surface);
-          border-bottom: 1px solid var(--border); }
-.brand { font-size: 1rem; font-weight: 700; letter-spacing: .01em; display: flex; align-items: baseline; gap: .4rem; }
-.brand span { color: var(--muted); font-weight: 500; }
-nav { display: flex; flex-wrap: wrap; gap: .15rem; }
-nav a { color: var(--muted); text-decoration: none; padding: .35rem .55rem; border-radius: var(--radius-sm);
-        font-size: .86rem; font-weight: 500; }
-nav a:hover { background: var(--surface-2); color: var(--fg); }
-nav a.active { background: var(--accent); color: var(--accent-fg); }
-.who { margin-left: auto; display: flex; align-items: center; gap: .5rem; font-size: .84rem; color: var(--muted); }
+
+/* Top bar: dark chrome with the brand, preferences and the account block. */
+.topbar { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: .8rem;
+          padding: .62rem 1.4rem; background: var(--chrome); color: var(--chrome-fg); }
+.brand { display: flex; align-items: baseline; gap: .45rem; font-size: 1rem; font-weight: 700; letter-spacing: .01em; }
+.brand span { color: var(--chrome-muted); font-weight: 500; }
+.who { margin-left: auto; display: flex; align-items: center; gap: .5rem; font-size: .84rem; color: var(--chrome-muted); }
 .who form { margin: 0; }
-.who-name { font-weight: 600; color: var(--fg); }
-main { max-width: var(--wrap); margin: 1.4rem auto 3rem; padding: 0 1.4rem; }
+.who-name { font-weight: 600; color: var(--chrome-fg); }
+.topbar .tag { background: rgba(255, 255, 255, .09); color: var(--chrome-muted); border-color: transparent; }
+.topbar button { font-size: .82rem; }
+button.ghost { background: transparent; color: var(--chrome-muted); border-color: rgba(255, 255, 255, .22); }
+button.ghost:hover { color: var(--chrome-fg); background: rgba(255, 255, 255, .08); }
+.nav-toggle, .theme-toggle { display: none; }
+html.js .theme-toggle { display: inline-flex; align-items: center; background: transparent; color: var(--chrome-muted);
+  border: 1px solid rgba(255, 255, 255, .22); padding: .3rem .5rem; }
+
+/* Preferences: a plain <details>, so language and accent work without JS. */
+.prefs { position: relative; }
+.prefs summary { list-style: none; cursor: pointer; padding: .3rem .55rem; border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: var(--radius-sm); color: var(--chrome-muted); }
+.prefs summary::-webkit-details-marker { display: none; }
+.prefs[open] summary, .prefs summary:hover { color: var(--chrome-fg); background: rgba(255, 255, 255, .08); }
+.prefs-menu { position: absolute; right: 0; top: calc(100% + .45rem); z-index: 60; min-width: 11rem;
+  background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: .45rem; display: flex; flex-direction: column; }
+.prefs-menu a { color: var(--fg); text-decoration: none; padding: .35rem .5rem; border-radius: var(--radius-sm); font-size: .86rem; }
+.prefs-menu a:hover { background: var(--surface-2); }
+.prefs-menu a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.prefs-label { margin: .35rem .5rem .15rem; font-size: .72rem; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--muted); }
+
+/* Shell: sidebar plus content, the familiar Chinese admin layout. */
+.shell { display: grid; grid-template-columns: 15.5rem minmax(0, 1fr); gap: 0 1.6rem;
+         max-width: var(--wrap); margin: 0 auto; padding: 0 1.4rem; align-items: start; }
+.sidebar { position: sticky; top: 3.6rem; max-height: calc(100vh - 4.4rem); overflow-y: auto;
+           padding: 1.1rem 0 2rem; }
+.sidebar nav { display: flex; flex-direction: column; gap: .08rem; }
+.nav-group { margin: 1rem .6rem .3rem; font-size: .72rem; font-weight: 700; letter-spacing: .07em;
+             text-transform: uppercase; color: var(--muted); }
+.sidebar a { display: block; padding: .42rem .65rem; border-radius: var(--radius-sm); color: var(--fg);
+             text-decoration: none; font-size: .9rem; border-left: 3px solid transparent; }
+.sidebar a:hover { background: var(--surface-2); }
+.sidebar a.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; border-left-color: var(--accent); }
+main { min-width: 0; padding: 1.3rem 0 3rem; }
 main:focus { outline: none; }
-h2 { font-size: 1.2rem; margin: 1.9rem 0 .6rem; letter-spacing: -.01em; }
-h3 { font-size: 1rem; margin: 1.3rem 0 .4rem; }
+.page-head { margin: 0 0 1rem; }
+.page-head h1 { font-size: 1.4rem; margin: 0 0 .25rem; letter-spacing: -.01em; }
+.page-head .lede { margin: 0; color: var(--muted); }
+h2 { font-size: 1.15rem; margin: 1.7rem 0 .5rem; }
+h3 { font-size: 1rem; margin: 1.2rem 0 .4rem; }
 h2:first-child, h3:first-child { margin-top: .4rem; }
-h2 + p, h3 + p { margin-top: .2rem; }
 p { margin: .5rem 0; }
 a { color: var(--accent); }
+
+/* Cards, tables and status badges. */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: .7rem; margin: 1rem 0 1.4rem; }
+.card { display: block; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+        padding: .85rem 1rem; color: inherit; text-decoration: none; }
+.card .num { display: block; font-size: 1.5rem; font-weight: 650; letter-spacing: -.01em; }
+.card span:last-child { color: var(--muted); font-size: .84rem; }
 .table-wrap { overflow-x: auto; margin: .6rem 0 1rem; background: var(--surface); border: 1px solid var(--border);
-              border-radius: var(--radius); box-shadow: var(--shadow); }
+              border-radius: var(--radius); }
 table { width: 100%; border-collapse: collapse; font-size: .88rem; }
-th, td { text-align: left; padding: .6rem .8rem; border-bottom: 1px solid var(--border); vertical-align: top;
+th, td { text-align: left; padding: .55rem .8rem; border-bottom: 1px solid var(--border); vertical-align: top;
          overflow-wrap: anywhere; }
-th { background: var(--surface-2); color: var(--muted); font-size: .78rem; font-weight: 600;
-     text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+th { background: var(--surface-2); color: var(--muted); font-weight: 600; font-size: .8rem; white-space: nowrap; }
 tbody tr:hover td { background: var(--surface-2); }
 tr:last-child td { border-bottom: 0; }
-.table-filter { display: block; width: 100%; max-width: 22rem; margin: .7rem 0 0; font: inherit;
-                padding: .45rem .6rem; border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+td.actions, th.actions { text-align: right; white-space: nowrap; }
+.table-filter { display: block; width: 100%; max-width: 20rem; margin: .7rem 0 0; font: inherit;
+                padding: .42rem .6rem; border: 1px solid var(--border-2); border-radius: var(--radius-sm);
                 background: var(--surface); color: var(--fg); }
-.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: .7rem;
-         margin: 1rem 0 1.6rem; }
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
-        padding: .85rem 1rem; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: .15rem; }
-.card .num { font-size: 1.45rem; font-weight: 650; letter-spacing: -.01em; }
-.card span:last-child { color: var(--muted); font-size: .82rem; }
+.badge { display: inline-flex; align-items: center; gap: .35rem; padding: .05rem .5rem; border-radius: 999px;
+         border: 1px solid var(--border); background: var(--surface-2); color: var(--muted);
+         font-size: .78rem; font-weight: 600; white-space: nowrap; }
+.badge::before { content: ""; width: .42rem; height: .42rem; border-radius: 50%; background: currentColor; }
+.badge.ok { color: var(--ok); background: var(--ok-bg); border-color: currentColor; }
+.badge.warn { color: var(--warn); background: var(--warn-bg); border-color: currentColor; }
 .ok { color: var(--ok); font-weight: 600; }
 .off { color: var(--muted); }
 .warn { color: var(--warn); font-weight: 600; }
 .tag { display: inline-block; background: var(--surface-2); color: var(--muted); border: 1px solid var(--border);
-       border-radius: 999px; padding: .05rem .45rem; font-size: .72rem; font-weight: 600; }
-.tag.warn { color: var(--warn); background: var(--warn-bg); border-color: currentColor; }
-.notice { background: var(--ok-bg); border: 1px solid var(--border); border-color: var(--ok);
-          color: var(--fg); padding: .6rem .9rem; border-radius: var(--radius-sm); margin: .6rem 0; }
+       border-radius: 999px; padding: .05rem .45rem; font-size: .73rem; font-weight: 600; }
+.notice { background: var(--accent-soft); border: 1px solid var(--border); border-radius: var(--radius-sm);
+          padding: .6rem .9rem; margin: .6rem 0; }
 .notice.warn { background: var(--warn-bg); border-color: var(--warn); }
-input:not([type="hidden"]):not([type="checkbox"]) { font: inherit; padding: .4rem .55rem;
+.empty { border: 1px dashed var(--border-2); border-radius: var(--radius); background: var(--surface);
+         padding: 2rem 1rem; text-align: center; color: var(--muted); margin: .8rem 0 1rem; }
+
+/* Forms. */
+input:not([type="hidden"]):not([type="checkbox"]) { font: inherit; padding: .42rem .55rem;
   border: 1px solid var(--border-2); border-radius: var(--radius-sm); background: var(--surface); color: var(--fg); }
 input::placeholder { color: var(--muted); }
-a:focus-visible, input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-button { font: inherit; font-size: .86rem; font-weight: 600; padding: .4rem .75rem;
-         border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer;
-         background: var(--accent); color: var(--accent-fg); }
+a:focus-visible, input:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent);
+  outline-offset: 2px; }
+button { font: inherit; font-size: .85rem; font-weight: 600; padding: .38rem .72rem; border: 1px solid transparent;
+         border-radius: var(--radius-sm); cursor: pointer; background: var(--accent); color: var(--accent-fg); }
 button:hover { filter: brightness(1.06); }
-button.ghost { background: transparent; color: var(--muted); border-color: var(--border-2); }
-button.ghost:hover { color: var(--fg); background: var(--surface-2); }
 button.danger { background: transparent; color: var(--warn); border-color: var(--warn); }
 button + button { margin-left: .3rem; }
 code { font-family: var(--mono); font-size: .82em; background: var(--surface-2); border: 1px solid var(--border);
@@ -137,68 +196,72 @@ dt { color: var(--muted); }
 dd { margin: 0; }
 .field { display: flex; gap: .6rem; align-items: center; margin: .55rem 0; flex-wrap: wrap; }
 .field label { color: var(--muted); font-size: .86rem; }
-footer { text-align: center; color: var(--muted); font-size: .78rem; padding: 1.5rem 1rem 2rem; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
            clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-.nav-toggle, .theme-toggle { display: none; }
-html.js .theme-toggle { display: inline-flex; align-items: center; background: transparent; color: var(--muted);
-  border: 1px solid var(--border-2); padding: .3rem .5rem; }
-@media (max-width: 860px) {
+footer.console-foot { border-top: 1px solid var(--border); margin-top: 1rem; padding: 1.2rem 1.4rem 2rem;
+  text-align: center; color: var(--muted); font-size: .8rem; }
+footer.console-foot a { color: var(--muted); }
+
+@media (max-width: 900px) {
   .topbar { padding: .6rem .9rem; }
-  html.js .nav-toggle { display: inline-flex; align-items: center; background: transparent; color: var(--muted);
-    border: 1px solid var(--border-2); padding: .3rem .6rem; }
-  html.js #console-nav { display: none; flex-direction: column; width: 100%; order: 9; }
-  html.js .topbar.nav-open #console-nav { display: flex; }
-  nav a { padding: .55rem .6rem; }
-  main { padding: 0 .9rem; margin-top: 1rem; }
+  html.js .nav-toggle { display: inline-flex; align-items: center; background: transparent; color: var(--chrome-muted);
+    border: 1px solid rgba(255, 255, 255, .22); padding: .3rem .6rem; }
+  .shell { grid-template-columns: minmax(0, 1fr); padding: 0 .9rem; }
+  .sidebar { position: static; max-height: none; padding: .8rem 0 .2rem; }
+  html.js .sidebar { display: none; }
+  html.js body.nav-open .sidebar { display: block; }
+  main { padding: .9rem 0 2rem; }
   dl { grid-template-columns: 1fr; gap: .1rem; }
   dt { margin-top: .5rem; }
-  h2 { font-size: 1.1rem; }
+  .page-head h1 { font-size: 1.2rem; }
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 </style>
 </head>
 <body>
-<a class="skip" href="#main">Skip to content</a>
+<a class="skip" href="#main">{{T "Skip to content"}}</a>
 <header class="topbar">
 <span class="brand">Xunara <span>console</span></span>
-<button class="nav-toggle" type="button" aria-expanded="false" aria-controls="console-nav" hidden>Menu</button>
-<nav id="console-nav" aria-label="Console sections">
-<a href="/console/"{{if eq .Nav "overview"}} class="active" aria-current="page"{{end}}>Overview</a>
-<a href="/console/machines"{{if eq .Nav "machines"}} class="active" aria-current="page"{{end}}>Machines</a>
-<a href="/console/exit-nodes"{{if eq .Nav "exit-nodes"}} class="active" aria-current="page"{{end}}>Exit nodes</a>
-<a href="/console/services"{{if eq .Nav "services"}} class="active" aria-current="page"{{end}}>Services</a>
-<a href="/console/relays"{{if eq .Nav "relays"}} class="active" aria-current="page"{{end}}>Relays</a>
-<a href="/console/serve"{{if eq .Nav "serve"}} class="active" aria-current="page"{{end}}>Serve</a>
-<a href="/console/devices"{{if eq .Nav "devices"}} class="active" aria-current="page"{{end}}>Devices</a>
-<a href="/console/users"{{if eq .Nav "users"}} class="active" aria-current="page"{{end}}>Users</a>
-<a href="/console/passkeys"{{if eq .Nav "passkeys"}} class="active" aria-current="page"{{end}}>Passkeys</a>
-<a href="/console/dns"{{if eq .Nav "dns"}} class="active" aria-current="page"{{end}}>DNS</a>
-<a href="/console/derp"{{if eq .Nav "derp"}} class="active" aria-current="page"{{end}}>DERP</a>
-<a href="/console/auth-keys"{{if eq .Nav "auth-keys"}} class="active" aria-current="page"{{end}}>Auth keys</a>
-<a href="/console/agents"{{if eq .Nav "agents"}} class="active" aria-current="page"{{end}}>Agents</a>
-<a href="/console/api-keys"{{if eq .Nav "api-keys"}} class="active" aria-current="page"{{end}}>API keys</a>
-<a href="/console/shares"{{if eq .Nav "shares"}} class="active" aria-current="page"{{end}}>Shares</a>
-<a href="/console/reach"{{if eq .Nav "reach"}} class="active" aria-current="page"{{end}}>Reach</a>
-<a href="/console/flux"{{if eq .Nav "flux"}} class="active" aria-current="page"{{end}}>Flux</a>
-<a href="/console/ssh-check"{{if eq .Nav "ssh-check"}} class="active" aria-current="page"{{end}}>SSH checks</a>
-<a href="/console/webhooks"{{if eq .Nav "webhooks"}} class="active" aria-current="page"{{end}}>Webhooks</a>
-<a href="/console/policy"{{if eq .Nav "policy"}} class="active" aria-current="page"{{end}}>Policy</a>
-<a href="/console/security"{{if eq .Nav "security"}} class="active" aria-current="page"{{end}}>Security</a>
-<a href="/console/audit"{{if eq .Nav "audit"}} class="active" aria-current="page"{{end}}>Audit</a>
-</nav>
-<div class="who"><span class="who-name">{{.User}}</span> <span class="tag">{{.Role}}</span>
-<button class="theme-toggle" type="button" hidden aria-label="Switch color theme">◐</button>
-<form method="post" action="/logout"><button class="ghost" type="submit">Sign out</button></form>
+<button class="nav-toggle" type="button" aria-expanded="false" aria-controls="console-nav" hidden>{{T "Menu"}}</button>
+<div class="who">
+<details class="prefs">
+<summary aria-label="{{T "Appearance"}}" title="{{T "Appearance"}}">⚙</summary>
+<div class="prefs-menu">
+<p class="prefs-label">{{T "Language"}}</p>
+<a href="/console/prefs?lang=zh&return_to={{.Path}}"{{if eq .Lang "zh"}} class="active"{{end}}>中文</a>
+<a href="/console/prefs?lang=en&return_to={{.Path}}"{{if eq .Lang "en"}} class="active"{{end}}>English</a>
+<p class="prefs-label">{{T "Accent color"}}</p>
+<a href="/console/prefs?accent=blue&return_to={{.Path}}"{{if eq .Accent "blue"}} class="active"{{end}}>{{T "Blue"}}</a>
+<a href="/console/prefs?accent=teal&return_to={{.Path}}"{{if eq .Accent "teal"}} class="active"{{end}}>{{T "Teal"}}</a>
+</div>
+</details>
+<button class="theme-toggle" type="button" hidden aria-label="{{T "Switch color theme"}}">◐</button>
+<span class="who-name">{{.User}}</span> <span class="tag">{{T .Role}}</span>
+<form method="post" action="/logout"><button class="ghost" type="submit">{{T "Sign out"}}</button></form>
 </div>
 </header>
+<div class="shell">
+<aside class="sidebar" id="console-nav">
+<nav aria-label="{{T "Console sections"}}">
+{{range .NavGroups}}{{if .Label}}<p class="nav-group">{{T .Label}}</p>{{end}}{{range .Items}}<a href="{{.Href}}"{{if .Active}} class="active" aria-current="page"{{end}}>{{T .Title}}</a>
+{{end}}{{end}}
+</nav>
+</aside>
 <main id="main" tabindex="-1">
-{{if not .CanWrite}}<p class="notice">Your role is read-only; controls that change the tailnet are hidden.</p>{{end}}
+<header class="page-head">
+<h1>{{T .Title}}</h1>
+{{if .Lede}}<p class="lede">{{T .Lede}}</p>{{end}}
+</header>
+{{if not .CanWrite}}<p class="notice">{{T "Your role is read-only; controls that change the tailnet are hidden."}}</p>{{end}}
 {{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
 `
 
 const consoleFoot = `</main>
-<footer>Xunara {{.Version}}</footer>
+</div>
+<footer class="console-foot">Xunara {{T "console"}} · v{{.Version}} ·
+<a href="https://github.com/xunara-net/xunara">GitHub</a> ·
+<a href="https://github.com/xunara-net/xunara/issues">{{T "Feedback"}}</a> ·
+<a href="https://github.com/xunara-net/xunara/blob/master/Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md">{{T "Documentation"}}</a></footer>
 <script>` + consoleJS + `</script>
 </body></html>`
 
@@ -237,11 +300,10 @@ const consoleJS = `
   }
 
   var navToggle = document.querySelector(".nav-toggle");
-  var topbar = document.querySelector(".topbar");
-  if (navToggle && topbar) {
+  if (navToggle) {
     navToggle.hidden = false;
     navToggle.addEventListener("click", function () {
-      var open = topbar.classList.toggle("nav-open");
+      var open = document.body.classList.toggle("nav-open");
       navToggle.setAttribute("aria-expanded", open ? "true" : "false");
     });
   }
@@ -313,6 +375,7 @@ func consolePage(name, body string) *template.Template {
 		"fmtTime":  consoleTime,
 		"argvLine": consoleArgvLine,
 		"join":     func(values []string) string { return strings.Join(values, ", ") },
+		"T":        translator("en"),
 	})
 	return template.Must(tmpl.Parse(consoleHead + body + consoleFoot))
 }
@@ -332,12 +395,42 @@ func consoleArgvLine(argv []string) string {
 	return line
 }
 
-// consoleTime formats a timestamp; the zero time reads as "never".
+// consoleTime formats a timestamp in UTC. It is the parse-time binding of the
+// console's fmtTime helper; each request renders through the server's own
+// formatter, which uses the configured console timezone.
 func consoleTime(t time.Time) string {
+	return consoleTimeIn(t, time.UTC)
+}
+
+// consoleTimeIn formats a timestamp for the web console: the operator reads
+// local time with the zone name, and the zero time reads as "never".
+func consoleTimeIn(t time.Time, loc *time.Location) string {
 	if t.IsZero() {
 		return "never"
 	}
-	return t.UTC().Format("2006-01-02 15:04 UTC")
+	if loc == nil {
+		loc = time.UTC
+	}
+	return t.In(loc).Format("2006-01-02 15:04 MST")
+}
+
+// consoleTime formats one timestamp for this server's console.
+func (s *Server) consoleTime(t time.Time) string {
+	return consoleTimeIn(t, s.consoleLoc)
+}
+
+// loadConsoleTimezone resolves the configured console timezone. An empty name
+// means UTC, which is the CLI's format too; an unknown name is reported so the
+// deployment can fix it instead of silently printing a different zone.
+func loadConsoleTimezone(name string) (*time.Location, error) {
+	if strings.TrimSpace(name) == "" {
+		return time.UTC, nil
+	}
+	loc, err := time.LoadLocation(name)
+	if err != nil {
+		return time.UTC, err
+	}
+	return loc, nil
 }
 
 var (
@@ -1209,11 +1302,23 @@ state or use the API to page through the rest.</p>{{end}}
 )
 
 // renderConsole writes a console page. Console output is per-session state and
-// must never be cached by shared caches.
+// must never be cached by shared caches. The template is cloned per request so
+// the T function is bound to the operator's language without touching the
+// shared parsed template.
 func (s *Server) renderConsole(w http.ResponseWriter, tmpl *template.Template, data map[string]any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	if err := tmpl.Execute(w, data); err != nil {
-		s.log.Error("rendering console page", "template", tmpl.Name(), "err", err)
+	lang, _ := data["Lang"].(string)
+	localized, err := tmpl.Clone()
+	if err != nil {
+		s.log.Error("cloning console template", "template", tmpl.Name(), "err", err)
+		return
 	}
+	localized.Funcs(template.FuncMap{"T": translator(lang), "fmtTime": s.consoleTime})
+	var buf bytes.Buffer
+	if err := localized.Execute(&buf, data); err != nil {
+		s.log.Error("rendering console page", "template", tmpl.Name(), "err", err)
+		return
+	}
+	io.WriteString(w, translateHTML(lang, buf.String()))
 }

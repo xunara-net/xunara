@@ -1080,8 +1080,10 @@ func TestConsoleReachOutputTruncation(t *testing.T) {
 		t.Errorf("detail does not report the full output size:\n%.400s", detail)
 	}
 	// The rendered body must stay bounded: the page never carries all 72 KiB.
-	if body := len(detail); body > consoleReachOutputLimit+16<<10 {
-		t.Errorf("truncated page is %d bytes, want far below %d", body, consoleReachOutputLimit)
+	// The check counts the rendered output bytes, not the page size, because
+	// the surrounding chrome differs between languages.
+	if got := strings.Count(detail, "x"); got > consoleReachOutputLimit+4<<10 {
+		t.Errorf("truncated page carries %d bytes of output, want about %d", got, consoleReachOutputLimit)
 	}
 }
 

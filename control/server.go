@@ -85,6 +85,10 @@ type Config struct {
 	// audience per minute (spec section 28). Zero uses
 	// [DefaultIDTokenRateLimit]; negative is rejected at startup.
 	IDTokenRateLimit int
+	// ConsoleTimezone is the IANA name the web console prints timestamps in,
+	// so operators read audit and expiry times in their own zone instead of
+	// UTC. Empty or unknown falls back to UTC; the CLI is unaffected.
+	ConsoleTimezone string
 	// PolicyPath is the ACL policy document (HuJSON). Empty means the tailnet
 	// has no policy and everything is allowed, which is what the official
 	// service does for a tailnet without a policy.
@@ -197,6 +201,10 @@ type Server struct {
 	// API renames organizations while requests read.
 	org atomic.Pointer[OrgIdentity]
 
+	// consoleLoc is the timezone the web console prints timestamps in. It is
+	// loaded once at startup so a broken zone name never fails a request.
+	consoleLoc *time.Location
+
 	// secureCookies marks cookies Secure; sessionTTL bounds browser sessions;
 	// authTTL bounds pending login transactions.
 	secureCookies bool
@@ -308,6 +316,10 @@ func New(cfg Config) (*Server, error) {
 	if cfg.IDTokenRateLimit < 0 {
 		return nil, fmt.Errorf("control: identity token rate limit %d must not be negative", cfg.IDTokenRateLimit)
 	}
+	consoleLoc, err := loadConsoleTimezone(cfg.ConsoleTimezone)
+	if err != nil {
+		cfg.Logger.Warn("unknown console timezone; the console prints UTC", "timezone", cfg.ConsoleTimezone)
+	}
 
 	noiseKey, err := loadOrCreateNoiseKey(cfg.StateDir)
 	if err != nil {
@@ -417,6 +429,7 @@ func New(cfg Config) (*Server, error) {
 	srv := &Server{
 		cfg:               cfg,
 		log:               cfg.Logger,
+		consoleLoc:        consoleLoc,
 		noiseKey:          noiseKey,
 		store:             store,
 		closer:            store,
