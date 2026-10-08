@@ -1124,9 +1124,8 @@ Update}`（`AttrUpdate` = `map[string]any`，值可为 string / float64 / bool�
 - 明确不做（v1）：按 ACL 的可见性（与 MagicDNS 节点名一样组织内可见）、
   跨组织共享、与上游 `svc:` VIP 互通（需要上游控制面语义，不猜 API）、
   控制面代理流量。
-- 下一步（未做）：Kubernetes 服务导入（Service → "本节点提供"需要
-  EndpointSlice/Pod 语义，先补 spec 再实现）；~~Atlas 健康状态与自动摘除~~
-  已由 M19 交付（spec §26）。
+- ~~下一步（未做）：Kubernetes 服务导入~~ 已由 M20 交付（spec §27）；
+  ~~Atlas 健康状态与自动摘除~~ 已由 M19 交付（spec §26）。
 
 ---
 
@@ -1231,6 +1230,46 @@ authorization 分离（AGENTS §5/§10）。规格见
   （列/提示）、`cmd/xunarad/orgconfig_test.go`（TTL 解析与越界拒绝）。
 - 明确不做（v1）：主动探测（控制面到不了尾网地址）、故障转移/负载均衡、健康
   历史/评分、按 ACL 的可见性、Consul 导入自动启用健康、控制面代理流量。
+
+---
+
+## M20 — Xunara Atlas 目录导入（v1，Kubernetes，已完成）
+
+目标：把**本节点提供**的 Kubernetes Service 转换为 Atlas 声明（§27），与
+M16e 的 Consul 导入同一模式：导入器在节点侧运行，控制面拿不到集群凭据，
+节点仍是唯一写入者（§22.2）。
+
+- 连接与凭据（fail-closed）：默认 in-cluster（`KUBERNETES_SERVICE_HOST/PORT`
+  + ServiceAccount token/ca.crt/namespace，已对照 client-go `rest.InClusterConfig`
+  核实）；可用 `-k8s-api/-k8s-token-file/-k8s-ca-file/-k8s-namespace` 覆盖。
+  token 只从文件读、只走 `Authorization: Bearer`；`-k8s-api` 只接受 https 或
+  loopback http（token 不发明文）；namespace 必须是 DNS-1123 label（防路径
+  注入）；节点名必填（`-k8s-node` 或 Downward API 的 `NODE_NAME`），禁止用
+  Pod hostname 猜测。
+- 读取：`GET /api/v1/namespaces/{ns}/services` 与
+  `GET /apis/discovery.k8s.io/v1/namespaces/{ns}/endpointslices`，跟随
+  `metadata.continue` 分页（页大小 200、上限 50 页 / 5000 对象，响应 16MiB）。
+  已核对上游 registry strategy：EndpointSlice 没有 `spec.nodeName` field
+  selector，所以按节点过滤在导入器内做（`endpoints[].nodeName`）。
+- 映射（fail-closed）：只导入注解 `xunara.io/advertise: "true"` 的 Service；
+  必须有本节点就绪端点（`conditions.ready != false`；null=unknown 按就绪，
+  与 kube-proxy 一致）；端口取本地 slice 的 `ports[]`（协议缺省 TCP，只接受
+  tcp/udp，SCTP/空端口跳过），多端口需 `xunara.io/port: <name>` 指定，否则
+  整个跳过并告警；metadata 仅来自 `xunara.io/metadata` 注解的 JSON 对象，
+  labels/其它注解绝不整体导入（注解常带凭据）；告警不回显注解值。
+- 限额与原子性同 §23.2：>32 条整批失败不截断；发布仍走既有数据面
+  （`services.json` 只在服务端接受后更新）。
+- 命令面：`xunara-agent services import -from kubernetes [...] [-dry-run]`，
+  RBAC 只需命名空间内 `get/list services` 与 `get/list endpointslices`。
+- 测试：`client/catalog/kubernetes_test.go`（映射表：未启用/无本地端点/
+  not-ready/nil-ready/udp 去重/不支持端口/多端口注解/metadata 不泄漏/
+  排序/超限；真实 TLS API 伪服务端的鉴权头、命名空间路径、分页、CA 校验、
+  403 不泄漏 token；配置拒绝表与 in-cluster 缺省检测）、
+  `cmd/xunara-agent/services_test.go`（publish 与 dry-run 全流程、NODE_NAME
+  默认、缺节点名报错）。
+- 明确不做（v1）：watch/持续同步（快照导入，与 Consul 一致）、Pod/容器、
+  ClusterIP 直接导入、把 EndpointSlice 就绪写入 `services-health.json`
+  （健康仍只由 §26 的文件驱动）、跨命名空间批量导入。
 
 ---
 

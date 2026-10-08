@@ -227,6 +227,9 @@ usage:
   xunara-agent status [-state-dir d] [-json]
   xunara-agent services publish -file <file> [-state-dir d]
   xunara-agent services import -from consul [-consul-addr addr] [-dry-run] [-state-dir d]
+  xunara-agent services import -from kubernetes [-k8s-api url] [-k8s-node name]
+                      [-k8s-namespace ns] [-k8s-token-file f] [-k8s-ca-file f]
+                      [-dry-run] [-state-dir d]
   xunara-agent services list [-state-dir d] [-json]
   xunara-agent services clear [-state-dir d]
   xunara-agent flux send -to <hostname|stable-id> -file <path> [-timeout 5m] [-json]
@@ -243,6 +246,10 @@ The services declaration file is
 Services with "health": true are withdrawn from MagicDNS until
 <state-dir>/services-health.json reports them ready:
   {"services": [{"name": "api", "ready": true}]}
+
+The Kubernetes import reads Services annotated
+xunara.io/advertise: "true" that have ready endpoints on this node
+($NODE_NAME); it only reads the cluster (spec section 27).
 Import reads the Consul ACL token from the environment variable
 `+consulTokenEnv+`; it is never accepted as a flag.
 

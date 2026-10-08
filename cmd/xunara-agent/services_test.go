@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -328,8 +329,93 @@ func TestServicesImportFromConsul(t *testing.T) {
 		t.Errorf("dry-run saved a declaration: %v", err)
 	}
 
-	if err := runServicesImport(context.Background(), []string{"-from", "kubernetes"}); err == nil {
+	if err := runServicesImport(context.Background(), []string{"-from", "nope"}); err == nil {
 		t.Error("an unsupported catalog was accepted")
+	}
+}
+
+// TestServicesImportFromKubernetes maps a node-local Kubernetes Service and
+// publishes it; the Kubernetes node name comes from -k8s-node or NODE_NAME.
+func TestServicesImportFromKubernetes(t *testing.T) {
+	control := &fakeServicesControl{}
+	controlServer := httptest.NewServer(control)
+	defer controlServer.Close()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/namespaces/tailnet/services", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"metadata":{"name":"api","annotations":{"xunara.io/advertise":"true"}}}]}`))
+	})
+	mux.HandleFunc("/apis/discovery.k8s.io/v1/namespaces/tailnet/endpointslices", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"metadata":{"labels":{"kubernetes.io/service-name":"api"}},
+			"endpoints":[{"nodeName":"node-a","conditions":{"ready":true}}],
+			"ports":[{"name":"http","protocol":"TCP","port":8080}]}]}`))
+	})
+	api := httptest.NewTLSServer(mux)
+	defer api.Close()
+
+	dir := t.TempDir()
+	tokenFile := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenFile, []byte("test-token"), 0o600); err != nil {
+		t.Fatalf("writing the token: %v", err)
+	}
+	caFile := filepath.Join(dir, "ca.crt")
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: api.Certificate().Raw})
+	if err := os.WriteFile(caFile, caPEM, 0o600); err != nil {
+		t.Fatalf("writing the CA: %v", err)
+	}
+
+	stateDir := t.TempDir()
+	writeAgentState(t, stateDir, controlServer.URL)
+
+	args := []string{
+		"-state-dir", stateDir,
+		"-from", "kubernetes",
+		"-k8s-api", api.URL,
+		"-k8s-token-file", tokenFile,
+		"-k8s-ca-file", caFile,
+		"-k8s-namespace", "tailnet",
+		"-k8s-node", "node-a",
+	}
+	if err := runServicesImport(context.Background(), args); err != nil {
+		t.Fatalf("services import: %v", err)
+	}
+	if _, publishes := control.state(); len(publishes) != 1 || len(publishes[0]) != 1 || publishes[0][0].Name != "api" {
+		t.Fatalf("publishes = %+v", publishes)
+	}
+
+	// NODE_NAME is the in-pod default, and -dry-run needs no enrolled agent.
+	t.Setenv(nodeNameEnv, "node-a")
+	dryDir := t.TempDir()
+	out := captureStdout(t, func() error {
+		return runServicesImport(context.Background(), []string{
+			"-state-dir", dryDir,
+			"-from", "kubernetes",
+			"-k8s-api", api.URL,
+			"-k8s-token-file", tokenFile,
+			"-k8s-ca-file", caFile,
+			"-k8s-namespace", "tailnet",
+			"-dry-run",
+		})
+	})
+	if !strings.Contains(out, `"name": "api"`) || !strings.Contains(out, `"port": 8080`) {
+		t.Errorf("dry-run output = %q", out)
+	}
+	if _, err := daemon.LoadServices(dryDir); !os.IsNotExist(err) {
+		t.Errorf("dry-run saved a declaration: %v", err)
+	}
+
+	t.Setenv(nodeNameEnv, "")
+	err := runServicesImport(context.Background(), []string{
+		"-from", "kubernetes",
+		"-k8s-api", api.URL,
+		"-k8s-token-file", tokenFile,
+		"-k8s-ca-file", caFile,
+		"-dry-run",
+	})
+	if err == nil || !strings.Contains(err.Error(), "node name is required") {
+		t.Errorf("missing node name error = %v", err)
 	}
 }
 

@@ -77,32 +77,64 @@ const consulTokenEnv = "CONSUL_HTTP_TOKEN"
 // consulAddressEnv mirrors Consul's own variable for the agent address.
 const consulAddressEnv = "CONSUL_HTTP_ADDR"
 
-// runServicesImport implements `xunara-agent services import -from consul`: it
-// maps the services registered on the local Consul agent into a declaration
-// and publishes it (or prints it with -dry-run).
+// nodeNameEnv is how a pod tells the agent which Kubernetes node it runs on
+// (Downward API). In a pod the hostname is the pod name, so nothing else can
+// be used safely.
+const nodeNameEnv = "NODE_NAME"
+
+// runServicesImport implements `xunara-agent services import -from consul |
+// kubernetes`: it maps a local catalog into a declaration and publishes it
+// (or prints it with -dry-run).
 func runServicesImport(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("services import", flag.ExitOnError)
 	stateDir := fs.String("state-dir", defaultStateDir(), "directory holding agent.json")
-	from := fs.String("from", "", "catalog to import from; only \"consul\" is supported")
+	from := fs.String("from", "", "catalog to import from: \"consul\" or \"kubernetes\"")
 	consulAddr := fs.String("consul-addr", "", "local Consul agent address (default $"+consulAddressEnv+", else "+catalog.DefaultConsulAddress+")")
+	k8sAPI := fs.String("k8s-api", "", "Kubernetes API server URL (default in-cluster $KUBERNETES_SERVICE_HOST/PORT)")
+	k8sTokenFile := fs.String("k8s-token-file", "", "file holding the Kubernetes bearer token (default in-cluster service account token)")
+	k8sCAFile := fs.String("k8s-ca-file", "", "Kubernetes API server CA bundle (default in-cluster ca.crt)")
+	k8sNamespace := fs.String("k8s-namespace", "", "Kubernetes namespace to import (default in-cluster namespace, else \"default\")")
+	k8sNode := fs.String("k8s-node", "", "Kubernetes node name this agent runs on (default $"+nodeNameEnv+")")
 	dryRun := fs.Bool("dry-run", false, "print the declaration as JSON instead of publishing it")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if *from != "consul" {
-		return fmt.Errorf("services import needs -from consul (got %q)", *from)
-	}
 
-	address := *consulAddr
-	if address == "" {
-		address = os.Getenv(consulAddressEnv)
+	var (
+		services []protocol.Service
+		warnings []string
+		source   string
+		err      error
+	)
+	switch *from {
+	case "consul":
+		source = "Consul"
+		address := *consulAddr
+		if address == "" {
+			address = os.Getenv(consulAddressEnv)
+		}
+		services, warnings, err = catalog.ConsulServices(ctx, catalog.ConsulConfig{
+			Address: address,
+			Token:   os.Getenv(consulTokenEnv),
+		})
+	case "kubernetes":
+		source = "Kubernetes"
+		node := *k8sNode
+		if node == "" {
+			node = os.Getenv(nodeNameEnv)
+		}
+		services, warnings, err = catalog.KubernetesServices(ctx, catalog.KubernetesConfig{
+			Address:   *k8sAPI,
+			TokenFile: *k8sTokenFile,
+			CAFile:    *k8sCAFile,
+			Namespace: *k8sNamespace,
+			Node:      node,
+		})
+	default:
+		return fmt.Errorf("services import needs -from consul or -from kubernetes (got %q)", *from)
 	}
-	services, warnings, err := catalog.ConsulServices(ctx, catalog.ConsulConfig{
-		Address: address,
-		Token:   os.Getenv(consulTokenEnv),
-	})
 	for _, warning := range warnings {
-		fmt.Fprintln(os.Stderr, "xunara-agent: consul:", warning)
+		fmt.Fprintf(os.Stderr, "xunara-agent: %s: %s\n", strings.ToLower(source), warning)
 	}
 	if err != nil {
 		return err
@@ -111,11 +143,11 @@ func runServicesImport(ctx context.Context, args []string) error {
 		// An empty declaration withdraws every service; make sure that is a
 		// decision the operator can see, not a side effect of an empty or
 		// ACL-scoped catalog.
-		fmt.Fprintln(os.Stderr, "xunara-agent: warning: the Consul agent advertised no importable services")
+		fmt.Fprintf(os.Stderr, "xunara-agent: warning: the %s source exposed no importable services\n", source)
 	}
 
 	if *dryRun {
-		fmt.Fprintf(os.Stderr, "xunara-agent: imported %d services from Consul\n", len(services))
+		fmt.Fprintf(os.Stderr, "xunara-agent: imported %d services from %s\n", len(services), source)
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(serviceFile{Services: services})

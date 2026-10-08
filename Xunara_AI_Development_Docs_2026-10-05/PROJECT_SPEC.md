@@ -732,7 +732,7 @@ node.services_updated   # target=节点，detail=服务名列表（含协议/端
 - 只做"目录 → 声明"的单向转换；不做健康过滤、不做反向同步（Atlas 的发布
   不会写回 Consul）、不删除 Consul 中的任何东西。
 - Kubernetes 不在 v1：把 Service 映射成"本节点提供"需要 EndpointSlice/Pod
-  语义（ClusterIP 不是节点本地事实），先补 spec 再实现。
+  语义（ClusterIP 不是节点本地事实），见 §27（v1，已补 spec）。
 
 ### 23.1 映射规则（fail-closed）
 
@@ -1069,3 +1069,97 @@ service.unhealthy    # 同上，原因 reported / report expired
   整批上报失败）；文件解析失败 → 本周期不上报并告警（服务最迟在 TTL 后
   摘除）。
 - TTL 与上报间隔是部署契约：TTL 应 ≥ 3× 间隔；默认值（90s / 30s）满足。
+
+## 27. Xunara Atlas — 目录导入（v1，Kubernetes）
+
+目标与 §23 相同：节点把**本节点提供**的 Kubernetes Service 转换成 Atlas 声明
+并发布，不必手工维护 `services.json`。导入器在节点侧运行，控制面拿不到集群
+凭据（AGENTS §8/§12），节点仍是唯一写入者（§22.2）。
+
+边界（v1 明确不做）：
+
+- 不做 watch/持续同步：一次 `import` 是某一时刻的快照，之后由 `run` 按声明
+  重发；集群变化后重跑 `import`（与 §23 的 Consul 导入一致）。
+- 不导入 Pod/容器，也不把 ClusterIP 当作节点本地事实：只导入**在本节点上
+  有就绪端点**的 Service。
+- 不把 EndpointSlice 的就绪状态写入 `services-health.json`：健康上报仍只由
+  节点侧文件驱动（§26），导入不做健康过滤、不自动启用健康。
+- 一次调用只导入一个命名空间（默认本 Pod 的命名空间），不支持跨命名空间
+  批量导入；多命名空间场景在 v1 不在支持范围内。
+- 不依赖 `spec.nodeName` field selector：已核对上游 registry strategy，
+  EndpointSlice 可选择的字段只有 `metadata.name`/`metadata.namespace`，
+  因此按节点过滤在导入器内完成（列出后用 `endpoints[].nodeName` 匹配）。
+
+### 27.1 连接与凭据（fail-closed）
+
+| 项 | 默认 | 覆盖 |
+|---|---|---|
+| API server | in-cluster：`https://$KUBERNETES_SERVICE_HOST:$KUBERNETES_SERVICE_PORT` | `-k8s-api` |
+| bearer token | `/var/run/secrets/kubernetes.io/serviceaccount/token` | `-k8s-token-file` |
+| CA | 同目录 `ca.crt`（不存在则系统根证书） | `-k8s-ca-file` |
+| namespace | 同目录 `namespace` 文件，否则 `default` | `-k8s-namespace` |
+| 节点名 | 环境变量 `NODE_NAME`（Downward API） | `-k8s-node` |
+
+- token 只从文件读取，只出现在请求的 `Authorization: Bearer` 头；绝不进
+  argv、URL query 或日志（AGENTS §8）。节点名必填：在 Pod 里 hostname 是
+  Pod 名而不是节点名，禁止从 hostname 猜测。
+- `-k8s-api` 只接受 `https://`，或 loopback 的 `http://`（与 webhook 的
+  端点规则一致）；token 不会被发送到非 loopback 的明文地址。
+- namespace 必须是合法 DNS-1123 label（同时是 URL 路径组件，防止路径注入）。
+
+### 27.2 映射规则（fail-closed）
+
+读取两个只读端点（分页跟随 `metadata.continue`，页大小与页数有上限）：
+
+```text
+GET /api/v1/namespaces/{ns}/services
+GET /apis/discovery.k8s.io/v1/namespaces/{ns}/endpointslices
+```
+
+逐条映射：
+
+- 只考虑注解 `xunara.io/advertise: "true"`（精确匹配）的 Service；其余
+  静默忽略（未启用不是错误）。
+- 就绪端点：该 Service 的 EndpointSlice（label
+  `kubernetes.io/service-name=<service>`）中存在 `endpoints[].nodeName ==
+  <本节点>` 且 `conditions.ready != false` 的端点。`ready == null` 视为就绪
+  （上游语义：unknown 按就绪解释，与 kube-proxy 一致）。没有本节点就绪
+  端点的 Service 跳过并告警（不发布不可达的名字）。
+- 端口来自这些本地端点所属 slice 的 `ports[]`：
+
+| EndpointSlice | Atlas |
+|---|---|
+| `ports[].protocol` 缺省 `TCP`（上游默认） | `protocol` 小写；只接受 tcp/udp，SCTP 跳过 |
+| `ports[].port` 为空（"all ports"）或 0/越界 | 跳过该端口 |
+| 多个可用端口 | 需注解 `xunara.io/port: <ports[].name>` 指定；未指定或指定不到唯一端口 → 整个 Service 跳过并告警（不猜） |
+
+- `name` = Service 名（K8s 已保证 DNS-1123 label）；仍经
+  `protocol.ValidateServices`（§22.4）复核，不合法跳过并告警。
+- `metadata` 仅来自注解 `xunara.io/metadata` 的 JSON 对象（string→string）；
+  缺省为空；解码失败或含非字符串值 → 跳过并告警。绝不整体导入
+  labels/annotations：注解常用于携带凭据，值可能被写进日志（AGENTS §8）。
+- 告警只说明跳过了什么与原因，不回显注解/标签值。
+
+### 27.3 限额与原子性
+
+同 §23.2：映射结果超过每节点 32 条 → 导入失败、不截断（发布是整批替换，
+截断等于撤销）；发布走既有数据面，服务端执行 §22.4 的全部校验与冲突检查；
+`services.json` 只在服务端接受之后才更新。
+
+### 27.4 命令面与 RBAC
+
+```text
+xunara-agent services import -from kubernetes [-k8s-api https://...]
+                             [-k8s-token-file path] [-k8s-ca-file path]
+                             [-k8s-namespace ns] [-k8s-node name]
+                             [-dry-run] [-state-dir d]
+```
+
+集群侧只需要只读权限（最小权限，按命名空间）：
+
+```text
+get/list  services             (core/v1)
+get/list  endpointslices       (discovery.k8s.io/v1)
+```
+
+导入器不写集群、不创建/修改任何对象。
