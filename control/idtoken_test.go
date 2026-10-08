@@ -1,10 +1,13 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +48,46 @@ func requestIDToken(t *testing.T, client *http.Client, nodeKey key.NodePublic, a
 		return tailcfg.TokenResponse{}, status
 	}
 	return decodeJSON[tailcfg.TokenResponse](t, body), status
+}
+
+// requestIDTokenWithHeaders is requestIDToken but exposes the response
+// headers, so tests can assert Retry-After on a 429.
+func requestIDTokenWithHeaders(t *testing.T, client *http.Client, nodeKey key.NodePublic, audience string) (tailcfg.TokenResponse, int, http.Header) {
+	t.Helper()
+
+	raw, err := json.Marshal(tailcfg.TokenRequest{
+		CapVersion: tailcfg.CurrentCapabilityVersion,
+		NodeKey:    nodeKey,
+		Audience:   audience,
+	})
+	if err != nil {
+		t.Fatalf("marshalling the token request: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://xunara.test/machine/id-token", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("building the token request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("requesting a token: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the token response: %v", err)
+	}
+	var token tailcfg.TokenResponse
+	if resp.StatusCode == http.StatusOK {
+		if err := json.Unmarshal(body, &token); err != nil {
+			t.Fatalf("decoding the token response: %v", err)
+		}
+	}
+	return token, resp.StatusCode, resp.Header
 }
 
 // getJSON performs an anonymous GET against the public HTTP server.
@@ -468,5 +511,57 @@ func TestIDTokenOpenIDConfiguration(t *testing.T) {
 	}
 	if got := header.Get("Content-Type"); got == "" {
 		t.Error("discovery response has no Content-Type")
+	}
+}
+
+// TestIDTokenRateLimit checks the per (node, audience) fixed window: the limit
+// holds, the rejection carries Retry-After, and other nodes/audiences have
+// their own buckets (spec section 28).
+func TestIDTokenRateLimit(t *testing.T) {
+	s := newServerWithConfig(t, Config{
+		ServerURL:        "https://login.example.com",
+		Domain:           "example.com",
+		IDTokenRateLimit: 2,
+	})
+	hs := newTestHTTPServer(t, s)
+
+	conn, client, nodeKey := registerNode(t, s, hs, "limited")
+	defer conn.Close()
+
+	for i := 0; i < 2; i++ {
+		if _, status, _ := requestIDTokenWithHeaders(t, client, nodeKey.Public(), "https://api.example.com"); status != http.StatusOK {
+			t.Fatalf("token %d status = %d, want 200", i+1, status)
+		}
+	}
+	_, status, header := requestIDTokenWithHeaders(t, client, nodeKey.Public(), "https://api.example.com")
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("third token status = %d, want 429", status)
+	}
+	retry, err := strconv.Atoi(header.Get("Retry-After"))
+	if err != nil || retry < 1 || retry > 60 {
+		t.Errorf("Retry-After = %q, want 1..60 seconds", header.Get("Retry-After"))
+	}
+
+	// A different audience and a different node each have their own bucket.
+	if _, status, _ := requestIDTokenWithHeaders(t, client, nodeKey.Public(), "https://other.example.com"); status != http.StatusOK {
+		t.Errorf("other audience status = %d, want 200", status)
+	}
+	otherConn, otherClient, otherKey := registerNode(t, s, hs, "unlimited")
+	defer otherConn.Close()
+	if _, status, _ := requestIDTokenWithHeaders(t, otherClient, otherKey.Public(), "https://api.example.com"); status != http.StatusOK {
+		t.Errorf("other node status = %d, want 200", status)
+	}
+}
+
+// TestIDTokenRateLimitDefaultsAndValidation checks the config surface: zero
+// means the default (never "unlimited") and a negative value refuses startup.
+func TestIDTokenRateLimitDefaultsAndValidation(t *testing.T) {
+	s := newServerWithConfig(t, Config{ServerURL: "https://login.example.com", Domain: "example.com"})
+	if got := s.cfg.IDTokenRateLimit; got != DefaultIDTokenRateLimit {
+		t.Errorf("default rate limit = %d, want %d", got, DefaultIDTokenRateLimit)
+	}
+
+	if _, err := New(Config{ServerURL: "http://login.test", StateDir: t.TempDir(), IDTokenRateLimit: -1}); err == nil {
+		t.Error("a negative rate limit was accepted")
 	}
 }

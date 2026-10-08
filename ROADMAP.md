@@ -978,7 +978,8 @@ in-place re-registration 与 `HandleNodeFromAuthPath` 的 reauth/convert 语义�
 - 信任模型（同时写在代码注释里）：issuer 就是控制面自身；任何已注册节点都能为
   自己（且仅为自己）取任意 audience 的 token。还没有"哪些节点可以联邦"的 grant
   （上游是 tsidp capability），所以管理员只应在"整个 tailnet 的节点都允许以自身
-  身份认证"时把该 issuer 配进依赖方。尚未做按节点/按 audience 的限流。
+  身份认证"时把该 issuer 配进依赖方。~~尚未做按节点/按 audience 的限流~~
+  已由 M21 交付（spec §28）。
 - 测试：`idtoken/idtoken_test.go`（0600 建钥、JWKS 验签往返、轮换后旧钥仍可验
   已签发 token、grace 后裁剪、权限过宽/坏文件拒绝、Keys 视图）、
   `control/idtoken_test.go`（端到端拿 token → 用公开 JWKS 验签并断言全部 claim、
@@ -1270,6 +1271,30 @@ M16e 的 Consul 导入同一模式：导入器在节点侧运行，控制面拿�
 - 明确不做（v1）：watch/持续同步（快照导入，与 Consul 一致）、Pod/容器、
   ClusterIP 直接导入、把 EndpointSlice 就绪写入 `services-health.json`
   （健康仍只由 §26 的文件驱动）、跨命名空间批量导入。
+
+---
+
+## M21 — Workload Identity 签发限流（v1，已完成）
+
+目标：补上 M13 明确留下的缺口——`/machine/id-token` 之前没有限流，任何已注册
+节点都能以任意 audience 无限索取签名。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §28。
+
+- `state`（迁移 v13）：`rate_limits(scope TEXT PRIMARY KEY, window_start,
+  count)`；`RateLimitStore.AllowRate(scope, limit, window, now)`（固定窗口，
+  返回 `retryAfter`）与 `PruneRateLimits(before)`。内存与 SQLite 共享同一份
+  窗口语义（`consumeRate`），一致性套件覆盖窗口重置、scope 隔离、参数拒绝、
+  清理与并发上限不变式；v12→v13 迁移测试。
+- 控制面：签发前按 `(节点, audience)` 桶计数（窗口 1 分钟，默认 30）；
+  超限 429 + `Retry-After`，不签发、不写审计（避免日志放大）。janitor 每轮
+  清理窗口早于 1 小时的桶。
+- 配置：`control.Config.IDTokenRateLimit`（0=默认，负数启动失败）、
+  `xunarad -id-token-rate-limit`、组织配置 `id_token_rate_limit`。
+- 测试：`state/ratelimit_test.go`、`control/idtoken_test.go`（两次成功、第三次
+  429 且 Retry-After 合法、不同 audience/不同节点各自计数、默认值与非负校验）、
+  `cmd/xunarad/orgconfig_test.go`（负值拒绝）。
+- 明确不做（v1）：tailnet 级/全局限流、按 token 的配额与计量、按 audience 的
+  授权策略（仍是"任意节点可为自身取任意 audience 的 token"）。
 
 ---
 

@@ -43,6 +43,7 @@ type orgConfig struct {
 	ClientVersionURL    string              `json:"client_version_url"`
 	NodeKeyExpiry       string              `json:"node_key_expiry"`
 	ServiceHealthTTL    string              `json:"service_health_ttl"`
+	IDTokenRateLimit    int                 `json:"id_token_rate_limit"`
 	CertDomains         []string            `json:"cert_domains"`
 	DNS                 *orgDNSConfig       `json:"dns"`
 	OIDC                *orgOIDCConfig      `json:"oidc"`
@@ -183,6 +184,9 @@ func (o orgConfig) controlConfig(logger *slog.Logger) (control.Config, error) {
 	if err != nil {
 		return control.Config{}, err
 	}
+	if o.IDTokenRateLimit < 0 {
+		return control.Config{}, fmt.Errorf("id_token_rate_limit %d must not be negative", o.IDTokenRateLimit)
+	}
 
 	var dnsProvider control.DNSProvider
 	if o.DNS != nil {
@@ -248,6 +252,7 @@ func (o orgConfig) controlConfig(logger *slog.Logger) (control.Config, error) {
 		ClientVersionURL:    o.ClientVersionURL,
 		NodeKeyExpiry:       nodeKeyExpiry,
 		ServiceHealthTTL:    serviceHealthTTL,
+		IDTokenRateLimit:    o.IDTokenRateLimit,
 		CertDomains:         o.CertDomains,
 		DNSProvider:         dnsProvider,
 		OIDCProviders:       oidcProviders,

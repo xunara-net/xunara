@@ -48,6 +48,9 @@ type MemoryStore struct {
 	// flux holds Xunara Flux transfer metadata, keyed by transfer ID.
 	flux map[string]FluxTransfer
 
+	// rateLimits holds fixed-window counters, keyed by scope.
+	rateLimits map[string]rateBucket
+
 	tka TKAMeta
 
 	// configRevision counts out-of-band configuration changes.
@@ -69,6 +72,7 @@ func NewMemoryStore() *MemoryStore {
 		deviceAttrs: make(map[NodeID]map[string]any),
 		services:    make(map[string]Service),
 		flux:        make(map[string]FluxTransfer),
+		rateLimits:  make(map[string]rateBucket),
 		byNode:      make(map[key.NodePublic]NodeID),
 		byStab:      make(map[string]NodeID),
 		byMach:      make(map[key.MachinePublic][]NodeID),

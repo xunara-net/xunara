@@ -188,6 +188,18 @@ CREATE TABLE IF NOT EXISTS node_service_health (
 );
 CREATE INDEX IF NOT EXISTS idx_node_service_health_expiry ON node_service_health(healthy, until);
 `,
+
+	// v13: durable fixed-window rate limiting (section 28). Buckets are named
+	// by an opaque scope string and reclaimed by age; nothing references
+	// nodes, so a deleted node's buckets disappear with the prune sweep.
+	`
+CREATE TABLE IF NOT EXISTS rate_limits (
+	scope        TEXT PRIMARY KEY,
+	window_start INTEGER NOT NULL,
+	count        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits(window_start);
+`,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.

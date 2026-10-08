@@ -33,9 +33,23 @@ func (s *Server) runJanitor(ctx context.Context) {
 			s.reapACMEChallenges(now)
 			s.reapPasskeyCeremonies(now)
 			s.reapFluxTransfers(now)
+			s.reapRateLimits(now)
 		case <-health.C:
 			s.reapServiceHealth(time.Now().UTC())
 		}
+	}
+}
+
+// reapRateLimits deletes idle rate limit buckets. Nothing references a bucket
+// once its window passed, so age alone decides when it goes (spec section 28).
+func (s *Server) reapRateLimits(now time.Time) {
+	removed, err := s.store.PruneRateLimits(now.Add(-rateLimitPruneAge))
+	if err != nil {
+		s.log.Warn("pruning rate limit buckets failed", "err", err)
+		return
+	}
+	if removed > 0 {
+		s.log.Debug("pruned rate limit buckets", "count", removed)
 	}
 }
 

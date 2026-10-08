@@ -80,6 +80,7 @@ func TestLoadOrgSitesRejectsBrokenTables(t *testing.T) {
 		{"bad expiry", `{"organizations": [` + strings.Replace(sprintf(valid, dir("e")), `"id": "acme"`, `"id": "acme", "node_key_expiry": "180x"`, 1) + `]}`, "node_key_expiry"},
 		{"bad health ttl syntax", `{"organizations": [` + strings.Replace(sprintf(valid, dir("j")), `"id": "acme"`, `"id": "acme", "service_health_ttl": "banana"`, 1) + `]}`, "service_health_ttl"},
 		{"health ttl out of range", `{"organizations": [` + strings.Replace(sprintf(valid, dir("k")), `"id": "acme"`, `"id": "acme", "service_health_ttl": "5s"`, 1) + `]}`, "service health TTL"},
+		{"negative token rate limit", `{"organizations": [` + strings.Replace(sprintf(valid, dir("l")), `"id": "acme"`, `"id": "acme", "id_token_rate_limit": -1`, 1) + `]}`, "id_token_rate_limit"},
 		{"bad derp map", `{"organizations": [` + strings.Replace(sprintf(valid, dir("f")), `"id": "acme"`, `"id": "acme", "derp_map": "`+dir("missing.json")+`"`, 1) + `]}`, "no such file"},
 		{"derp policy without a map", `{"organizations": [` + strings.Replace(sprintf(valid, dir("g")), `"id": "acme"`, `"id": "acme", "derp_policy": {"mode": "regions", "regions": [900]}`, 1) + `]}`, "needs a configured DERP map"},
 		{"derp policy unknown region", `{"organizations": [` + strings.Replace(sprintf(valid, dir("h")), `"id": "acme"`, `"id": "acme", "derp_map": "`+writeDERPMapFile(t, 900)+`", "derp_policy": {"mode": "regions", "regions": [7]}`, 1) + `]}`, "not in the configured DERP map"},

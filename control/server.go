@@ -81,6 +81,10 @@ type Config struct {
 	// health-tracked services withdrawn from discovery once the deadline
 	// passes. Zero uses [DefaultServiceHealthTTL].
 	ServiceHealthTTL time.Duration
+	// IDTokenRateLimit is how many identity tokens one node may obtain per
+	// audience per minute (spec section 28). Zero uses
+	// [DefaultIDTokenRateLimit]; negative is rejected at startup.
+	IDTokenRateLimit int
 	// PolicyPath is the ACL policy document (HuJSON). Empty means the tailnet
 	// has no policy and everything is allowed, which is what the official
 	// service does for a tailnet without a policy.
@@ -138,6 +142,18 @@ const (
 	// whose report expired. It is deliberately shorter than the general
 	// janitor cadence: withdrawal is the user-visible half of this feature.
 	serviceHealthSweepInterval = 15 * time.Second
+
+	// DefaultIDTokenRateLimit is how many workload identity tokens one node
+	// may obtain per audience in [idTokenRateWindow] (spec section 28). It is
+	// far above any sane client's refresh cadence and far below what a
+	// compromised node would need to exhaust the signing key or annoy a
+	// relying party.
+	DefaultIDTokenRateLimit = 30
+	// idTokenRateWindow is the fixed window of the identity token limiter.
+	idTokenRateWindow = time.Minute
+	// rateLimitPruneAge is how long an idle bucket is kept before the janitor
+	// deletes it. It only needs to exceed the longest window.
+	rateLimitPruneAge = time.Hour
 )
 
 // ephemeralReapInterval is how often the janitor looks for reaped nodes.
@@ -262,6 +278,12 @@ func New(cfg Config) (*Server, error) {
 	if cfg.ServiceHealthTTL < MinServiceHealthTTL || cfg.ServiceHealthTTL > MaxServiceHealthTTL {
 		return nil, fmt.Errorf("control: service health TTL %v is outside %v..%v",
 			cfg.ServiceHealthTTL, MinServiceHealthTTL, MaxServiceHealthTTL)
+	}
+	if cfg.IDTokenRateLimit == 0 {
+		cfg.IDTokenRateLimit = DefaultIDTokenRateLimit
+	}
+	if cfg.IDTokenRateLimit < 0 {
+		return nil, fmt.Errorf("control: identity token rate limit %d must not be negative", cfg.IDTokenRateLimit)
 	}
 
 	noiseKey, err := loadOrCreateNoiseKey(cfg.StateDir)

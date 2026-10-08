@@ -23,6 +23,7 @@ type Store interface {
 	DeviceAttrStore
 	ServiceStore
 	FluxStore
+	RateLimitStore
 
 	// GetNodeByID returns the node with the given server-local ID.
 	GetNodeByID(id NodeID) (Node, bool)

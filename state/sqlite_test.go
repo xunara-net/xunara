@@ -330,6 +330,36 @@ func TestSQLiteMigratesV10ToV11(t *testing.T) {
 	}
 }
 
+// TestSQLiteMigratesV12ToV13 simulates a database written before the rate
+// limiter existed: reopening it must create the bucket table.
+func TestSQLiteMigratesV12ToV13(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	ctx := context.Background()
+	first := openTestSQLite(t, path)
+	node := Node{Hostname: "old", NodeKey: key.NewNode().Public()}
+	if err := first.CreateNode(&node); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "DROP TABLE rate_limits"); err != nil {
+		t.Fatalf("dropping rate_limits: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "PRAGMA user_version = 12"); err != nil {
+		t.Fatalf("downgrading schema version: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second := openTestSQLite(t, path)
+	if _, ok := second.GetNodeByNodeKey(node.NodeKey); !ok {
+		t.Fatal("node did not survive the v12 -> v13 migration")
+	}
+	if allowed, _, err := second.AllowRate("migrated", 1, time.Minute, time.Now()); err != nil || !allowed {
+		t.Fatalf("AllowRate after migration = %v/%v", allowed, err)
+	}
+}
+
 func TestSQLiteStoreConcurrentAccess(t *testing.T) {
 	s := openTestSQLite(t, filepath.Join(t.TempDir(), "state.db"))
 

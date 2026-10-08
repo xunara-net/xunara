@@ -1163,3 +1163,20 @@ get/list  endpointslices       (discovery.k8s.io/v1)
 ```
 
 导入器不写集群、不创建/修改任何对象。
+
+## 28. Workload Identity 签发限流（v1）
+
+目标：给 `/machine/id-token` 加一条持久化的固定窗口限流，防止单个节点以任意
+audience 反复要求控制面签名（耗尽签名能力、骚扰依赖方、刷审计）。
+
+- 维度：每个 `(节点, audience)` 一个桶；窗口 1 分钟；默认每窗口 30 个 token
+  （`control.DefaultIDTokenRateLimit`）。
+- 计数在 store 里（state 迁移 v13 `rate_limits`，scope 为主键），不是
+  server-local map：多实例共享状态目录时计数一致，重启不丢（AGENTS §9）。
+  内存与 SQLite 共享同一份固定窗口语义。
+- 超限：HTTP 429 + `Retry-After`（整秒向上取整）；不签发、不写审计——否则
+  循环请求会把审计日志变成攻击放大器。
+- 桶不引用节点，由 janitor 按年龄清理（窗口早于 1 小时）。
+- 配置：`control.Config.IDTokenRateLimit`（0=默认，负数启动失败）；
+  `xunarad -id-token-rate-limit`；组织配置 `id_token_rate_limit`。
+- 不做：tailnet 级/全局限流、按 token 的配额与计量、按 audience 的授权策略。

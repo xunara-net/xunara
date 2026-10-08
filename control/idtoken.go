@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"strings"
 	"time"
 
@@ -101,6 +102,23 @@ func (ns *noiseServer) handleIDToken(w http.ResponseWriter, req *http.Request) {
 	}
 
 	now := time.Now().UTC()
+	// Rate limit before signing: a node may only ever get a token for itself,
+	// but nothing stops it from asking thousands of times a second (spec
+	// section 28). A rejection is not audited - a looping client would
+	// otherwise be able to flood the audit log.
+	allowed, retryAfter, err := ns.server.store.AllowRate(
+		idTokenRateScope(node, audience), ns.server.cfg.IDTokenRateLimit, idTokenRateWindow, now)
+	if err != nil {
+		ns.server.log.Error("rate limiting an identity token request", "node", node.StableID, "err", err)
+		httpError(w, NewHTTPError(http.StatusInternalServerError, "internal error", nil))
+		return
+	}
+	if !allowed {
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds(retryAfter)))
+		httpError(w, NewHTTPError(http.StatusTooManyRequests, "identity token rate limit exceeded", nil))
+		return
+	}
+
 	claims, err := ns.server.idTokenClaims(node, audience, now)
 	if err != nil {
 		ns.server.log.Error("building identity token claims", "node", node.StableID, "err", err)
@@ -121,6 +139,24 @@ func (ns *noiseServer) handleIDToken(w http.ResponseWriter, req *http.Request) {
 	ns.server.log.Debug("issued identity token", "node", node.StableID, "aud", truncateClean(audience, maxIDTokenAudienceLen))
 
 	writeJSON(w, http.StatusOK, tailcfg.TokenResponse{IDToken: signed})
+}
+
+// idTokenRateScope names the limiter bucket: one node asking for one
+// audience. Node IDs are server-local, so two organizations sharing a
+// database could not collide, and audiences are bounded at
+// [maxIDTokenAudienceLen].
+func idTokenRateScope(node state.Node, audience string) string {
+	return "id-token:" + strconv.FormatUint(uint64(node.ID), 10) + ":" + audience
+}
+
+// retryAfterSeconds rounds a wait up to whole seconds for the Retry-After
+// header; a client that retries exactly then must not be refused again.
+func retryAfterSeconds(d time.Duration) int {
+	seconds := int(d / time.Second)
+	if d%time.Second != 0 || seconds == 0 {
+		seconds++
+	}
+	return seconds
 }
 
 // idTokenClaims builds the claims for one node. It fails only when a fresh
