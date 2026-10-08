@@ -1466,6 +1466,42 @@ nil，端点 404），补上单组织 flag 与多组织组织表接线；规格�
 
 ---
 
+## M27 — Xunara Flux 管理面（只读，v1，已完成）
+
+目标：管理员能回答"谁在什么时候给谁发了什么文件、结果如何"，同时不破坏
+控制面零知识。规格见 `Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md`
+§33。只读：没有取消/删除，也**没有内容下载**。
+
+- state：`ListAllFluxTransfers`（全部传输最新在前，管理面看双方），内存与
+  SQLite 语义一致（共用一次查询/扫描辅助函数），纳入 conformance 子测试。
+- HTTP `/api/v2/flux/transfers`（read scope、`Cache-Control: no-store`）：
+  列表支持 `state=`/`node=` 过滤（未知 state 400、未知 node 空集，
+  fail-closed）与 `(createdAt, id)` 不透明游标；详情按 ID。条目是第三人称
+  视图（无 direction），且**不含** `recipientKey`、内容或任何路径——管理面
+  根本没有内容端点。Flux 未启用时两个端点都是 404（与 agent 端点一致）；
+  坏 id 与不存在同为 404。
+- gRPC `PlatformService.ListFluxTransfers` / `GetFluxTransfer`（api/proto
+  重新生成）：语义、认证、游标与错误映射与 HTTP 一致（未启用/未知传输
+  `NOT_FOUND`，坏 state/游标 `INVALID_ARGUMENT`）；消息里没有任何内容或
+  密钥字段。
+- Console `/console/flux` 与 `/console/flux/{id}`：列表（state 过滤、最新
+  在前、最多 200 条）与详情（名字、大小、状态、双方、SHA-256、reason、
+  时间戳；明确说明文件内容端到端加密、不在控制面）；只读、无按钮；未启用
+  时页面说明功能未开启（不是 404）。
+- 复用：新增通用游标/顺序辅助（`apiV2EncodeTimeCursor`、`apiV2TimeCursor`、
+  `newestFirstAfterCursor`），Reach 与 Flux 的 HTTP/gRPC 端点共用同一份
+  实现，避免两套分页语义漂移。
+- 测试：`state` conformance 新子测试（管理面看到全部参与方）；
+  `control/api_v2_flux_test.go`（HTTP 401/403、列表/过滤/游标、详情、
+  ciphertext 与 recipientKey 不泄漏、管理面无内容端点、未启用 404、
+  no-store；gRPC 认证/权限/分页/NotFound/未启用）；
+  `control/console_test.go`（列表/详情渲染、state 过滤、内容不渲染、只读、
+  未启用说明页）。
+- 明确不做（v1）：管理面取消/删除、内容下载/导出、按文件名全文搜索、
+  跨组织视图、内容扫描（DLP 不在 v1，§25）。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。

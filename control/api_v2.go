@@ -56,6 +56,8 @@ func (s *Server) apiV2Router() http.Handler {
 	r.Get("/machines", s.handleAPIV2Machines)
 	r.Get("/machines/{id}/device-attrs", s.handleAPIV2MachineDeviceAttrs)
 	r.Get("/services", s.handleAPIV2Services)
+	r.Get("/flux/transfers", s.handleAPIV2FluxTransfers)
+	r.Get("/flux/transfers/{id}", s.handleAPIV2FluxTransfer)
 	r.Get("/audit", s.handleAPIV2Audit)
 
 	r.Get("/reach/sessions", s.handleAPIV2ReachSessions)
@@ -137,6 +139,48 @@ func apiV2CursorString(w http.ResponseWriter, r *http.Request, kind string) (str
 		return "", true
 	}
 	return parts[0], true
+}
+
+// apiV2EncodeTimeCursor packs a list position: an item's creation time and
+// ID, so the next page resumes exactly after it.
+func apiV2EncodeTimeCursor(kind string, created time.Time, id string) string {
+	return apiV2EncodeCursor(kind, strconv.FormatInt(created.UnixNano(), 10), id)
+}
+
+// apiV2TimeCursor decodes a newest-first list cursor; an empty cursor means
+// "from the top".
+func apiV2TimeCursor(w http.ResponseWriter, r *http.Request, kind string) (time.Time, string, bool) {
+	cursorKind, parts, ok := apiV2DecodeCursor(r.URL.Query().Get("cursor"))
+	if !ok || (cursorKind != "" && (cursorKind != kind || len(parts) != 2)) {
+		writeAPIError(w, http.StatusBadRequest, "invalid cursor")
+		return time.Time{}, "", false
+	}
+	if cursorKind == "" {
+		return time.Time{}, "", true
+	}
+	nanos, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, "invalid cursor")
+		return time.Time{}, "", false
+	}
+	return time.Unix(0, nanos).UTC(), parts[1], true
+}
+
+// newestFirstAfterCursor reports whether (created, id) comes after the cursor
+// position in the newest-first order (createdAt descending, ID ascending).
+// The zero cursor matches everything.
+func newestFirstAfterCursor(created time.Time, id string, afterCreated time.Time, afterID string) bool {
+	if afterID == "" {
+		return true
+	}
+	switch {
+	case created.Before(afterCreated):
+		return true
+	case created.After(afterCreated):
+		return false
+	default:
+		return id > afterID
+	}
 }
 
 // apiV2Limit parses ?limit=, bounded and defaulted.

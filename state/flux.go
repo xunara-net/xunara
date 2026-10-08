@@ -144,6 +144,11 @@ type FluxStore interface {
 	// ListFluxTransfers returns every transfer the node is part of, newest
 	// first.
 	ListFluxTransfers(node NodeID) []FluxTransfer
+	// ListAllFluxTransfers returns every transfer, newest first. It backs the
+	// read-only management surface (spec section 33), which sees both sides
+	// of every transfer of this organization. Content is never part of the
+	// record.
+	ListAllFluxTransfers() []FluxTransfer
 	// AcceptFluxTransfer moves pending to accepted, recording the recipient's
 	// per-transfer public key.
 	AcceptFluxTransfer(id string, recipient NodeID, publicKey []byte) (FluxTransfer, error)

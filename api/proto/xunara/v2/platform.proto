@@ -78,6 +78,17 @@ service PlatformService {
   // happens over the native client protocol; this surface is read-only.
   rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
 
+  // ListFluxTransfers returns the file transfers of this organization
+  // (Xunara Flux), newest first and resumable with page_token. It is the
+  // read-only management surface: content is end-to-end encrypted and never
+  // readable here, no message carries file content or key material, and there
+  // is no download RPC. Flux must be enabled, otherwise NOT_FOUND.
+  rpc ListFluxTransfers(ListFluxTransfersRequest) returns (ListFluxTransfersResponse);
+
+  // GetFluxTransfer returns one transfer's metadata by ID. An unknown
+  // transfer is NOT_FOUND, and Flux being disabled is NOT_FOUND too.
+  rpc GetFluxTransfer(GetFluxTransferRequest) returns (FluxTransfer);
+
   // ListReachSessions returns the remote command sessions of this
   // organization (Xunara Reach), newest first and resumable with page_token.
   // The surface is read-only: sessions are created and driven by the two
@@ -306,6 +317,51 @@ message ListReachSessionsRequest {
 message ListReachSessionsResponse {
   repeated ReachSession sessions = 1;
   string next_page_token = 2;
+}
+
+message FluxPeer {
+  uint64 node_id = 1;
+  string stable_id = 2;
+  string hostname = 3;
+}
+
+// FluxTransfer mirrors GET /api/v2/flux/transfers items. It never carries
+// content, the recipient's per-transfer public key or a content path.
+message FluxTransfer {
+  string id = 1;
+  string state = 2;
+  // Name and size are the plaintext name/size the sender proposed; the
+  // stored ciphertext is not described here.
+  string name = 3;
+  int64 size = 4;
+  string sha256 = 5;
+  FluxPeer sender = 6;
+  FluxPeer recipient = 7;
+  // Reason is the static explanation of a denial or failure; empty
+  // otherwise.
+  string reason = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+  google.protobuf.Timestamp expires_at = 11;
+}
+
+message ListFluxTransfersRequest {
+  // State filters by transfer state; empty means all. An unknown state is
+  // INVALID_ARGUMENT.
+  string state = 1;
+  // Node filters by node id or stable ID; an unknown node matches nothing.
+  string node = 2;
+  uint32 page_size = 3;
+  string page_token = 4;
+}
+
+message ListFluxTransfersResponse {
+  repeated FluxTransfer transfers = 1;
+  string next_page_token = 2;
+}
+
+message GetFluxTransferRequest {
+  string id = 1;
 }
 
 message GetReachSessionRequest {

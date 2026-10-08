@@ -53,6 +53,8 @@ const (
 	PlatformService_GetMachineDeviceAttrs_FullMethodName   = "/xunara.v2.PlatformService/GetMachineDeviceAttrs"
 	PlatformService_ListMachines_FullMethodName            = "/xunara.v2.PlatformService/ListMachines"
 	PlatformService_ListServices_FullMethodName            = "/xunara.v2.PlatformService/ListServices"
+	PlatformService_ListFluxTransfers_FullMethodName       = "/xunara.v2.PlatformService/ListFluxTransfers"
+	PlatformService_GetFluxTransfer_FullMethodName         = "/xunara.v2.PlatformService/GetFluxTransfer"
 	PlatformService_ListReachSessions_FullMethodName       = "/xunara.v2.PlatformService/ListReachSessions"
 	PlatformService_GetReachSession_FullMethodName         = "/xunara.v2.PlatformService/GetReachSession"
 	PlatformService_ListAudit_FullMethodName               = "/xunara.v2.PlatformService/ListAudit"
@@ -101,6 +103,15 @@ type PlatformServiceClient interface {
 	// (Xunara Atlas), ordered by name and resumable with page_token. Publishing
 	// happens over the native client protocol; this surface is read-only.
 	ListServices(ctx context.Context, in *ListServicesRequest, opts ...grpc.CallOption) (*ListServicesResponse, error)
+	// ListFluxTransfers returns the file transfers of this organization
+	// (Xunara Flux), newest first and resumable with page_token. It is the
+	// read-only management surface: content is end-to-end encrypted and never
+	// readable here, no message carries file content or key material, and there
+	// is no download RPC. Flux must be enabled, otherwise NOT_FOUND.
+	ListFluxTransfers(ctx context.Context, in *ListFluxTransfersRequest, opts ...grpc.CallOption) (*ListFluxTransfersResponse, error)
+	// GetFluxTransfer returns one transfer's metadata by ID. An unknown
+	// transfer is NOT_FOUND, and Flux being disabled is NOT_FOUND too.
+	GetFluxTransfer(ctx context.Context, in *GetFluxTransferRequest, opts ...grpc.CallOption) (*FluxTransfer, error)
 	// ListReachSessions returns the remote command sessions of this
 	// organization (Xunara Reach), newest first and resumable with page_token.
 	// The surface is read-only: sessions are created and driven by the two
@@ -209,6 +220,26 @@ func (c *platformServiceClient) ListServices(ctx context.Context, in *ListServic
 	return out, nil
 }
 
+func (c *platformServiceClient) ListFluxTransfers(ctx context.Context, in *ListFluxTransfersRequest, opts ...grpc.CallOption) (*ListFluxTransfersResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListFluxTransfersResponse)
+	err := c.cc.Invoke(ctx, PlatformService_ListFluxTransfers_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) GetFluxTransfer(ctx context.Context, in *GetFluxTransferRequest, opts ...grpc.CallOption) (*FluxTransfer, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FluxTransfer)
+	err := c.cc.Invoke(ctx, PlatformService_GetFluxTransfer_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *platformServiceClient) ListReachSessions(ctx context.Context, in *ListReachSessionsRequest, opts ...grpc.CallOption) (*ListReachSessionsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListReachSessionsResponse)
@@ -300,6 +331,15 @@ type PlatformServiceServer interface {
 	// (Xunara Atlas), ordered by name and resumable with page_token. Publishing
 	// happens over the native client protocol; this surface is read-only.
 	ListServices(context.Context, *ListServicesRequest) (*ListServicesResponse, error)
+	// ListFluxTransfers returns the file transfers of this organization
+	// (Xunara Flux), newest first and resumable with page_token. It is the
+	// read-only management surface: content is end-to-end encrypted and never
+	// readable here, no message carries file content or key material, and there
+	// is no download RPC. Flux must be enabled, otherwise NOT_FOUND.
+	ListFluxTransfers(context.Context, *ListFluxTransfersRequest) (*ListFluxTransfersResponse, error)
+	// GetFluxTransfer returns one transfer's metadata by ID. An unknown
+	// transfer is NOT_FOUND, and Flux being disabled is NOT_FOUND too.
+	GetFluxTransfer(context.Context, *GetFluxTransferRequest) (*FluxTransfer, error)
 	// ListReachSessions returns the remote command sessions of this
 	// organization (Xunara Reach), newest first and resumable with page_token.
 	// The surface is read-only: sessions are created and driven by the two
@@ -351,6 +391,12 @@ func (UnimplementedPlatformServiceServer) ListMachines(context.Context, *ListMac
 }
 func (UnimplementedPlatformServiceServer) ListServices(context.Context, *ListServicesRequest) (*ListServicesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListServices not implemented")
+}
+func (UnimplementedPlatformServiceServer) ListFluxTransfers(context.Context, *ListFluxTransfersRequest) (*ListFluxTransfersResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListFluxTransfers not implemented")
+}
+func (UnimplementedPlatformServiceServer) GetFluxTransfer(context.Context, *GetFluxTransferRequest) (*FluxTransfer, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetFluxTransfer not implemented")
 }
 func (UnimplementedPlatformServiceServer) ListReachSessions(context.Context, *ListReachSessionsRequest) (*ListReachSessionsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListReachSessions not implemented")
@@ -532,6 +578,42 @@ func _PlatformService_ListServices_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PlatformService_ListFluxTransfers_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListFluxTransfersRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).ListFluxTransfers(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_ListFluxTransfers_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).ListFluxTransfers(ctx, req.(*ListFluxTransfersRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_GetFluxTransfer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetFluxTransferRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).GetFluxTransfer(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_GetFluxTransfer_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).GetFluxTransfer(ctx, req.(*GetFluxTransferRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PlatformService_ListReachSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListReachSessionsRequest)
 	if err := dec(in); err != nil {
@@ -660,6 +742,14 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListServices",
 			Handler:    _PlatformService_ListServices_Handler,
+		},
+		{
+			MethodName: "ListFluxTransfers",
+			Handler:    _PlatformService_ListFluxTransfers_Handler,
+		},
+		{
+			MethodName: "GetFluxTransfer",
+			Handler:    _PlatformService_GetFluxTransfer_Handler,
 		},
 		{
 			MethodName: "ListReachSessions",

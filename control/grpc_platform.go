@@ -505,7 +505,7 @@ func (g *grpcPlatformServer) ListReachSessions(ctx context.Context, req *xunarav
 	}
 
 	limit := grpcPageSize(req.GetPageSize(), 100)
-	afterCreated, afterID, ok := grpcCursorReach(req.GetPageToken())
+	afterCreated, afterID, ok := grpcCursorTime(req.GetPageToken(), "reach")
 	if !ok {
 		return nil, status.Error(codes.InvalidArgument, "invalid page token")
 	}
@@ -532,7 +532,7 @@ func (g *grpcPlatformServer) ListReachSessions(ctx context.Context, req *xunarav
 	var last state.ReachSession
 	next := ""
 	for _, session := range s.store.ListAllReachSessions() {
-		if !reachAfterCursor(session, afterCreated, afterID) {
+		if !newestFirstAfterCursor(session.CreatedAt, session.ID, afterCreated, afterID) {
 			continue
 		}
 		if stateFilter != "" && session.State != stateFilter {
@@ -554,6 +554,110 @@ func (g *grpcPlatformServer) ListReachSessions(ctx context.Context, req *xunarav
 	}
 
 	return &xunarav2.ListReachSessionsResponse{Sessions: out, NextPageToken: next}, nil
+}
+
+// ListFluxTransfers implements PlatformService.ListFluxTransfers: the same
+// read-only listing as GET /api/v2/flux/transfers, with the same filters and
+// cursor. Flux must be enabled; otherwise the call is NOT_FOUND, matching the
+// HTTP 404. No message carries content or key material.
+func (g *grpcPlatformServer) ListFluxTransfers(ctx context.Context, req *xunarav2.ListFluxTransfersRequest) (*xunarav2.ListFluxTransfersResponse, error) {
+	s, _, err := g.authorize(ctx, identity.ScopeRead)
+	if err != nil {
+		return nil, err
+	}
+	if s.flux == nil {
+		return nil, status.Error(codes.NotFound, "flux is not enabled")
+	}
+
+	limit := grpcPageSize(req.GetPageSize(), 100)
+	afterCreated, afterID, ok := grpcCursorTime(req.GetPageToken(), "flux")
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "invalid page token")
+	}
+	var stateFilter state.FluxTransferState
+	if raw := strings.TrimSpace(req.GetState()); raw != "" {
+		stateFilter = state.FluxTransferState(raw)
+		if !stateFilter.Valid() {
+			return nil, status.Error(codes.InvalidArgument, "invalid state filter")
+		}
+	}
+	var nodeFilter state.NodeID
+	if raw := strings.TrimSpace(req.GetNode()); raw != "" {
+		if id, err := strconv.ParseUint(raw, 10, 64); err == nil {
+			nodeFilter = state.NodeID(id)
+		} else if node, ok := s.store.GetNodeByStableID(raw); ok {
+			nodeFilter = node.ID
+		} else {
+			// An unknown node matches nothing rather than being ignored.
+			nodeFilter = ^state.NodeID(0)
+		}
+	}
+
+	out := make([]*xunarav2.FluxTransfer, 0, limit)
+	var last state.FluxTransfer
+	next := ""
+	for _, transfer := range s.store.ListAllFluxTransfers() {
+		if !newestFirstAfterCursor(transfer.CreatedAt, transfer.ID, afterCreated, afterID) {
+			continue
+		}
+		if stateFilter != "" && transfer.State != stateFilter {
+			continue
+		}
+		if nodeFilter != 0 && transfer.SenderNode != nodeFilter && transfer.RecipientNode != nodeFilter {
+			continue
+		}
+		if len(out) == limit {
+			next = fluxEncodePageCursor(last)
+			break
+		}
+		view, ok := s.fluxAdminView(transfer)
+		if !ok {
+			continue
+		}
+		out = append(out, grpcFluxTransfer(view))
+		last = transfer
+	}
+
+	return &xunarav2.ListFluxTransfersResponse{Transfers: out, NextPageToken: next}, nil
+}
+
+// GetFluxTransfer implements PlatformService.GetFluxTransfer.
+func (g *grpcPlatformServer) GetFluxTransfer(ctx context.Context, req *xunarav2.GetFluxTransferRequest) (*xunarav2.FluxTransfer, error) {
+	s, _, err := g.authorize(ctx, identity.ScopeRead)
+	if err != nil {
+		return nil, err
+	}
+	if s.flux == nil {
+		return nil, status.Error(codes.NotFound, "flux is not enabled")
+	}
+
+	transfer, ok := s.store.GetFluxTransfer(req.GetId())
+	if !ok {
+		return nil, status.Error(codes.NotFound, "no such transfer")
+	}
+	view, ok := s.fluxAdminView(transfer)
+	if !ok {
+		return nil, status.Error(codes.NotFound, "no such transfer")
+	}
+	return grpcFluxTransfer(view), nil
+}
+
+// grpcFluxTransfer converts one management view. Content and keys have no
+// field to land in.
+func grpcFluxTransfer(view fluxAdminTransfer) *xunarav2.FluxTransfer {
+	return &xunarav2.FluxTransfer{
+		Id:        view.ID,
+		State:     view.State,
+		Name:      view.Name,
+		Size:      view.Size,
+		Sha256:    view.SHA256,
+		Sender:    &xunarav2.FluxPeer{NodeId: view.Sender.NodeID, StableId: view.Sender.StableID, Hostname: view.Sender.Hostname},
+		Recipient: &xunarav2.FluxPeer{NodeId: view.Recipient.NodeID, StableId: view.Recipient.StableID, Hostname: view.Recipient.Hostname},
+		Reason:    view.Reason,
+		CreatedAt: timestamppb.New(view.CreatedAt),
+		UpdatedAt: timestamppb.New(view.UpdatedAt),
+		ExpiresAt: timestamppb.New(view.ExpiresAt),
+	}
 }
 
 // GetReachSession implements PlatformService.GetReachSession.
@@ -599,11 +703,11 @@ func grpcReachSession(view reachAdminSession) *xunarav2.ReachSession {
 	return out
 }
 
-// grpcCursorReach decodes a reach list page token; an empty token starts at
-// the top of the list.
-func grpcCursorReach(raw string) (time.Time, string, bool) {
+// grpcCursorTime decodes a newest-first list page token; an empty token
+// starts at the top of the list.
+func grpcCursorTime(raw, want string) (time.Time, string, bool) {
 	kind, parts, ok := apiV2DecodeCursor(raw)
-	if !ok || (kind != "" && (kind != "reach" || len(parts) != 2)) {
+	if !ok || (kind != "" && (kind != want || len(parts) != 2)) {
 		return time.Time{}, "", false
 	}
 	if kind == "" {

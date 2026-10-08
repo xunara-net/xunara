@@ -94,14 +94,26 @@ func (s *MemoryStore) GetFluxTransfer(id string) (FluxTransfer, bool) {
 
 // ListFluxTransfers implements [FluxStore].
 func (s *MemoryStore) ListFluxTransfers(node NodeID) []FluxTransfer {
+	return s.listFluxTransfers(node, false)
+}
+
+// ListAllFluxTransfers implements [FluxStore].
+func (s *MemoryStore) ListAllFluxTransfers() []FluxTransfer {
+	return s.listFluxTransfers(0, true)
+}
+
+// listFluxTransfers returns cloned transfers newest first; all includes the
+// transfers of nodes other than node (used by the management surface).
+func (s *MemoryStore) listFluxTransfers(node NodeID, all bool) []FluxTransfer {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var out []FluxTransfer
 	for _, t := range s.flux {
-		if t.SenderNode == node || t.RecipientNode == node {
-			out = append(out, cloneFluxTransfer(t))
+		if !all && t.SenderNode != node && t.RecipientNode != node {
+			continue
 		}
+		out = append(out, cloneFluxTransfer(t))
 	}
 	slices.SortFunc(out, func(a, b FluxTransfer) int {
 		switch {

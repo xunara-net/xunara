@@ -3,7 +3,6 @@ package control
 import (
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -48,7 +47,7 @@ func (s *Server) handleAPIV2ReachSessions(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	afterCreated, afterID, ok := reachPageCursor(w, r)
+	afterCreated, afterID, ok := apiV2TimeCursor(w, r, "reach")
 	if !ok {
 		return
 	}
@@ -78,7 +77,7 @@ func (s *Server) handleAPIV2ReachSessions(w http.ResponseWriter, r *http.Request
 	var last state.ReachSession
 	next := ""
 	for _, session := range s.store.ListAllReachSessions() {
-		if !reachAfterCursor(session, afterCreated, afterID) {
+		if !newestFirstAfterCursor(session.CreatedAt, session.ID, afterCreated, afterID) {
 			continue
 		}
 		if stateFilter != "" && session.State != stateFilter {
@@ -216,42 +215,7 @@ func (s *Server) reachChunksPage(id string, afterOut, afterErr int64) (reachChun
 	return resp, nil
 }
 
-// reachEncodePageCursor packs a list position: the last item's creation time
-// and ID, so the next page resumes exactly after it.
+// reachEncodePageCursor packs a list position for the reach cursor kind.
 func reachEncodePageCursor(session state.ReachSession) string {
-	return apiV2EncodeCursor("reach", strconv.FormatInt(session.CreatedAt.UnixNano(), 10), session.ID)
-}
-
-// reachPageCursor decodes a list cursor; an empty cursor means "from the top".
-func reachPageCursor(w http.ResponseWriter, r *http.Request) (time.Time, string, bool) {
-	kind, parts, ok := apiV2DecodeCursor(r.URL.Query().Get("cursor"))
-	if !ok || (kind != "" && (kind != "reach" || len(parts) != 2)) {
-		writeAPIError(w, http.StatusBadRequest, "invalid cursor")
-		return time.Time{}, "", false
-	}
-	if kind == "" {
-		return time.Time{}, "", true
-	}
-	nanos, err := strconv.ParseInt(parts[0], 10, 64)
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid cursor")
-		return time.Time{}, "", false
-	}
-	return time.Unix(0, nanos).UTC(), parts[1], true
-}
-
-// reachAfterCursor reports whether a session comes after the cursor position
-// in the newest-first order (createdAt descending, ID ascending).
-func reachAfterCursor(session state.ReachSession, afterCreated time.Time, afterID string) bool {
-	if afterID == "" {
-		return true
-	}
-	switch {
-	case session.CreatedAt.Before(afterCreated):
-		return true
-	case session.CreatedAt.After(afterCreated):
-		return false
-	default:
-		return session.ID > afterID
-	}
+	return apiV2EncodeTimeCursor("reach", session.CreatedAt, session.ID)
 }

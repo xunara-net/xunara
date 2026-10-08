@@ -203,6 +203,38 @@ func runFluxConformance(t *testing.T, newStore storeFactory) {
 		}
 	})
 
+	t.Run("management listing sees every participant", func(t *testing.T) {
+		s := newStore(t)
+		sender := createTestNode(t, s, "sender")
+		recipient := createTestNode(t, s, "recipient")
+		bystander := createTestNode(t, s, "bystander")
+
+		first := fluxOffer(sender.ID, recipient.ID)
+		if err := s.CreateFluxTransfer(first, FluxQuotas{}); err != nil {
+			t.Fatalf("CreateFluxTransfer: %v", err)
+		}
+		second := fluxOffer(bystander.ID, sender.ID)
+		if err := s.CreateFluxTransfer(second, FluxQuotas{}); err != nil {
+			t.Fatalf("CreateFluxTransfer: %v", err)
+		}
+
+		// The management surface sees both sides of every transfer, while a
+		// participant-wise listing only sees its own.
+		all := s.ListAllFluxTransfers()
+		if len(all) != 2 {
+			t.Fatalf("ListAllFluxTransfers = %+v, want both transfers", all)
+		}
+		// Newest first; both were stored in the same nanosecond window, so
+		// only the set and the ordering rule (created_at DESC, id) matter.
+		ids := []string{all[0].ID, all[1].ID}
+		if !slices.Contains(ids, first.ID) || !slices.Contains(ids, second.ID) {
+			t.Errorf("management listing = %v, want %s and %s", ids, first.ID, second.ID)
+		}
+		if got := s.ListFluxTransfers(bystander.ID); len(got) != 1 || got[0].ID != second.ID {
+			t.Errorf("participant listing = %+v", got)
+		}
+	})
+
 	t.Run("deleting a node drops its transfers", func(t *testing.T) {
 		s := newStore(t)
 		sender := createTestNode(t, s, "sender")

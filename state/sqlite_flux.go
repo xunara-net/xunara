@@ -137,11 +137,23 @@ func (s *SQLiteStore) GetFluxTransfer(id string) (FluxTransfer, bool) {
 
 // ListFluxTransfers implements [FluxStore].
 func (s *SQLiteStore) ListFluxTransfers(node NodeID) []FluxTransfer {
-	rows, err := s.db.QueryContext(context.Background(), `
-		SELECT `+fluxColumns+` FROM flux_transfers
+	const query = `SELECT ` + fluxColumns + ` FROM flux_transfers
 		WHERE sender_node = ? OR recipient_node = ?
-		ORDER BY created_at DESC, id`,
-		int64(node), int64(node))
+		ORDER BY created_at DESC, id`
+	return s.listFluxTransfers(query, int64(node), int64(node))
+}
+
+// ListAllFluxTransfers implements [FluxStore].
+func (s *SQLiteStore) ListAllFluxTransfers() []FluxTransfer {
+	const query = `SELECT ` + fluxColumns + ` FROM flux_transfers
+		ORDER BY created_at DESC, id`
+	return s.listFluxTransfers(query)
+}
+
+// listFluxTransfers runs one listing query and scans it; a failure reads as an
+// empty list, like the other read helpers.
+func (s *SQLiteStore) listFluxTransfers(query string, args ...any) []FluxTransfer {
+	rows, err := s.db.QueryContext(context.Background(), query, args...)
 	if err != nil {
 		return nil
 	}

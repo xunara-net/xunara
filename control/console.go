@@ -81,6 +81,8 @@ func (s *Server) consoleRouter() http.Handler {
 	r.Get("/services", s.handleConsoleServices)
 	r.Get("/reach", s.handleConsoleReach)
 	r.Get("/reach/{id}", s.handleConsoleReachSession)
+	r.Get("/flux", s.handleConsoleFlux)
+	r.Get("/flux/{id}", s.handleConsoleFluxTransfer)
 	r.Get("/webhooks", s.handleConsoleWebhooks)
 	r.Get("/policy", s.handleConsolePolicy)
 	r.Get("/audit", s.handleConsoleAudit)
@@ -739,6 +741,94 @@ var consoleReachStates = []string{
 // consoleReachListLimit caps the list page. The console is a supervision view,
 // not an archival read; the API pages through everything (spec section 31.4).
 const consoleReachListLimit = 200
+
+// consoleFluxStates is the filter menu on the Flux list; it is built from the
+// state constants so the page cannot offer a state the store rejects.
+var consoleFluxStates = []string{
+	string(state.FluxPending), string(state.FluxAccepted), string(state.FluxUploaded),
+	string(state.FluxCompleted), string(state.FluxDenied), string(state.FluxFailed),
+	string(state.FluxCancelled), string(state.FluxExpired),
+}
+
+// consoleFluxListLimit caps the list page, like the Reach console.
+const consoleFluxListLimit = 200
+
+// handleConsoleFlux implements GET /console/flux: the read-only Flux transfer
+// list (spec section 33.3). The control plane holds ciphertext only, so the
+// page has no content to leak even if it wanted to.
+func (s *Server) handleConsoleFlux(w http.ResponseWriter, r *http.Request) {
+	_, data, ok := s.consoleSession(w, r, "flux")
+	if !ok {
+		return
+	}
+	data["Enabled"] = s.flux != nil
+	if s.flux == nil {
+		s.renderConsole(w, consoleFluxTemplate, data)
+		return
+	}
+	data["States"] = consoleFluxStates
+
+	var filter state.FluxTransferState
+	if raw := r.URL.Query().Get("state"); raw != "" {
+		filter = state.FluxTransferState(raw)
+		if !filter.Valid() {
+			s.renderError(w, http.StatusBadRequest, "Unknown state",
+				"That is not a Flux transfer state.")
+			return
+		}
+	}
+	data["StateFilter"] = string(filter)
+
+	transfers := make([]fluxAdminTransfer, 0, 16)
+	for _, transfer := range s.store.ListAllFluxTransfers() {
+		if filter != "" && transfer.State != filter {
+			continue
+		}
+		if len(transfers) == consoleFluxListLimit {
+			data["More"] = true
+			break
+		}
+		view, ok := s.fluxAdminView(transfer)
+		if !ok {
+			// A participant's node row is gone; the transfer cascade removes
+			// it too, so this is only a race with the deletion.
+			continue
+		}
+		transfers = append(transfers, view)
+	}
+	data["Transfers"] = transfers
+	s.renderConsole(w, consoleFluxTemplate, data)
+}
+
+// handleConsoleFluxTransfer implements GET /console/flux/{id}: one transfer's
+// metadata, never its content.
+func (s *Server) handleConsoleFluxTransfer(w http.ResponseWriter, r *http.Request) {
+	_, data, ok := s.consoleSession(w, r, "flux")
+	if !ok {
+		return
+	}
+	data["Enabled"] = s.flux != nil
+	if s.flux == nil {
+		// The page explains the disabled feature rather than 404ing, like the
+		// list page; only the API hides behind 404.
+		s.renderConsole(w, consoleFluxTransferTemplate, data)
+		return
+	}
+	transfer, ok := s.store.GetFluxTransfer(chi.URLParam(r, "id"))
+	if !ok {
+		s.renderError(w, http.StatusNotFound, "Unknown transfer",
+			"No Flux transfer has that ID.")
+		return
+	}
+	view, ok := s.fluxAdminView(transfer)
+	if !ok {
+		s.renderError(w, http.StatusNotFound, "Unknown transfer",
+			"No Flux transfer has that ID.")
+		return
+	}
+	data["Transfer"] = view
+	s.renderConsole(w, consoleFluxTransferTemplate, data)
+}
 
 // handleConsoleReach implements GET /console/reach: the read-only Reach
 // management list (spec section 31.3), newest first, optionally filtered by

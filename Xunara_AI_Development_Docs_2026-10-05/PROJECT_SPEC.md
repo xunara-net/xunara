@@ -1448,3 +1448,60 @@ GET /api/v2/derp
 `/console/derp`：策略摘要（模式、白名单、是否配置 map）、区域表
 （ID/code/名称/relay 地址/节点数）与节点归属表（hostname、stable ID、在线、
 HomeDERP，未归属/不再服务的显式标注）。只读，页面不提供任何按钮。
+
+## 33. Xunara Flux 管理面（只读，v1）
+
+目标：管理员能回答"谁在什么时候给谁发了什么文件、结果如何"（合规与排障）。
+只读，且**控制面零知识不因管理面改变**：文件内容是对端加密的密文，管理面
+永远不返回内容、下载入口或任何密钥材料。
+
+### 33.1 HTTP（`/api/v2`，read scope）
+
+```text
+GET /api/v2/flux/transfers?state=&node=&limit=&cursor=  # 最新在前，游标分页
+GET /api/v2/flux/transfers/{id}                         # 详情
+```
+
+```json
+{
+  "id": "fx_…",
+  "state": "uploaded",
+  "name": "report.pdf",
+  "size": 12345,
+  "sha256": "…64 hex…",
+  "sender": {"nodeId": 1, "stableId": "n…", "hostname": "laptop"},
+  "recipient": {"nodeId": 2, "stableId": "n…", "hostname": "server"},
+  "reason": "…",
+  "createdAt": "…", "updatedAt": "…", "expiresAt": "…"
+}
+```
+
+- 列表条目与 agent 端视图同构，但没有"收/发"方向字段：管理面是第三人称
+  视角。过滤 fail-closed：未知 `state=` 400（不是忽略）；`node=` 接受节点
+  id 或 stable ID，未知节点返回空集；游标不透明、带 kind 校验，按
+  `(createdAt, id)` 最新在前。
+- 终态行保留 24 小时（§25.2 不变），janitor 删除后管理面同样读不到：管理面
+  看的就是同一份记录，没有第二份副本。
+- Flux 未启用时两个端点 404（与 agent 端点一致）；坏 id 与不存在同为 404；
+  响应 `Cache-Control: no-store`。
+- **永不返回**：文件内容（密文或明文）、任何密钥材料（包括收件人
+  `recipientKey`——发送方需要它，管理员不需要）、内容文件的路径；管理面
+  **没有**内容下载端点（需要内容的是参与方，走
+  `/api/agent/v1/flux/transfers/{id}/content`，且只有两端可读）。
+
+### 33.2 gRPC
+
+`PlatformService.ListFluxTransfers` / `GetFluxTransfer`：语义、认证、游标与
+错误映射与 HTTP 一致（未启用/未知会话 `NOT_FOUND`，坏 state/游标
+`INVALID_ARGUMENT`）。同样没有内容读取——没有任何消息携带内容或密钥。
+
+### 33.3 Console
+
+`/console/flux` 列表（state 过滤、最新在前）与 `/console/flux/{id}` 详情：
+显示名字、大小、状态、双方、SHA-256、reason 与时间戳，并明确说明内容不在
+控制面（端到端加密）。只读、无任何按钮；未启用时页面说明功能未开启。
+
+### 33.4 不做（v1）
+
+管理面取消/删除、内容下载/导出、按文件名全文搜索、跨组织视图、内容扫描
+（DLP 不在 v1，§25）。

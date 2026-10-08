@@ -81,6 +81,7 @@ footer { text-align: center; color: #5b616e; font-size: .8rem; }
 <a href="/console/auth-keys"{{if eq .Nav "auth-keys"}} class="active"{{end}}>Auth keys</a>
 <a href="/console/agents"{{if eq .Nav "agents"}} class="active"{{end}}>Agents</a>
 <a href="/console/reach"{{if eq .Nav "reach"}} class="active"{{end}}>Reach</a>
+<a href="/console/flux"{{if eq .Nav "flux"}} class="active"{{end}}>Flux</a>
 <a href="/console/webhooks"{{if eq .Nav "webhooks"}} class="active"{{end}}>Webhooks</a>
 <a href="/console/policy"{{if eq .Nav "policy"}} class="active"{{end}}>Policy</a>
 <a href="/console/audit"{{if eq .Nav "audit"}} class="active"{{end}}>Audit</a>
@@ -112,6 +113,7 @@ var consoleTitles = map[string]string{
 	"auth-keys": "Auth keys",
 	"agents":    "Agents",
 	"reach":     "Reach",
+	"flux":      "Flux",
 	"webhooks":  "Webhooks",
 	"policy":    "Policy",
 	"audit":     "Audit",
@@ -562,6 +564,75 @@ sealed and is never shown again after creation.</p>
 <button type="submit">Create webhook</button>
 </form>
 {{end}}
+`)
+
+	consoleFluxTemplate = consolePage("flux", `
+<h2>Flux</h2>
+<p>Xunara Flux file transfers between agents. The control plane relays
+ciphertext only: file content and keys are end-to-end encrypted and are not
+visible here or anywhere else on the server. The recipient must accept a
+transfer before anything is uploaded; this page is read-only.</p>
+{{if not .Enabled}}
+<p>Flux is not enabled on this deployment, so there are no transfers to show.
+An operator enables it with <code>-flux</code> (single organization) or
+<code>flux_enabled</code> (organization table).</p>
+{{else}}
+<form method="get" action="/console/flux">
+<div class="field"><label for="flux-state">State</label>
+<select id="flux-state" name="state">
+<option value="">all</option>
+{{range .States}}<option value="{{.}}"{{if eq . $.StateFilter}} selected{{end}}>{{.}}</option>{{end}}
+</select>
+<button type="submit">Filter</button></div>
+</form>
+{{if .Transfers}}
+<table>
+<thead><tr><th>Created</th><th>State</th><th>File</th><th>Size</th><th>Sender</th><th>Recipient</th><th>Note</th></tr></thead>
+<tbody>
+{{range .Transfers}}
+<tr>
+<td><a href="/console/flux/{{.ID}}">{{fmtTime .CreatedAt}}</a></td>
+<td>{{.State}}</td>
+<td><code>{{.Name}}</code></td>
+<td>{{.Size}} B</td>
+<td>{{.Sender.Hostname}}<br><code>{{.Sender.StableID}}</code></td>
+<td>{{.Recipient.Hostname}}<br><code>{{.Recipient.StableID}}</code></td>
+<td>{{if .Reason}}{{.Reason}}{{else}}—{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{if .More}}<p>Only the newest {{len .Transfers}} transfers are shown; filter by
+state or use the API to page through the rest.</p>{{end}}
+{{else}}
+<p>No Flux transfers match.</p>
+{{end}}
+{{end}}
+`)
+
+	consoleFluxTransferTemplate = consolePage("flux", `
+<h2>Flux transfer</h2>
+{{if not .Enabled}}
+<p>Flux is not enabled on this deployment, so there are no transfers to show.</p>
+{{else}}{{with .Transfer}}
+<dl>
+<dt>ID</dt><dd><code>{{.ID}}</code></dd>
+<dt>State</dt><dd>{{.State}}</dd>
+<dt>File</dt><dd><code>{{.Name}}</code> ({{.Size}} bytes)</dd>
+<dt>Sender</dt><dd>{{.Sender.Hostname}} <code>{{.Sender.StableID}}</code></dd>
+<dt>Recipient</dt><dd>{{.Recipient.Hostname}} <code>{{.Recipient.StableID}}</code></dd>
+<dt>SHA-256</dt><dd><code>{{.SHA256}}</code></dd>
+{{if .Reason}}<dt>Note</dt><dd class="warn">{{.Reason}}</dd>{{end}}
+<dt>Created</dt><dd>{{fmtTime .CreatedAt}}</dd>
+<dt>Updated</dt><dd>{{fmtTime .UpdatedAt}}</dd>
+<dt>Expires</dt><dd>{{fmtTime .ExpiresAt}}</dd>
+</dl>
+<p>The file itself is end-to-end encrypted between the two agents: the control
+plane stores only ciphertext while a transfer is in flight, deletes it when
+the transfer completes or fails, and no console page can show the content.</p>
+{{else}}
+<p>No Flux transfer has that ID.</p>
+{{end}}{{end}}
 `)
 
 	consoleReachTemplate = consolePage("reach", `

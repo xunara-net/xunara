@@ -28,7 +28,7 @@ func TestConsoleRequiresSession(t *testing.T) {
 	hs := newTestHTTPServer(t, s)
 	client := noRedirectClient()
 
-	for _, path := range []string{"/console/", "/console/machines", "/console/devices", "/console/audit", "/console/reach", "/console/reach/deadbeef"} {
+	for _, path := range []string{"/console/", "/console/machines", "/console/devices", "/console/audit", "/console/reach", "/console/reach/deadbeef", "/console/flux", "/console/flux/fx_deadbeef"} {
 		resp := getRequest(t, client, hs.URL+path, nil)
 		if resp.StatusCode != http.StatusFound {
 			t.Fatalf("GET %s status = %d, want 302", path, resp.StatusCode)
@@ -63,6 +63,7 @@ func TestConsolePagesRender(t *testing.T) {
 		{"/console/agents", "No agent credentials."},
 		{"/console/reach", "Reach is not enabled"},
 		{"/console/derp", "No DERP map is configured"},
+		{"/console/flux", "Flux is not enabled"},
 		{"/console/webhooks", "No webhook receivers are configured."},
 		{"/console/policy", "No policy document is configured"},
 		{"/console/audit", identity.AuditNodeApproved},
@@ -950,5 +951,80 @@ func TestConsoleDERPPageNoMap(t *testing.T) {
 	page := bodyString(t, getRequest(t, client, hs.URL+"/console/derp", cookie))
 	if !strings.Contains(page, "No DERP map is configured") {
 		t.Errorf("no-map derp page = %s", page)
+	}
+}
+
+// TestConsoleFluxPage covers the read-only Flux page: transfer metadata,
+// state filtering, and the guarantee that file content never appears.
+func TestConsoleFluxPage(t *testing.T) {
+	s := newServerWithConfig(t, Config{Flux: &FluxConfig{}})
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/flux")
+
+	sender := enrollServiceAgent(t, s, hs, "flux-sender")
+	recipient := enrollServiceAgent(t, s, hs, "flux-recipient")
+	deniedID, _ := offerFlux(t, hs, sender, recipient, "private.bin", []byte("secret bytes"))
+	if _, status := recipient.doFlux(t, hs.Client(), http.MethodPost,
+		hs.URL+"/api/agent/v1/flux/transfers/"+deniedID+"/deny",
+		mustJSON(t, map[string]any{"reason": "not expected"}), "application/json"); status != http.StatusOK {
+		t.Fatalf("deny = %d", status)
+	}
+	pendingID, _ := offerFlux(t, hs, sender, recipient, "later.txt", []byte("pending payload"))
+
+	list := bodyString(t, getRequest(t, client, hs.URL+"/console/flux", cookie))
+	for _, want := range []string{
+		"private.bin", "later.txt", "denied", "pending", "not expected",
+		sender.node.StableID, recipient.node.StableID,
+	} {
+		if !strings.Contains(list, want) {
+			t.Errorf("flux list lacks %q:\n%s", want, list)
+		}
+	}
+	if strings.Contains(list, "secret bytes") || strings.Contains(list, "pending payload") {
+		t.Errorf("the flux list renders file content:\n%s", list)
+	}
+	if strings.Contains(list, `action="/console/flux/`) {
+		t.Errorf("the flux list offers a write control:\n%s", list)
+	}
+
+	filtered := bodyString(t, getRequest(t, client, hs.URL+"/console/flux?state=denied", cookie))
+	if strings.Contains(filtered, pendingID) || !strings.Contains(filtered, deniedID) {
+		t.Errorf("state filter = %s", filtered)
+	}
+	if resp := getRequest(t, client, hs.URL+"/console/flux?state=bogus", cookie); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("unknown state filter = %d, want 400", resp.StatusCode)
+	}
+
+	detail := bodyString(t, getRequest(t, client, hs.URL+"/console/flux/"+deniedID, cookie))
+	for _, want := range []string{deniedID, "private.bin", "12 bytes", "end-to-end encrypted", "not expected"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("flux detail lacks %q:\n%s", want, detail)
+		}
+	}
+	if strings.Contains(detail, "secret bytes") {
+		t.Errorf("the flux detail renders file content:\n%s", detail)
+	}
+	if resp := getRequest(t, client, hs.URL+"/console/flux/nosuchtransfer", cookie); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown transfer = %d, want 404", resp.StatusCode)
+	}
+}
+
+// TestConsoleFluxPageDisabled checks that a deployment without Flux explains
+// itself on both pages instead of rendering 404s or empty tables.
+func TestConsoleFluxPageDisabled(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/flux")
+
+	for _, path := range []string{"/console/flux", "/console/flux/fx_deadbeef"} {
+		resp := getRequest(t, client, hs.URL+path, cookie)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET %s status = %d, want 200", path, resp.StatusCode)
+		}
+		if page := bodyString(t, resp); !strings.Contains(page, "Flux is not enabled") {
+			t.Errorf("GET %s does not explain the disabled feature:\n%s", path, page)
+		}
 	}
 }
