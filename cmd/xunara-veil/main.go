@@ -32,14 +32,15 @@ func main() {
 		bandwidthB  = flag.Int("bandwidth-burst", 0, "token bucket size in bytes for -bandwidth-limit (0: derived from the limit)")
 		certFile    = flag.String("cert-file", "", "TLS certificate file (enables TLS with -cert-key-file)")
 		certKeyFile = flag.String("cert-key-file", "", "TLS private key file")
-		certMode    = flag.String("cert-mode", "", `TLS certificate mode: "manual" (uses -cert-file/-cert-key-file) or "letsencrypt" (ACME via TLS-ALPN-01; requires -hostname and -cert-dir)`)
-		certDir     = flag.String("cert-dir", "", "ACME certificate and account cache directory (required with -cert-mode=letsencrypt)")
+		certMode    = flag.String("cert-mode", "", `TLS certificate mode: "manual" (uses -cert-file/-cert-key-file), "letsencrypt" (ACME via TLS-ALPN-01; requires -hostname and -cert-dir) or "selfsigned" (generates a certificate for a relay reached by IP; its SHA-256 pin is published in generated DERP maps)`)
+		certDir     = flag.String("cert-dir", "", "certificate state directory: the ACME cache with -cert-mode=letsencrypt, the generated pair with -cert-mode=selfsigned (default <state-dir>)")
 		acmeEmail   = flag.String("acme-email", "", "contact email for the ACME account (optional)")
 		insecure    = flag.Bool("insecure-for-tests", false, "mark the node InsecureForTests in generated DERP maps; local plain-HTTP tests only")
 		regionID    = flag.Int("region-id", veil.DefaultRegionID, "DERP region ID in generated maps")
 		regionCode  = flag.String("region-code", "veil", "DERP region code in generated maps")
 		regionName  = flag.String("region-name", "Xunara Veil", "DERP region name in generated maps")
 		derpMapOut  = flag.String("derp-map-out", "", "write a single-node tailcfg.DERPMap JSON here (\"-\" for stdout); pass it to xunarad -derp-map")
+		derpMapOnly = flag.Bool("derp-map-only", false, "write -derp-map-out and exit without serving; provisioning only")
 		logLevel    = flag.String("log-level", "info", "log level: debug|info|warn|error")
 	)
 	flag.Parse()
@@ -91,6 +92,13 @@ func main() {
 			logger.Error("writing DERP map", "err", err)
 			os.Exit(1)
 		}
+	}
+	if *derpMapOnly {
+		if *derpMapOut == "" {
+			logger.Error("-derp-map-only needs -derp-map-out")
+			os.Exit(2)
+		}
+		return
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

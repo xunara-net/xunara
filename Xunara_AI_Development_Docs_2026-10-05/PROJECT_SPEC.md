@@ -2848,3 +2848,72 @@ handler 数据语义与既有存储结构不变。
   bcrypt 往返与自描述、等时失败、凭据 CRUD 与计数、邀请生命周期与角色约束、
   过期/撤销、并发兑换唯一、`NewSecret` 熵与 URL 安全性。
 - 全量 `go test ./...`、`go vet ./...`、`go test -race ./control/ ./identity/`。
+
+---
+
+## 53. DERP 自签名证书与指纹固定（M47）
+
+### 53.1 目标与边界
+
+官方 Tailscale 客户端只通过 HTTPS 连接 DERP 中继（明文 HTTP 仅测试构建可用），
+因此按 IP + 端口映射暴露、没有公网域名因而拿不到公共证书的部署，此前无法
+提供可用的中继：客户端连不上中继，netmap 里 `LiveDERPs=0`，客户端长期停在
+`Starting`。
+
+本节定义 Veil 的自签名模式：证书由本地生成、由控制面在 DERP map 中公布其
+SHA-256 指纹，官方客户端据此替代 CA 校验。除指纹机制外不改 DERP 协议、
+不改 `tailcfg.DERPMap` 既有字段语义（`CertName` 的 `sha256-raw:` 形式是上游
+为其自签名场景预留的语义）。
+
+### 53.2 配置面
+
+- `veil.Config.CertMode = CertModeSelfSigned`（CLI `-cert-mode=selfsigned`）：
+  与 `CertFile`/`CertKeyFile` 互斥；`HostName` 必填。
+- `veil.Config.CertDir`：证书目录，缺省用 `StateDir`。私钥 `selfsigned.key`
+  以 0600 写入，证书 `selfsigned.crt` 以 0644 写入（AGENTS.md §8）。
+- 证书内容：ECDSA P-256；`HostName` 是 IP 字面量时写 IP SAN，否则写 DNS SAN；
+  有效期 825 天；剩余不足 30 天或不再覆盖当前 `HostName` 时重新签发。
+- `cmd/xunara-veil -derp-map-only`：只生成证书、写入 `-derp-map-out` 后退出，
+  供部署脚本在启动服务前准备好 map。
+
+### 53.3 DERP map 与客户端校验
+
+- 该模式下生成的 `tailcfg.DERPNode.CertName` 为 `sha256-raw:<64 位十六进制>`，
+  即所服务叶证书 DER 的 SHA-256。
+- 客户端（`net/tlsdial.SetConfigExpectedCertHash`）在 `InsecureSkipVerify` 下
+  自行校验：证书数恰为一个非元证书、指纹与 map 一致、且证书覆盖所拨号主机名
+  （`ServerName` 为空时跳过主机名校验）。因此指纹同时提供真实性与身份绑定，
+  中人或被替换的中继都会被拒绝。
+- map 只在控制面→本 tailnet 客户端的 netmap 中下发，指纹不外泄到其他通道。
+
+### 53.4 部署
+
+- `deploy/systemd/xunara-veil.service`：以 `xunara` 用户运行，`StateDirectory=xunara-veil`，
+  启动时重写 `/var/lib/xunara-veil/derp.json`，`-verify-url` 指向控制面
+  `http://127.0.0.1:9090/derp/admit`（控制面不可达时中继 fail closed）。
+- `deploy/install.sh`：设置 `XUNARA_DERP_HOST`（客户端拨号的主机名或 IP）后，
+  安装 Veil、渲染单元、预生成证书与 map（`-derp-map-only`），并在 xunarad 单元
+  `-grpc-listen` 之后插入 `-derp-map /var/lib/xunara-veil/derp.json`。
+  可选 `XUNARA_DERP_PORT`（默认 9091）、`XUNARA_STUN_PORT`（启用 STUN）、
+  `XUNARA_CONTROL_ADDR`（默认 127.0.0.1:9090）。
+- 端口分工：9090 控制面 HTTP；9091 公网 DERP；控制面 gRPC（平台 API）默认
+  只在 `127.0.0.1:9191`，与既有文档「平台 API 不公网暴露」一致。
+- STUN 需要额外的 UDP 端口映射，因此默认关闭（map 中 `STUNPort=-1`）；映射
+  可用后以 `XUNARA_STUN_PORT=<端口>` 重新部署即可启用。
+
+### 53.5 明确不做
+
+- 不内置 CA、不引入私有根证书；信任只来自 map 中的指纹。
+- 不提供 HTTP DERP（上游客户端在非测试构建下不会使用）。
+- 不在指纹变化时自动重启控制面：证书轮换后需要 `systemctl restart xunarad`
+  才让新 map 生效，日志会给出指纹，便于运维核对。
+
+### 53.6 测试
+
+- `veil/selfsigned_test.go`：模式校验（缺 HostName、与手工证书文件互斥）、
+  指纹等于所服务叶证书的 SHA-256、官方 `derphttp` 客户端按 map 指纹连接成功、
+  指纹不符时拒绝连接、DNS/IP SAN 正确、跨重启复用同一指纹、换主机名重新签发、
+  私钥文件 0600。
+- 端到端：本地 Veil（自签名）+ xunarad（`-derp-map`）+ 两个官方
+  `tailscaled` 1.102.2 客户端，`BackendState=Running`、`Health` 为空、互为对端
+  且 ping 通。

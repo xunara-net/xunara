@@ -80,8 +80,18 @@ func TestCertModeValidation(t *testing.T) {
 			wantErr: "not a valid DNS name",
 		},
 		{
+			name:    "selfsigned needs a hostname",
+			cfg:     Config{CertMode: CertModeSelfSigned, CertDir: t.TempDir()},
+			wantErr: "requires HostName",
+		},
+		{
+			name:    "selfsigned refuses certificate files",
+			cfg:     Config{CertMode: CertModeSelfSigned, HostName: "203.0.113.7", CertFile: "cert.pem", CertKeyFile: "key.pem"},
+			wantErr: "cannot be combined with CertFile",
+		},
+		{
 			name:    "unknown mode",
-			cfg:     Config{CertMode: "selfsigned"},
+			cfg:     Config{CertMode: "acme-http"},
 			wantErr: "unsupported CertMode",
 		},
 	} {

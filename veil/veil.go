@@ -97,11 +97,17 @@ type Config struct {
 	// "manual when CertFile/CertKeyFile are set, otherwise no TLS".
 	// CertModeLetsEncrypt obtains and renews certificates from Let's Encrypt
 	// with ACME (TLS-ALPN-01), so a deployment never has to manage cert files
-	// by hand; it requires HostName and CertDir.
+	// by hand; it requires HostName and CertDir. CertModeSelfSigned
+	// generates a certificate for a deployment that cannot obtain a public
+	// one (a relay reached by IP address); generated DERP maps then carry the
+	// certificate's SHA-256 pin, which official clients accept in place of CA
+	// validation.
 	CertMode string
-	// CertDir is the ACME state directory: the account key and issued
-	// certificates are cached there, so restarts and renewals reuse them
-	// instead of asking the CA again. Required with CertModeLetsEncrypt.
+	// CertDir is the certificate state directory: ACME caches the account key
+	// and issued certificates there, and CertModeSelfSigned stores its
+	// generated key pair there (default: StateDir). Reusing it across
+	// restarts keeps certificates — and therefore published pins — stable.
+	// Required with CertModeLetsEncrypt.
 	CertDir string
 	// ACMEEmail is the optional contact address registered with the ACME
 	// account (Let's Encrypt uses it for expiry warnings).
@@ -131,6 +137,12 @@ type Server struct {
 	// acme is the automatic certificate manager (CertModeLetsEncrypt) and
 	// nil otherwise. It serves certificates for cfg.HostName only.
 	acme *autocert.Manager
+
+	// cert is the generated pair of CertModeSelfSigned, and certPin is the
+	// "sha256-raw:" value published in generated DERP maps. Both are zero
+	// outside that mode.
+	cert    *tls.Certificate
+	certPin string
 
 	mu       sync.Mutex
 	listener net.Listener
@@ -182,6 +194,14 @@ func New(cfg Config) (*Server, error) {
 	if cfg.BandwidthLimit == 0 && cfg.BandwidthBurst > 0 {
 		return nil, errors.New("veil: BandwidthBurst requires BandwidthLimit")
 	}
+	if certMode == CertModeSelfSigned {
+		if cfg.CertFile != "" || cfg.CertKeyFile != "" {
+			return nil, errors.New("veil: CertMode selfsigned cannot be combined with CertFile/CertKeyFile")
+		}
+		if _, err := cfg.selfSignedHost(); err != nil {
+			return nil, err
+		}
+	}
 
 	keyFile := cfg.KeyFile
 	if keyFile == "" {
@@ -217,6 +237,18 @@ func New(cfg Config) (*Server, error) {
 		s.log.Info("veil ACME certificates enabled",
 			"host", host, "cache", cfg.CertDir, "challenge", "tls-alpn-01")
 	}
+	if certMode == CertModeSelfSigned {
+		host, err := cfg.selfSignedHost()
+		if err != nil {
+			return nil, err
+		}
+		cert, pin, err := loadOrCreateSelfSignedCert(cfg.selfSignedCertDir(), host, cfg.Logger)
+		if err != nil {
+			return nil, err
+		}
+		s.cert = &cert
+		s.certPin = pin
+	}
 	if cfg.VerifyURL != "" {
 		s.derp.SetVerifyClientURL(cfg.VerifyURL)
 	}
@@ -232,6 +264,9 @@ func New(cfg Config) (*Server, error) {
 	if cfg.TLS() {
 		if s.acme != nil {
 			s.log.Info("veil TLS enabled", "cert", "acme", "host", strings.ToLower(cfg.HostName))
+		} else if s.cert != nil {
+			s.log.Info("veil TLS enabled", "cert", "self-signed", "host", strings.ToLower(cfg.HostName),
+				"pin", s.certPin)
 		} else {
 			s.log.Info("veil TLS enabled", "cert", cfg.CertFile, "host", cfg.HostName)
 		}
@@ -303,9 +338,11 @@ func (c Config) certMode() (string, error) {
 		return CertModeManual, nil
 	case CertModeLetsEncrypt:
 		return CertModeLetsEncrypt, nil
+	case CertModeSelfSigned:
+		return CertModeSelfSigned, nil
 	default:
-		return "", fmt.Errorf("veil: unsupported CertMode %q (want %q or %q)",
-			c.CertMode, CertModeLetsEncrypt, CertModeManual)
+		return "", fmt.Errorf("veil: unsupported CertMode %q (want %q, %q or %q)",
+			c.CertMode, CertModeLetsEncrypt, CertModeManual, CertModeSelfSigned)
 	}
 }
 
@@ -455,6 +492,12 @@ func (s *Server) Serve(ctx context.Context) error {
 			srv.TLSConfig = s.acme.TLSConfig()
 			srv.TLSConfig.MinVersion = tls.VersionTLS12
 			err = srv.ServeTLS(ln, "", "")
+		case s.cert != nil:
+			srv.TLSConfig = &tls.Config{
+				MinVersion:   tls.VersionTLS12,
+				Certificates: []tls.Certificate{*s.cert},
+			}
+			err = srv.ServeTLS(ln, "", "")
 		case s.cfg.TLS():
 			srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 			err = srv.ServeTLS(ln, s.cfg.CertFile, s.cfg.CertKeyFile)
@@ -539,6 +582,10 @@ func (s *Server) DERPMap() (*tailcfg.DERPMap, error) {
 		DERPPort:         port,
 		STUNPort:         s.stunPort(),
 		InsecureForTests: s.cfg.InsecureForTests,
+		// A self-signed certificate is trusted only through this pin: the
+		// official client compares it against the certificate the relay
+		// presents, so an interception or a swapped relay is refused.
+		CertName: s.certPin,
 	}
 	if !s.cfg.STUN {
 		node.STUNPort = -1

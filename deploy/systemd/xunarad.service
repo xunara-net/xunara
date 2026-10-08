@@ -19,11 +19,15 @@ EnvironmentFile=-/etc/xunara/xunarad.env
 # deployment's public surface, so edit them here rather than in a shell script.
 StateDirectory=xunara
 StateDirectoryMode=0700
+# Ports: 9090 is this HTTP API (home, console, client login). The public 9091
+# belongs to the DERP relay (deploy/systemd/xunara-veil.service); the platform
+# gRPC API stays private because it is meant to be reachable only from the host
+# or a firewall allowlist.
 ExecStart=/opt/xunara/bin/xunarad \
     -listen 0.0.0.0:9090 \
     -server-url http://fakeop4.onbed.cn:9090 \
     -state-dir /var/lib/xunara \
-    -grpc-listen 0.0.0.0:9091 \
+    -grpc-listen 127.0.0.1:9191 \
     -console-timezone Asia/Shanghai \
     -log-level info \
     -allow-local-login \

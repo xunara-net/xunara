@@ -11,6 +11,9 @@
 | `/etc/xunara/xunarad.env` | 环境变量与 secret（root:root 0600），`xunarad.env.example` 是模板 |
 | `/etc/systemd/system/xunarad.service` | 单元文件，**所有启动参数都在这里** |
 | `/var/lib/xunara` | 状态目录（`xunara:xunara` 0700，systemd `StateDirectory`） |
+| `/opt/xunara/bin/xunara-veil` | DERP 中继二进制（可选部署，见「DERP 中继」） |
+| `/etc/systemd/system/xunara-veil.service` | 中继单元文件（由 install.sh 渲染） |
+| `/var/lib/xunara-veil` | 中继状态：DERP 节点密钥、自签名证书、`derp.json` |
 
 日志走 journald：`journalctl -u xunarad -f`。
 （新加的用户需要重新登录才会进入 `systemd-journal` 组。）
@@ -132,8 +135,48 @@ RP ID 是域名，因此**不要**用 IP 部署通行密钥。
   `Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md`）。
 - 平台 API（HTTP `/api/platform`、gRPC `xunara.v2.Platform*`）是 fail-closed：
   没配 `XUNARA_PLATFORM_ADMIN_TOKEN` 时一律拒绝。需要时把 token 写进
-  `/etc/xunara/xunarad.env`，并且**只监听内网**（把 `-grpc-listen` 改成
-  `127.0.0.1:9091` 或放进防火墙白名单）。
+  `/etc/xunara/xunarad.env`，并且**只监听内网**（单元默认已经是
+  `127.0.0.1:9191`，需要外部访问时再放进防火墙白名单）。
+
+## DERP 中继（公网端口不够时最要紧的一步）
+
+没有 DERP 中继时，客户端可以注册、可以被审批，但 netmap 里
+`LiveDERPs=0`，客户端会一直停在 `Starting`（界面上就是「连不上」）。官方客户端
+只走 HTTPS 的 DERP，因此没有公网域名、拿不到公共证书的部署需要自签名 + 指纹
+固定：
+
+```sh
+# 1) 构建中继（版本号与 xunarad 一致）
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" \
+  -o /tmp/xunara-veil ./cmd/xunara-veil
+
+# 2) 部署：XUNARA_DERP_HOST 是客户端拨号用的名字或 IP，
+#    它必须能在 XUNARA_DERP_PORT（默认 9091）上被公网访问到。
+scp /tmp/xunarad /tmp/xunara-veil root@host:/tmp/
+ssh root@host 'XUNARA_DERP_HOST=derp.example.com \
+  /path/to/deploy/install.sh /tmp/xunarad /tmp/xunara-veil'
+
+# 有 UDP 端口映射时可以顺带打开 STUN（端点发现，能提高直连成功率）
+ssh root@host 'XUNARA_DERP_HOST=derp.example.com XUNARA_STUN_PORT=3478 \
+  /path/to/deploy/install.sh /tmp/xunarad /tmp/xunara-veil'
+```
+
+脚本会：安装 `xunara-veil`、渲染 `xunara-veil.service`、生成自签名证书与
+`/var/lib/xunara-veil/derp.json`，并在 xunarad 单元里插入
+`-derp-map /var/lib/xunara-veil/derp.json`。之后：
+
+```sh
+systemctl status xunara-veil
+journalctl -u xunara-veil -n 20        # 指纹会打印在启动日志里
+sudo cat /var/lib/xunara-veil/derp.json   # CertName 即 sha256-raw: 指纹
+```
+
+- 端口：`9090` 控制面 HTTP；`9091` 公网 DERP；平台 gRPC 私有 `127.0.0.1:9191`。
+  中继的准入走控制面 `/derp/admit`，控制面不可达时中继 fail closed（拒绝放行）。
+- 证书轮换（换 `XUNARA_DERP_HOST`、证书临近过期）：重新执行上面的部署命令，
+  然后 `systemctl restart xunarad`，让控制面重新读取新 map（新指纹）。
+  `derp.json` 是唯一的信任来源，只在 tailnet 内部的 netmap 中下发。
+- STUN 需要额外的 UDP 端口映射；没映射就别开，客户端会改走 DERP 转发。
 
 ## 升级前检查
 

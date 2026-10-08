@@ -1981,6 +1981,45 @@ handler 数据语义与存储不动）。规格见
 - 测试：新增 `control/public_test.go` 与 `identity/{password,credential,invite}_test.go`；
   全量 `go test ./...`、`go vet ./...`、`go test -race ./control/ ./identity/`。
 
+## M46 — 修复：网表缺少 MachineAuthorized，客户端停在「待管理员批准」（已完成）
+
+目标：让管理员批准过的设备真正连上，而不是永远停在「Admin approval required」。
+
+- 根因：`tailcfg.Node.MachineAuthorized` 只在注册响应里下发，网表（`/machine/map`）
+  里一直为空。官方客户端的 ipn 状态机用 `netmap.GetMachineStatus()` 判定
+  `ipn.Running` 还是 `ipn.NeedsMachineAuth`，缺字段即 `MachineUnauthorized`，
+  于是设备已审批、已上线、已在网表中，客户端仍然显示需要管理员批准。
+- 修复：`control/mapper.Node` 下发 `MachineAuthorized: !expired`（与 headscale 的
+  `!nv.IsExpired()` 语义一致）；过期节点的字段为 false，不改协议、不改审批流程。
+- 测试：`control/mapper` 新增 `TestNodeCarriesMachineAuthorization`；真机验证用
+  官方 `tailscaled` 1.102.2（userspace）对本地控制面注册并审批，修复前
+  `BackendState=NeedsMachineAuth`，修复后进入 `Starting`/`Running` 且双节点 ping 通。
+
+## M47 — DERP 自签名证书与指纹固定（IP/内网穿透部署，已完成）
+
+目标：没有公网域名、拿不到公共证书的部署（例如按 IP + 端口映射暴露的
+机器）也能跑真正的 DERP 中继——客户端只接受 HTTPS 的 DERP，而自签名证书
+此前无法被官方客户端信任，客户端会卡在「连不上中继」。
+
+- `veil`：新增 `CertModeSelfSigned`（`-cert-mode=selfsigned`）。生成 ECDSA P-256
+  自签名证书（DNS 名写 DNS SAN，IP 字面量写 IP SAN），持久化在 `-cert-dir`
+  （私钥 0600、证书 0644，默认 `<state-dir>`），未过期且覆盖当前主机名时复用，
+  避免重启换指纹。
+- `veil`:生成的 DERP map 在该模式下写入 `CertName: "sha256-raw:<证书 SHA-256>"`，
+  即上游为自签名 DERP 预留的固定指纹机制；客户端据此替代 CA 校验，指纹不符
+  即拒绝连接（防止中间人或被替换的中继）。
+- `cmd/xunara-veil`：新增 `-derp-map-only`，只生成证书与 map 后退出，供部署
+  脚本在启动服务前准备好 map。
+- 部署：新增 `deploy/systemd/xunara-veil.service`（模板占位符由 install.sh 渲染），
+  `deploy/install.sh` 在设置 `XUNARA_DERP_HOST` 时安装并启动 Veil、生成
+  `/var/lib/xunara-veil/derp.json`，并给 xunarad 的单元加上 `-derp-map`；
+  控制面 gRPC 默认改为 `127.0.0.1:9191`（文档一直建议平台 API 不公网暴露），
+  公网 9091 让给 DERP。
+- 测试：`veil/selfsigned_test.go`（模式校验、指纹与所服务证书一致、真客户端按
+  指纹连上、错误指纹被拒、DNS/IP SAN、跨重启复用、换主机名重新签发）；
+  端到端用官方 `tailscaled` 1.102.2 + 自签名 Veil 跑双节点，`BackendState=Running`、
+  `Health=[]`、ping 通。
+
 ---
 
 ## 后续计划（用户指定的排序）
