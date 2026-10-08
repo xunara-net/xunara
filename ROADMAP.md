@@ -1658,6 +1658,33 @@ write 角色 + CSRF），管理面没有任何写入口。
 
 ---
 
+## M33 — Xunara Security Center（只读，已完成）
+
+目标：把分散在各面的安全姿态聚合成一个快照 + 一组可执行发现，管理员不必
+逐页翻查就知道 tailnet 处在什么状态、下一步该修什么。只读、不新增存储、不含
+密钥材料。规格见 `Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §39
+（spec §20 P2 "Security Center"）。
+
+- HTTP `GET /api/v2/security`（read scope）与 Console `/console/security`
+  （nav "Security"，任意角色可读）渲染同一份视图：tailnet lock、policy、
+  节点（online/expired/expiringSoon/unsigned/tagged/untagged/ephemeral/
+  exitNodes）、pending devices、auth keys、API keys、sharing 计数、webhooks、
+  DERP 口径；全部来自既有状态，不复制 ACL 内容、不报 key 名/ID。
+- findings（high/medium/low/info，按 severity→id 稳定排序）：
+  `policy.absent`（allow-all）、`policy.load_error`（文件解析失败，仍在执行
+  上一份好文档）、`tka.unsigned_nodes`、`nodes.expired_keys`、
+  `apikeys.never_expires`、`nodes.keys_expiring`（30 天）、
+  `devices.pending`。没有 0–100 评分：不用不可审计的数字替管理员做决定。
+- Console 页含节点密钥到期表（到期时间升序、上限 200 行）与分组件的计数，
+  不显示任何 token/secret/节点密钥；页面没有写入口。
+- 不新增 meta 字段（页面永远可用）；不做 gRPC（只读管理面走 HTTP/Console，
+  与 §31/§33/§35 同理）；不做实时监控/告警/扫描/合规映射（§39.4）。
+- 测试：`control/security_test.go`（计数覆盖全部维度、findings 顺序与
+  severity 合法、策略 load error、TKA 签名前后 finding 增减、sharing 计数、
+  响应不泄漏 auth key 与设备元数据、Console 任意角色可读且无表单）。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。

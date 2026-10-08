@@ -87,6 +87,7 @@ footer { text-align: center; color: #5b616e; font-size: .8rem; }
 <a href="/console/ssh-check"{{if eq .Nav "ssh-check"}} class="active"{{end}}>SSH checks</a>
 <a href="/console/webhooks"{{if eq .Nav "webhooks"}} class="active"{{end}}>Webhooks</a>
 <a href="/console/policy"{{if eq .Nav "policy"}} class="active"{{end}}>Policy</a>
+<a href="/console/security"{{if eq .Nav "security"}} class="active"{{end}}>Security</a>
 <a href="/console/audit"{{if eq .Nav "audit"}} class="active"{{end}}>Audit</a>
 </nav>
 <div class="who">{{.User}} <span class="tag">{{.Role}}</span>
@@ -122,6 +123,7 @@ var consoleTitles = map[string]string{
 	"ssh-check": "SSH checks",
 	"webhooks":  "Webhooks",
 	"policy":    "Policy",
+	"security":  "Security",
 	"audit":     "Audit",
 }
 

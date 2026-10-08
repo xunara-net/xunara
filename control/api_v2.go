@@ -52,6 +52,7 @@ func (s *Server) apiV2Router() http.Handler {
 	r.Get("/tka", s.handleAPIV2TKA)
 	r.Get("/derp", s.handleAPIV2DERP)
 	r.Get("/policy", s.handleAPIV2Policy)
+	r.Get("/security", s.handleAPIV2Security)
 	r.Get("/ssh-check/sessions", s.handleAPIV2SSHCheckSessions)
 	r.Get("/id-token", s.handleAPIV2IDToken)
 

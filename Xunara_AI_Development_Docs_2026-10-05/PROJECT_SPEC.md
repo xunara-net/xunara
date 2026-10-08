@@ -1821,3 +1821,90 @@ ID：
   不泄漏真实 IP/tags/ID、`ShareeNode` 标记、第三方节点不受影响、吊销后消失、
   重启后不变、TKA/单组织等拒绝路径。
 - `state`/`identity`：分配器跳过 masq 段。
+
+---
+
+## 39. Xunara Security Center（只读，v1）
+
+目标：把分散在各面的安全姿态聚合成**一个快照 + 一组可执行发现**，管理员不必
+逐页翻查就知道 tailnet 现在处于什么状态、下一步该修什么。只读、不新增存储、
+不产生新的密钥材料（AGENTS §8/§18）。
+
+### 39.1 数据来源与判据（全部来自现有状态）
+
+快照 `GET /api/v2/security`（read scope）与 Console `/console/security`
+（nav "Security"，任意角色可看）渲染同一份视图：
+
+- `tailnetLock`：`s.TKAStatus()` 的 everEnabled/enabled/disabled/head 与
+  signed/unsigned/total 节点计数（§§ 见 `control/tka_status.go`）。
+- `policy`：`policyView()` 的 configured（是否有文档）、ruleCount、
+  warningCount、unsupportedCount、loadError 是否存在；不复制 ACL 内容。
+- `nodes`：total、online（持有 poll 会话）、expired（`Expiry` 非零且已过）、
+  expiringSoon（30 天内到期）、unsigned（无 `KeySignature`）、tagged、
+  untagged、ephemeral、exitNodes（已批准默认路由的节点）计数。
+- `devices`：pending = `ListPendingDeviceAuthorizations(now)` 数量。
+- `authKeys`：total、expired、unused（单次未用；可复用键不计）。
+- `apiKeys`（Service Identity）：total、live、revoked、expired、
+  neverExpires（live 且无过期时间，按 owner 角色可写时才是高危信号，v1 只
+  报告计数）。
+- `sharing`：enabled（平台注册表已接线）；启用时给 outgoing/incoming 的
+  pending/accepted 计数（按本组织为源或目标），未启用时 enabled=false 且
+  零计数，不查库。
+- `webhooks`：configured（启动配置数）、managedEnabled/managedPaused
+  （托管端点）、enabled（`webhooksEnabled()`：是否存在会投递的端点）。
+- `derp`：mapConfigured、policy（模式）、regionsServed（与 meta 同口径）。
+
+SSH 检查会话已有自己的只读管理面（§35），安全快照不重复统计，避免"总数"在
+分页语义下失真。
+
+### 39.2 findings（发现）
+
+`findings` 是按 severity 排序的数组，每项 `{id, severity, title, detail}`。
+severity ∈ `high | medium | low | info`；同 severity 内按 id 排序，结果稳定。
+判据必须来自上面的确定状态，不做猜测、不做启发式评分：
+
+- `policy.absent`（high）：没有策略文档 → allow-all，每个节点都能互访。
+- `policy.load_error`（high）：策略文件已无法解析，仍在执行上一份好文档。
+- `tka.unsigned_nodes`（high）：TKA 已启用但仍有未签名节点（这些节点会被
+  对端拒绝，且说明锁定未完成）。
+- `nodes.expired_keys`（medium）：存在密钥已过期的节点。
+- `apikeys.never_expires`（low）：存在无过期时间的 live API key（凭据轮换
+  提示；只报数量，不报 key 名/ID）。
+- `nodes.keys_expiring`（low）：存在 30 天内过期的节点密钥。
+- `devices.pending`（info）：有待批准的设备授权在等待处理。
+
+v1 明确不产生"评分"：没有 0–100 分、没有风险等级合成，避免用不可审计的
+数字替管理员做决定。
+
+### 39.3 HTTP 与 Console
+
+- HTTP `GET /api/v2/security`：read scope；响应只含计数、布尔、告警来源摘要
+  （策略 load error 的文本来自本地文件解析，属于管理员可见的配置错误，不是
+  密钥材料）。不启用 gRPC（与 §31/§33/§35 同理：只读管理面走 HTTP/Console）。
+- Console `/console/security`：概览卡片（锁定/策略/节点/设备/密钥/共享）、
+  findings 列表（高→低）、节点密钥到期表（最多 200 行，按到期时间升序）、
+  可复用键/API key 计数。页面不显示任何 token、secret 或节点密钥。
+- `meta` 不新增字段：页面永远可用，没有"未启用"一说；页面在无策略文档时
+  恰好在教管理员为什么 allow-all 是一个发现。
+
+### 39.4 明确不做（v1）
+
+- 实时监控、告警、通知、定期报告、指标导出；
+- 漏洞扫描、配置基线评分、合规框架映射；
+- 按流日志、包内容、连接审计（不在控制面数据模型内）；
+- 任何写操作（签名节点、轮换密钥、吊销凭据等仍走既有管理面/CLI）；
+- 跨组织聚合（每个组织只看自己的快照；平台 operator 视图不在 v1）。
+
+### 39.5 测试
+
+- `control/security_test.go`：
+  - 裸服务器：policy.absent、devices.pending 按需出现，feature 计数为零，
+    findings 顺序稳定（high→medium→low→info）；
+  - 种子节点覆盖 online/expired/expiringSoon/unsigned/tagged/ephemeral/
+    exit node 计数；
+  - 配置策略后 policy.load_error 与 warning 计数；
+  - TKA 启用 + 未签名节点 → high finding；全部签名后消失；
+  - live 且无过期的 API key → apikeys.never_expires；
+  - 共享启用时计数正确、未启用时 enabled=false 且不查询注册表；
+  - HTTP：匿名 401、read scope 200、响应不含 secret/密钥材料；
+  - Console：页面渲染 findings、任意角色可读、无表单/POST 入口。

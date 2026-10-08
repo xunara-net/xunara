@@ -86,6 +86,7 @@ func (s *Server) consoleRouter() http.Handler {
 	r.Get("/flux/{id}", s.handleConsoleFluxTransfer)
 	r.Get("/webhooks", s.handleConsoleWebhooks)
 	r.Get("/policy", s.handleConsolePolicy)
+	r.Get("/security", s.handleConsoleSecurity)
 	r.Get("/ssh-check", s.handleConsoleSSHCheck)
 	r.Get("/audit", s.handleConsoleAudit)
 	r.Get("/passkeys", s.handleConsolePasskeys)
