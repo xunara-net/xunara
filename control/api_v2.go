@@ -185,6 +185,23 @@ func newestFirstAfterCursor(created time.Time, id string, afterCreated time.Time
 	}
 }
 
+// apiV2NodeFilter parses a node=<id|stable ID> listing filter, shared by the
+// Reach, Flux and SSH check management surfaces. An unknown node - including
+// "0", which is not a node ID - matches nothing rather than being ignored,
+// because a filter that silently widens its result is a security bug.
+func (s *Server) apiV2NodeFilter(raw string) state.NodeID {
+	if raw == "" {
+		return 0
+	}
+	if id, err := strconv.ParseUint(raw, 10, 64); err == nil && id > 0 {
+		return state.NodeID(id)
+	}
+	if node, ok := s.store.GetNodeByStableID(raw); ok {
+		return node.ID
+	}
+	return ^state.NodeID(0)
+}
+
 // apiV2Limit parses ?limit=, bounded and defaulted.
 func apiV2Limit(w http.ResponseWriter, r *http.Request, def int) (int, bool) {
 	raw := r.URL.Query().Get("limit")
@@ -305,7 +322,7 @@ func (s *Server) handleAPIV2Machines(w http.ResponseWriter, r *http.Request) {
 	// returning every machine would mislead a filter.
 	var userFilter uint64
 	if raw := query.Get("user"); raw != "" {
-		if id, err := strconv.ParseUint(raw, 10, 64); err == nil {
+		if id, err := strconv.ParseUint(raw, 10, 64); err == nil && id > 0 {
 			userFilter = id
 		} else if user, ok := s.identity.GetUserByLoginName(raw); ok {
 			userFilter = uint64(user.ID)
@@ -374,18 +391,7 @@ func (s *Server) handleAPIV2Services(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := r.URL.Query()
-	var nodeFilter state.NodeID
-	if raw := query.Get("node"); raw != "" {
-		if id, err := strconv.ParseUint(raw, 10, 64); err == nil {
-			nodeFilter = state.NodeID(id)
-		} else if node, ok := s.store.GetNodeByStableID(raw); ok {
-			nodeFilter = node.ID
-		} else {
-			// An unknown node matches nothing rather than being ignored:
-			// a filter that silently widens its result is a security bug.
-			nodeFilter = ^state.NodeID(0)
-		}
-	}
+	nodeFilter := s.apiV2NodeFilter(query.Get("node"))
 	nameFilter := query.Get("name")
 
 	items := make([]serviceView, 0, limit)
@@ -554,14 +560,19 @@ func (s *Server) handleAPIV2AgentTokens(w http.ResponseWriter, r *http.Request) 
 	}
 
 	query := r.URL.Query()
-	var nodeFilter int64
+	var (
+		nodeFilter    int64
+		nodeFilterSet bool
+	)
 	if raw := query.Get("node"); raw != "" {
 		parsed, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil {
+		if err != nil || parsed <= 0 {
+			// Zero is not a node ID: it must never silently mean "every
+			// credential", which is why a bad filter is refused here.
 			writeAPIError(w, http.StatusBadRequest, "invalid node filter")
 			return
 		}
-		nodeFilter = parsed
+		nodeFilter, nodeFilterSet = parsed, true
 	}
 
 	// The cursor is the (createdAt, id) position of the last item of the
@@ -594,7 +605,7 @@ func (s *Server) handleAPIV2AgentTokens(w http.ResponseWriter, r *http.Request) 
 	var lastCreated int64
 	var lastID string
 	for _, t := range s.identity.ListAgentTokens(0) {
-		if nodeFilter != 0 && t.NodeID != nodeFilter {
+		if nodeFilterSet && t.NodeID != nodeFilter {
 			continue
 		}
 		if cursorKind != "" {

@@ -3184,9 +3184,10 @@ type ListServicesRequest struct {
 	PageSize uint32 `protobuf:"varint,1,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	// page_token is the next_page_token of the previous response.
 	PageToken string `protobuf:"bytes,2,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
-	// node_id filters on the advertising machine; 0 means every machine. An
-	// unknown id matches nothing.
-	NodeId uint64 `protobuf:"varint,3,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	// node_id filters on the advertising machine; an absent value means every
+	// machine, while 0 (not a node ID) or an unknown id matches nothing. The
+	// field is optional so "unset" and "0" stay distinguishable.
+	NodeId *uint64 `protobuf:"varint,3,opt,name=node_id,json=nodeId,proto3,oneof" json:"node_id,omitempty"`
 	// name filters on one exact service name.
 	Name          string `protobuf:"bytes,4,opt,name=name,proto3" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -3238,8 +3239,8 @@ func (x *ListServicesRequest) GetPageToken() string {
 }
 
 func (x *ListServicesRequest) GetNodeId() uint64 {
-	if x != nil {
-		return x.NodeId
+	if x != nil && x.NodeId != nil {
+		return *x.NodeId
 	}
 	return 0
 }
@@ -5022,13 +5023,15 @@ const file_xunara_v2_platform_proto_rawDesc = "" +
 	"\x03tag\x18\x05 \x01(\tR\x03tag\"n\n" +
 	"\x14ListMachinesResponse\x12.\n" +
 	"\bmachines\x18\x01 \x03(\v2\x12.xunara.v2.MachineR\bmachines\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"~\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\x8f\x01\n" +
 	"\x13ListServicesRequest\x12\x1b\n" +
 	"\tpage_size\x18\x01 \x01(\rR\bpageSize\x12\x1d\n" +
 	"\n" +
-	"page_token\x18\x02 \x01(\tR\tpageToken\x12\x17\n" +
-	"\anode_id\x18\x03 \x01(\x04R\x06nodeId\x12\x12\n" +
-	"\x04name\x18\x04 \x01(\tR\x04name\"n\n" +
+	"page_token\x18\x02 \x01(\tR\tpageToken\x12\x1c\n" +
+	"\anode_id\x18\x03 \x01(\x04H\x00R\x06nodeId\x88\x01\x01\x12\x12\n" +
+	"\x04name\x18\x04 \x01(\tR\x04nameB\n" +
+	"\n" +
+	"\b_node_id\"n\n" +
 	"\x14ListServicesResponse\x12.\n" +
 	"\bservices\x18\x01 \x03(\v2\x12.xunara.v2.ServiceR\bservices\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\x89\x04\n" +
@@ -5383,6 +5386,7 @@ func file_xunara_v2_platform_proto_init() {
 		return
 	}
 	file_xunara_v2_platform_proto_msgTypes[24].OneofWrappers = []any{}
+	file_xunara_v2_platform_proto_msgTypes[42].OneofWrappers = []any{}
 	file_xunara_v2_platform_proto_msgTypes[60].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

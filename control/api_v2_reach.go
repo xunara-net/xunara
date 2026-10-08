@@ -2,7 +2,6 @@ package control
 
 import (
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 
@@ -61,17 +60,7 @@ func (s *Server) handleAPIV2ReachSessions(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	var nodeFilter state.NodeID
-	if raw := query.Get("node"); raw != "" {
-		if id, err := strconv.ParseUint(raw, 10, 64); err == nil {
-			nodeFilter = state.NodeID(id)
-		} else if node, ok := s.store.GetNodeByStableID(raw); ok {
-			nodeFilter = node.ID
-		} else {
-			// An unknown node matches nothing rather than being ignored.
-			nodeFilter = ^state.NodeID(0)
-		}
-	}
+	nodeFilter := s.apiV2NodeFilter(query.Get("node"))
 
 	items := make([]reachAdminSession, 0, limit)
 	var last state.ReachSession

@@ -170,6 +170,11 @@ func TestAPIV2FluxManagement(t *testing.T) {
 	if items, _ := fluxAdminPage(t, resp); len(items) != 0 {
 		t.Errorf("unknown node filter returned %+v", items)
 	}
+	// "0" is not a node ID: it must match nothing, never mean "no filter".
+	resp = apiRequest(t, client, http.MethodGet, base+"?node=0", readToken, nil)
+	if items, _ := fluxAdminPage(t, resp); len(items) != 0 {
+		t.Errorf("node=0 returned %+v, want nothing", items)
+	}
 	if resp := apiRequest(t, client, http.MethodGet, base+"?limit=bogus", readToken, nil); resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("bad limit = %d, want 400", resp.StatusCode)
 	}
@@ -282,6 +287,10 @@ func TestPlatformGRPCFluxTransfers(t *testing.T) {
 	}
 	if _, err := client.ListFluxTransfers(grpcCtx(readToken), &xunarav2.ListFluxTransfersRequest{State: "nonsense"}); status.Code(err) != codes.InvalidArgument {
 		t.Errorf("unknown state error = %v, want InvalidArgument", err)
+	}
+	zeroNode, err := client.ListFluxTransfers(grpcCtx(readToken), &xunarav2.ListFluxTransfersRequest{Node: "0"})
+	if err != nil || len(zeroNode.GetTransfers()) != 0 {
+		t.Errorf("node=0 = %+v (%v), want nothing", zeroNode.GetTransfers(), err)
 	}
 	first, err := client.ListFluxTransfers(grpcCtx(readToken), &xunarav2.ListFluxTransfersRequest{PageSize: 1})
 	if err != nil || len(first.GetTransfers()) != 1 || first.GetNextPageToken() == "" {

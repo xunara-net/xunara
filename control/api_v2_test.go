@@ -129,6 +129,12 @@ func TestAPIV2MachinesPaginationAndFilters(t *testing.T) {
 	if items, _ = page["items"].([]any); len(items) != 0 {
 		t.Fatalf("unknown user filter items = %d, want 0", len(items))
 	}
+	// "0" is not a user ID: it must match nothing, never mean "no filter".
+	resp = apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/machines?user=0", token, nil)
+	page = decodeAPI(t, resp)
+	if items, _ = page["items"].([]any); len(items) != 0 {
+		t.Fatalf("user=0 filter items = %d, want 0", len(items))
+	}
 
 	// Offline filter: no map session is open in this test.
 	resp = apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/machines?state=offline", token, nil)
@@ -246,6 +252,17 @@ func TestAPIV2AgentTokensListAndRevoke(t *testing.T) {
 		t.Error("token list leaks the credential")
 	}
 	tokenID := view["id"].(string)
+
+	// The node filter narrows the list; "0" is not a node ID, so it is
+	// refused instead of silently listing every credential.
+	byNode := decodeAPI(t, apiRequest(t, client, http.MethodGet,
+		hs.URL+"/api/v2/agent-tokens?node="+strconv.FormatInt(int64(view["nodeId"].(float64)), 10), readToken, nil))
+	if got, _ := byNode["items"].([]any); len(got) != 1 {
+		t.Errorf("node filter = %v, want the enrolled credential", got)
+	}
+	if resp := apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/agent-tokens?node=0", readToken, nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("node=0 status = %d, want 400", resp.StatusCode)
+	}
 
 	// Revoking needs the write scope: a read-only key is refused.
 	if resp := apiRequest(t, client, http.MethodDelete, hs.URL+"/api/v2/agent-tokens/"+tokenID, readToken, nil); resp.StatusCode != http.StatusForbidden {
@@ -615,6 +632,11 @@ func TestAPIV2Services(t *testing.T) {
 	unknown := decodeAPI(t, apiRequest(t, client, http.MethodGet, url+"?node=9999", readToken, nil))
 	if got := unknown["items"].([]any); len(got) != 0 {
 		t.Errorf("unknown node filter = %v, want none", got)
+	}
+	// "0" is not a node ID: it must match nothing, never mean "no filter".
+	zero := decodeAPI(t, apiRequest(t, client, http.MethodGet, url+"?node=0", readToken, nil))
+	if got := zero["items"].([]any); len(got) != 0 {
+		t.Errorf("node=0 filter = %v, want none", got)
 	}
 
 	// Pagination: one item per page, names as cursors.

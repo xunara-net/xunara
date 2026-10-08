@@ -2,7 +2,6 @@ package control
 
 import (
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/xunara/xunara/identity"
@@ -137,22 +136,6 @@ func (s *Server) sshCheckPeerView(id int64) sshCheckPeerView {
 	return view
 }
 
-// sshCheckNodeFilter parses a node= filter: a node ID or stable ID. Zero and
-// unknown nodes match nothing (never "no filter"), because a filter that
-// silently widens its result is a security bug.
-func (s *Server) sshCheckNodeFilter(raw string) state.NodeID {
-	if raw == "" {
-		return 0
-	}
-	if id, err := strconv.ParseUint(raw, 10, 64); err == nil && id > 0 {
-		return state.NodeID(id)
-	}
-	if node, ok := s.store.GetNodeByStableID(raw); ok {
-		return node.ID
-	}
-	return ^state.NodeID(0)
-}
-
 // sshCheckPage returns one newest-first page of sessions that pass the
 // filters, plus the cursor for the next page (empty when the listing ends).
 func (s *Server) sshCheckPage(stateFilter string, nodeFilter state.NodeID, limit int, afterCreated time.Time, afterID string) ([]sshCheckAdminSession, string, error) {
@@ -214,7 +197,7 @@ func (s *Server) handleAPIV2SSHCheckSessions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	items, next, err := s.sshCheckPage(stateFilter, s.sshCheckNodeFilter(r.URL.Query().Get("node")),
+	items, next, err := s.sshCheckPage(stateFilter, s.apiV2NodeFilter(r.URL.Query().Get("node")),
 		limit, afterCreated, afterID)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "could not list ssh checks")

@@ -114,6 +114,11 @@ func TestAPIV2ReachManagement(t *testing.T) {
 	if items, _ := reachAdminPage(t, resp); len(items) != 0 {
 		t.Errorf("unknown node filter returned %+v", items)
 	}
+	// "0" is not a node ID: it must match nothing, never mean "no filter".
+	resp = apiRequest(t, client, http.MethodGet, base+"?node=0", readToken, nil)
+	if items, _ := reachAdminPage(t, resp); len(items) != 0 {
+		t.Errorf("node=0 returned %+v, want nothing", items)
+	}
 	if resp := apiRequest(t, client, http.MethodGet, base+"?limit=bogus", readToken, nil); resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("bad limit = %d, want 400", resp.StatusCode)
 	}
@@ -275,6 +280,10 @@ func TestPlatformGRPCReachSessions(t *testing.T) {
 	unknownNode, err := client.ListReachSessions(grpcCtx(readToken), &xunarav2.ListReachSessionsRequest{Node: "n0000000000000000"})
 	if err != nil || len(unknownNode.GetSessions()) != 0 {
 		t.Errorf("unknown node = %+v (%v)", unknownNode.GetSessions(), err)
+	}
+	zeroNode, err := client.ListReachSessions(grpcCtx(readToken), &xunarav2.ListReachSessionsRequest{Node: "0"})
+	if err != nil || len(zeroNode.GetSessions()) != 0 {
+		t.Errorf("node=0 = %+v (%v), want nothing", zeroNode.GetSessions(), err)
 	}
 	if _, err := client.ListReachSessions(grpcCtx(readToken), &xunarav2.ListReachSessionsRequest{PageToken: "YWJj"}); status.Code(err) != codes.InvalidArgument {
 		t.Errorf("bad page token error = %v, want InvalidArgument", err)

@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"tailscale.com/types/key"
 
 	xunarav2 "github.com/xunara/xunara/api/gen/xunara/v2"
@@ -173,6 +174,14 @@ func TestPlatformGRPCListMachinesPaginationAndFilters(t *testing.T) {
 	}
 	if len(unknown.GetMachines()) != 0 {
 		t.Errorf("unknown user matched %d machines", len(unknown.GetMachines()))
+	}
+	// "0" is not a user ID: it must match nothing, never mean "no filter".
+	zeroUser, err := client.ListMachines(ctx, &xunarav2.ListMachinesRequest{User: "0"})
+	if err != nil {
+		t.Fatalf("ListMachines user=0: %v", err)
+	}
+	if len(zeroUser.GetMachines()) != 0 {
+		t.Errorf("user=0 matched %d machines", len(zeroUser.GetMachines()))
 	}
 
 	byID, err := client.ListMachines(ctx, &xunarav2.ListMachinesRequest{User: itoa64(uint64(seeded[1].UserID))})
@@ -709,7 +718,7 @@ func TestPlatformGRPCListServices(t *testing.T) {
 		t.Errorf("first service has no timestamps: %+v", first)
 	}
 
-	byNode, err := client.ListServices(grpcCtx(readToken), &xunarav2.ListServicesRequest{NodeId: uint64(web.ID)})
+	byNode, err := client.ListServices(grpcCtx(readToken), &xunarav2.ListServicesRequest{NodeId: proto.Uint64(uint64(web.ID))})
 	if err != nil {
 		t.Fatalf("ListServices node filter: %v", err)
 	}
@@ -723,12 +732,28 @@ func TestPlatformGRPCListServices(t *testing.T) {
 	if len(byName.GetServices()) != 1 || byName.GetServices()[0].GetProtocol() != "udp" {
 		t.Errorf("name filter = %+v", byName.GetServices())
 	}
-	unknown, err := client.ListServices(grpcCtx(readToken), &xunarav2.ListServicesRequest{NodeId: 9999})
+	unknown, err := client.ListServices(grpcCtx(readToken), &xunarav2.ListServicesRequest{NodeId: proto.Uint64(9999)})
 	if err != nil {
 		t.Fatalf("ListServices unknown node: %v", err)
 	}
 	if len(unknown.GetServices()) != 0 {
 		t.Errorf("unknown node filter = %+v, want none", unknown.GetServices())
+	}
+	// A present 0 is not a node ID and must match nothing; an absent one
+	// still lists every machine.
+	zeroNode, err := client.ListServices(grpcCtx(readToken), &xunarav2.ListServicesRequest{NodeId: proto.Uint64(0)})
+	if err != nil {
+		t.Fatalf("ListServices node_id=0: %v", err)
+	}
+	if len(zeroNode.GetServices()) != 0 {
+		t.Errorf("node_id=0 filter = %+v, want none", zeroNode.GetServices())
+	}
+	unset, err := client.ListServices(grpcCtx(readToken), &xunarav2.ListServicesRequest{})
+	if err != nil {
+		t.Fatalf("ListServices without a node filter: %v", err)
+	}
+	if len(unset.GetServices()) == 0 {
+		t.Error("an absent node_id must not filter anything out")
 	}
 
 	page, err := client.ListServices(grpcCtx(readToken), &xunarav2.ListServicesRequest{PageSize: 1})

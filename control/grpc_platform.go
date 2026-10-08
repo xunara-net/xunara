@@ -476,7 +476,7 @@ func (g *grpcPlatformServer) ListMachines(ctx context.Context, req *xunarav2.Lis
 	// the HTTP filter.
 	var userFilter uint64
 	if raw := strings.TrimSpace(req.GetUser()); raw != "" {
-		if id, err := strconv.ParseUint(raw, 10, 64); err == nil {
+		if id, err := strconv.ParseUint(raw, 10, 64); err == nil && id > 0 {
 			userFilter = id
 		} else if user, ok := s.identity.GetUserByLoginName(raw); ok {
 			userFilter = uint64(user.ID)
@@ -540,7 +540,15 @@ func (g *grpcPlatformServer) ListServices(ctx context.Context, req *xunarav2.Lis
 		return nil, status.Error(codes.InvalidArgument, "invalid page token")
 	}
 
-	nodeFilter := state.NodeID(req.GetNodeId())
+	// An absent node_id lists every machine; a present 0 is not a node ID and
+	// matches nothing, exactly like the HTTP filter.
+	var nodeFilter state.NodeID
+	if req.NodeId != nil {
+		nodeFilter = state.NodeID(req.GetNodeId())
+		if nodeFilter == 0 {
+			nodeFilter = ^state.NodeID(0)
+		}
+	}
 	nameFilter := strings.TrimSpace(req.GetName())
 
 	out := make([]*xunarav2.Service, 0, limit)
@@ -613,17 +621,7 @@ func (g *grpcPlatformServer) ListReachSessions(ctx context.Context, req *xunarav
 			return nil, status.Error(codes.InvalidArgument, "invalid state filter")
 		}
 	}
-	var nodeFilter state.NodeID
-	if raw := strings.TrimSpace(req.GetNode()); raw != "" {
-		if id, err := strconv.ParseUint(raw, 10, 64); err == nil {
-			nodeFilter = state.NodeID(id)
-		} else if node, ok := s.store.GetNodeByStableID(raw); ok {
-			nodeFilter = node.ID
-		} else {
-			// An unknown node matches nothing rather than being ignored.
-			nodeFilter = ^state.NodeID(0)
-		}
-	}
+	nodeFilter := s.apiV2NodeFilter(strings.TrimSpace(req.GetNode()))
 
 	out := make([]*xunarav2.ReachSession, 0, limit)
 	var last state.ReachSession
@@ -678,17 +676,7 @@ func (g *grpcPlatformServer) ListFluxTransfers(ctx context.Context, req *xunarav
 			return nil, status.Error(codes.InvalidArgument, "invalid state filter")
 		}
 	}
-	var nodeFilter state.NodeID
-	if raw := strings.TrimSpace(req.GetNode()); raw != "" {
-		if id, err := strconv.ParseUint(raw, 10, 64); err == nil {
-			nodeFilter = state.NodeID(id)
-		} else if node, ok := s.store.GetNodeByStableID(raw); ok {
-			nodeFilter = node.ID
-		} else {
-			// An unknown node matches nothing rather than being ignored.
-			nodeFilter = ^state.NodeID(0)
-		}
-	}
+	nodeFilter := s.apiV2NodeFilter(strings.TrimSpace(req.GetNode()))
 
 	out := make([]*xunarav2.FluxTransfer, 0, limit)
 	var last state.FluxTransfer
@@ -819,7 +807,7 @@ func (g *grpcPlatformServer) ListSSHCheckSessions(ctx context.Context, req *xuna
 	if stateFilter != "" && !sshCheckStateValid(stateFilter) {
 		return nil, status.Error(codes.InvalidArgument, "invalid state filter")
 	}
-	nodeFilter := s.sshCheckNodeFilter(strings.TrimSpace(req.GetNode()))
+	nodeFilter := s.apiV2NodeFilter(strings.TrimSpace(req.GetNode()))
 
 	items, next, err := s.sshCheckPage(stateFilter, nodeFilter, limit, afterCreated, afterID)
 	if err != nil {

@@ -538,9 +538,10 @@ message ListServicesRequest {
   uint32 page_size = 1;
   // page_token is the next_page_token of the previous response.
   string page_token = 2;
-  // node_id filters on the advertising machine; 0 means every machine. An
-  // unknown id matches nothing.
-  uint64 node_id = 3;
+  // node_id filters on the advertising machine; an absent value means every
+  // machine, while 0 (not a node ID) or an unknown id matches nothing. The
+  // field is optional so "unset" and "0" stay distinguishable.
+  optional uint64 node_id = 3;
   // name filters on one exact service name.
   string name = 4;
 }
