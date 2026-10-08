@@ -27,7 +27,7 @@ endpoints enabled is shown below as a misconfiguration.</p>
 
 {{if .View.Nodes}}
 <table>
-<thead><tr><th>Node</th><th>Owner</th><th>Status</th><th>Serve</th><th>Certificates</th><th>Funnel</th></tr></thead>
+<thead><tr><th scope="col">Node</th><th scope="col">Owner</th><th scope="col">Status</th><th scope="col">Serve</th><th scope="col">Certificates</th><th scope="col">Funnel</th></tr></thead>
 <tbody>
 {{range .View.Nodes}}
 <tr>

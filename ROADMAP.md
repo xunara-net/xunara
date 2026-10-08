@@ -899,8 +899,10 @@ in-place re-registration 与 `HandleNodeFromAuthPath` 的 reauth/convert 语义�
   - 控制面从不代替管理员重签 node key：rotation 签名必须由节点自己的 NL 私钥生成，
     控制面只保管公钥（TKA 威胁模型不允许把管理员/节点的 NL 私钥交给控制面）。
   - ~~控制面尚未返回 `RegisterResponse.NodeKeyExpired`~~：已由 M15a 实现。
-  - 未提供 CLI/Platform API 的 TKA 状态与初始化入口（协议面已完整，官方客户端
-    可直接使用 `tailscale lock ...`）。
+  - ~~未提供 CLI/Platform API 的 TKA 状态入口~~：已补齐（`xunara tka status`、
+    gRPC `GetTailnetLock`、Console 概览与 Security Center）；初始化/禁用/签名
+    是持有 network-lock 私钥的协议操作，控制面刻意不提供（官方客户端
+    `tailscale lock ...` 可直接使用）。
 
 ---
 
@@ -1907,15 +1909,33 @@ A/AAAA 记录；ACL 仍是唯一授权来源（发现不等于授权）。规格
   `consul_test.go` 与 `kubernetes_test.go` 新增声明映射与失败路径用例；
   CLI 帮助文本补充声明字段说明。
 
+## M43 — Web Console 现代化（v2，已完成）
+
+目标：用户指定"用户控制中心 Web 页面现代化"在功能开发之后做。M43 把 Console
+与登录/审批页升级为统一设计系统 + 响应式 + 暗色模式 + 可访问性 + 渐进增强，
+只改表现层（协议、`/api/v2`、handler 与存储不动）。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §50。
+
+- 设计系统：`siteTokens` 单一令牌来源（颜色/字体/圆角/阴影/宽度），Console
+  壳层与登录/审批页共用；深浅色由 `prefers-color-scheme` + `data-theme`
+  显式覆盖；保持无外部资源（内联 CSS/JS、系统字体）。
+- 响应式：sticky 顶栏、≤860px 折叠导航、卡片网格、宽表横向滚动、
+  `dl` 窄屏堆叠。
+- a11y：跳过链接、`nav`/`main` 地标、`aria-current="page"`、列头
+  `scope="col"`、`:focus-visible` 焦点环、提示 `role="status"`。
+- 渐进增强：无 JS 全站可用；JS 提供主题持久化、移动导航、表格过滤
+  （行数 ≥6）、破坏性操作确认。
+- 测试：`control/console_ui_test.go`（壳层契约、令牌共享、无外部资源、
+  列头 scope）；既有 Console/角色/登录测试全部保持通过。
+
 ---
 
 ## 后续计划（用户指定的排序）
 
-- **Web Console 现代化（最后）**：用户要求把"用户控制中心"的 Web 页面现代化
-  安排在功能开发全部完成之后再做。范围（待细化）：统一设计系统与排版、
-  响应式布局、暗色模式、渐进增强（无 JS 也可用）、可访问性（a11y）、
-  表格/表单交互（过滤、分页、就地校验）与移动端适配；不改动任何协议与
-  `/api/v2` 语义，只重做表现层。
+- ~~**Web Console 现代化（最后）**~~：已由 M43 交付（spec §50）。
+- 之后若继续：Realm / Gate / Beacon / Loom / Pulse / Chronicle / Observatory /
+  Bastion / Forge 等产品在 §19 列出但尚无 spec，需要先写规格再实现
+  （禁止先写代码后补语义，AGENTS §3）。
 
 ---
 

@@ -15,7 +15,7 @@ and DERP are not good enough; the control plane never selects one.</p>
 <h3>Relay candidates</h3>
 {{if .View.Relays}}
 <table>
-<thead><tr><th>Node</th><th>Owner</th><th>Status</th><th>Offering</th><th>Grant</th></tr></thead>
+<thead><tr><th scope="col">Node</th><th scope="col">Owner</th><th scope="col">Status</th><th scope="col">Offering</th><th scope="col">Grant</th></tr></thead>
 <tbody>
 {{range .View.Relays}}
 <tr>
@@ -39,7 +39,7 @@ appears here, and a relay grant decides who may use it.</p>
 <h3>Relay grants</h3>
 {{if .View.Grants}}
 <table>
-<thead><tr><th>Sources</th><th>Relay targets</th></tr></thead>
+<thead><tr><th scope="col">Sources</th><th scope="col">Relay targets</th></tr></thead>
 <tbody>
 {{range .View.Grants}}
 <tr>

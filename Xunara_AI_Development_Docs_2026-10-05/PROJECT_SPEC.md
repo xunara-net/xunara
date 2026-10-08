@@ -2581,3 +2581,59 @@ Consul 的 Meta 键必须匹配 `^[a-zA-Z0-9_-]+$`（≤128 字节），值不�
   跳过、一致时去重。
 - `client/catalog/kubernetes_test.go`：注解映射（含规范化排序）、畸形布尔/JSON
   与两轴冲突跳过、告警不回显值。
+
+## 50. Web Console 现代化（v2，M43）
+
+目标：把"用户控制中心"（Web Console 与登录/审批页）从 2024 年的内联样式升级
+为统一、响应式、可访问、支持暗色模式的现代界面。范围严格限定在**表现层**：
+不动任何协议、`/api/v2`、存储与处理逻辑，页面在禁用 JavaScript 时仍然完整
+可用（渐进增强）。
+
+### 50.1 设计系统
+
+- 唯一令牌来源 `siteTokens`（`control/console_pages.go`）：颜色、字体、圆角、
+  阴影、内容宽度；Console 壳层与登录/审批/错误页共用同一套令牌，不再各写一套
+  颜色。
+- 调色板默认跟随系统（`prefers-color-scheme`），并提供显式覆盖
+  `:root[data-theme="dark"|"light"]`；语义色分 `ok`/`warn`，正文与次要文字
+  使用 `--fg`/`--muted`，保证浅色与深色下都有足够对比度。
+- 继续遵守既有约束：**无外部资源**（内联 CSS/JS、系统字体、不引用 CDN）、
+  `referrer: no-referrer`、所有值经 `html/template` 转义（§20）。
+
+### 50.2 布局与响应式
+
+- 顶栏 sticky、导航换行；≤860px 时导航折叠为可展开菜单（JS 增强），无 JS 时
+  导航仍然完整显示。
+- 内容区最大宽度 76rem、卡片网格自适应；宽表进入 `.table-wrap` 横向滚动，
+  不再把页面撑破；`dl` 在窄屏堆叠为单列。
+- 表格有 hover 行高亮、列头显式 `scope="col"`；行数 ≥6 的表由 JS 提供就地
+  过滤框（`type="search"`，按行文本大小写不敏感过滤）。
+
+### 50.3 可访问性（a11y）
+
+- 跳过导航链接（`#main`）、`main`/`nav` 语义地标、导航 `aria-label`、
+  当前页 `aria-current="page"`。
+- 全局 `:focus-visible` 焦点环；表单保留原生 `label`/`required`，Toggle 按钮
+  带 `aria-expanded`/`aria-controls`；提示条 `role="status"`。
+- 触控目标与字号在移动端保持可用；正文对比度按 WCAG AA 目标选取。
+
+### 50.4 渐进增强（无 JS 也可用）
+
+- 无 JavaScript：全站可读可写（表单、链接、审批都工作），主题跟随系统。
+- 有 JavaScript 时附加：主题手动切换并记住（`localStorage`，首选项缺省时回落
+  系统设置）、窄屏导航展开、表格包裹与过滤、破坏性提交前确认
+  （`button.danger`）。脚本不接收任何服务端数据，不新增外部请求。
+
+### 50.5 明确不做（v2）
+
+- 不引入前端框架、构建步骤或 CDN 资产；Console 仍是服务端渲染的 HTML。
+- 不改动任何 handler、协议字段或 `/api/v2` 语义；本次只改模板与样式。
+- 服务端分页暂不做：当前表格由 JS 就地过滤，数据量级仍在单页可承受范围内；
+  若未来分页，需要单独规格（会触及 handler 与查询）。
+
+### 50.6 测试
+
+- `control/console_ui_test.go`：壳层包含跳过链接、地标与 `aria-current`、
+  深浅色令牌、渐进增强控件默认隐藏、无外部资源、所有列头带 `scope`；
+  登录页与 Console 共用设计令牌。
+- 既有 Console/角色/登录/审批测试全部保持通过（行为与文案未变）。

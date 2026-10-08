@@ -23,7 +23,7 @@ live monitoring: findings are deterministic observations (spec section 39).</p>
 <h3>Findings</h3>
 {{if .View.Findings}}
 <table>
-<thead><tr><th>Severity</th><th>Finding</th><th>Detail</th></tr></thead>
+<thead><tr><th scope="col">Severity</th><th scope="col">Finding</th><th scope="col">Detail</th></tr></thead>
 <tbody>
 {{range .View.Findings}}
 <tr>
@@ -43,7 +43,7 @@ live monitoring: findings are deterministic observations (spec section 39).</p>
 keys are the actionable subset; the rest is the schedule.</p>
 {{if .Expiry}}
 <table>
-<thead><tr><th>Node</th><th>Owner</th><th>Expires</th><th>State</th></tr></thead>
+<thead><tr><th scope="col">Node</th><th scope="col">Owner</th><th scope="col">Expires</th><th scope="col">State</th></tr></thead>
 <tbody>
 {{range .Expiry}}
 <tr>

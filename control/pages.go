@@ -5,8 +5,8 @@ import (
 	"net/http"
 )
 
-// pageHead is shared by every page: no external assets, no scripts, a strict
-// referrer policy.
+// pageHead is shared by every page: the console's design tokens, no external
+// assets, a strict referrer policy.
 const pageHead = `<!doctype html>
 <html lang="en">
 <head>
@@ -14,23 +14,30 @@ const pageHead = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>{{.Title}} — Xunara</title>
-<style>
-body { font-family: system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #16181d; }
-main { max-width: 34rem; margin: 6vh auto; background: #fff; padding: 2rem; border-radius: .75rem;
-       box-shadow: 0 1px 3px rgba(0,0,0,.12); }
-h1 { font-size: 1.35rem; margin-top: 0; }
-p { line-height: 1.5; }
-.provider { display: block; margin: .6rem 0; padding: .7rem 1rem; background: #16181d; color: #fff;
-            text-decoration: none; border-radius: .5rem; text-align: center; }
-.provider:hover { background: #2b2f38; }
+<style>` + siteTokens + `
+body { font-family: var(--font); margin: 0; background: var(--bg); color: var(--fg); line-height: 1.5;
+       min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
+main { width: 100%; max-width: 30rem; background: var(--surface); border: 1px solid var(--border);
+       padding: 2rem; border-radius: calc(var(--radius) + 4px); box-shadow: var(--shadow); }
+h1 { font-size: 1.3rem; margin: 0 0 .5rem; letter-spacing: -.01em; }
+p { margin: .5rem 0; }
+.provider { display: block; margin: .6rem 0; padding: .7rem 1rem; background: var(--accent);
+            color: var(--accent-fg); text-decoration: none; border-radius: var(--radius-sm);
+            text-align: center; font-weight: 600; }
+.provider:hover { filter: brightness(1.06); }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: .4rem 1rem; }
-dt { color: #5b616e; }
-.actions { margin-top: 1.5rem; display: flex; gap: .75rem; }
-button { font: inherit; padding: .7rem 1.2rem; border-radius: .5rem; border: 0; cursor: pointer; }
-.approve { background: #1a7f37; color: #fff; }
-.deny { background: #fff; color: #b42318; border: 1px solid #d0d5dd; }
-footer { margin-top: 2rem; color: #5b616e; font-size: .8rem; }
-code { background: #f1f2f4; padding: .1rem .3rem; border-radius: .25rem; }
+dt { color: var(--muted); }
+dd { margin: 0; }
+.actions { margin-top: 1.5rem; display: flex; gap: .75rem; flex-wrap: wrap; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button { font: inherit; font-weight: 600; padding: .65rem 1.1rem; border-radius: var(--radius-sm);
+         border: 1px solid transparent; cursor: pointer; background: var(--accent); color: var(--accent-fg); }
+.approve { background: var(--ok); color: var(--accent-fg); }
+.deny { background: transparent; color: var(--warn); border-color: var(--warn); }
+footer { margin-top: 2rem; color: var(--muted); font-size: .8rem; }
+code { font-family: var(--mono); font-size: .85em; background: var(--surface-2); border: 1px solid var(--border);
+       padding: .05rem .3rem; border-radius: 5px; }
+.status { min-height: 1.2em; }
 </style>
 </head>
 <body><main>

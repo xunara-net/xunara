@@ -13,6 +13,48 @@ import (
 // Secrets are never rendered except where a handler explicitly passes a
 // one-time value such as a freshly created pre-auth key.
 
+// siteTokens is the shared design system of the web surface: one palette with
+// light and dark values, system fonts only, and no external assets. Both the
+// console shell and the sign-in pages build on it so the whole flow looks the
+// same; page-specific rules follow the token block in each page's <style>.
+const siteTokens = `
+:root {
+  color-scheme: light dark;
+  --bg: #f4f6f8; --surface: #ffffff; --surface-2: #f1f3f6;
+  --fg: #15181e; --muted: #59606d;
+  --border: #e2e6ec; --border-2: #c9d1dc;
+  --accent: #1f5fd8; --accent-fg: #ffffff; --accent-soft: #e8f0fe;
+  --ok: #1a7f37; --ok-bg: #e6f4ea;
+  --warn: #b42318; --warn-bg: #fdecec;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 2px 6px rgba(16, 24, 40, .06);
+  --radius: 10px; --radius-sm: 7px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --wrap: 76rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101318; --surface: #171b22; --surface-2: #1e232c;
+    --fg: #e8eaf0; --muted: #9aa4b2;
+    --border: #272d38; --border-2: #38414f;
+    --accent: #7aa2ff; --accent-fg: #0d1117; --accent-soft: #1a2333;
+    --ok: #6bd08a; --ok-bg: #12291c;
+    --warn: #ff9a90; --warn-bg: #31181a;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 2px 8px rgba(0, 0, 0, .3);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101318; --surface: #171b22; --surface-2: #1e232c;
+  --fg: #e8eaf0; --muted: #9aa4b2;
+  --border: #272d38; --border-2: #38414f;
+  --accent: #7aa2ff; --accent-fg: #0d1117; --accent-soft: #1a2333;
+  --ok: #6bd08a; --ok-bg: #12291c;
+  --warn: #ff9a90; --warn-bg: #31181a;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 2px 8px rgba(0, 0, 0, .3);
+}
+* { box-sizing: border-box; }
+`
+
 const consoleHead = `<!doctype html>
 <html lang="en">
 <head>
@@ -20,91 +62,222 @@ const consoleHead = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>{{.Title}} — Xunara console</title>
-<style>
-body { font-family: system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #16181d; }
-header { background: #16181d; color: #fff; padding: .8rem 1.5rem; display: flex; flex-wrap: wrap;
-         align-items: center; gap: 1rem; }
-header h1 { font-size: 1rem; margin: 0; font-weight: 600; }
-header h1 span { color: #9aa2b1; font-weight: 400; }
-nav { display: flex; flex-wrap: wrap; gap: .25rem; }
-nav a { color: #c9cfda; text-decoration: none; padding: .35rem .6rem; border-radius: .4rem; font-size: .9rem; }
-nav a:hover { background: #2b2f38; color: #fff; }
-nav a.active { background: #2b2f38; color: #fff; }
-.who { margin-left: auto; font-size: .85rem; color: #c9cfda; display: flex; align-items: center; gap: .6rem; }
+<style>` + siteTokens + `
+body { font-family: var(--font); margin: 0; background: var(--bg); color: var(--fg);
+       line-height: 1.5; -webkit-text-size-adjust: 100%; }
+.skip { position: absolute; left: -999px; top: 0; z-index: 100; background: var(--surface);
+        color: var(--fg); padding: .6rem .9rem; border-radius: 0 0 var(--radius-sm) 0; }
+.skip:focus { left: 0; }
+.topbar { position: sticky; top: 0; z-index: 50; display: flex; flex-wrap: wrap; align-items: center;
+          gap: .35rem .9rem; padding: .7rem 1.4rem; background: var(--surface);
+          border-bottom: 1px solid var(--border); }
+.brand { font-size: 1rem; font-weight: 700; letter-spacing: .01em; display: flex; align-items: baseline; gap: .4rem; }
+.brand span { color: var(--muted); font-weight: 500; }
+nav { display: flex; flex-wrap: wrap; gap: .15rem; }
+nav a { color: var(--muted); text-decoration: none; padding: .35rem .55rem; border-radius: var(--radius-sm);
+        font-size: .86rem; font-weight: 500; }
+nav a:hover { background: var(--surface-2); color: var(--fg); }
+nav a.active { background: var(--accent); color: var(--accent-fg); }
+.who { margin-left: auto; display: flex; align-items: center; gap: .5rem; font-size: .84rem; color: var(--muted); }
 .who form { margin: 0; }
-.who button { background: transparent; border: 1px solid #4b515c; color: #c9cfda; font: inherit;
-              padding: .25rem .6rem; border-radius: .4rem; cursor: pointer; }
-main { max-width: 68rem; margin: 1.5rem auto 3rem; padding: 0 1.5rem; }
-h2 { font-size: 1.25rem; margin-top: 1.75rem; }
-h3 { font-size: 1rem; }
-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: .5rem; overflow: hidden;
-        box-shadow: 0 1px 3px rgba(0,0,0,.12); font-size: .9rem; }
-th, td { text-align: left; padding: .55rem .75rem; border-bottom: 1px solid #eceef1; vertical-align: top; }
-th { background: #fafbfc; color: #5b616e; font-weight: 600; }
+.who-name { font-weight: 600; color: var(--fg); }
+main { max-width: var(--wrap); margin: 1.4rem auto 3rem; padding: 0 1.4rem; }
+main:focus { outline: none; }
+h2 { font-size: 1.2rem; margin: 1.9rem 0 .6rem; letter-spacing: -.01em; }
+h3 { font-size: 1rem; margin: 1.3rem 0 .4rem; }
+h2:first-child, h3:first-child { margin-top: .4rem; }
+h2 + p, h3 + p { margin-top: .2rem; }
+p { margin: .5rem 0; }
+a { color: var(--accent); }
+.table-wrap { overflow-x: auto; margin: .6rem 0 1rem; background: var(--surface); border: 1px solid var(--border);
+              border-radius: var(--radius); box-shadow: var(--shadow); }
+table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+th, td { text-align: left; padding: .6rem .8rem; border-bottom: 1px solid var(--border); vertical-align: top;
+         overflow-wrap: anywhere; }
+th { background: var(--surface-2); color: var(--muted); font-size: .78rem; font-weight: 600;
+     text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
+tbody tr:hover td { background: var(--surface-2); }
 tr:last-child td { border-bottom: 0; }
-.cards { display: flex; flex-wrap: wrap; gap: .75rem; margin: 1rem 0 1.5rem; }
-.card { background: #fff; border-radius: .5rem; padding: .9rem 1.2rem; box-shadow: 0 1px 3px rgba(0,0,0,.12);
-        min-width: 8rem; display: flex; flex-direction: column; gap: .2rem; }
-.card .num { font-size: 1.5rem; font-weight: 600; }
-.card span:last-child { color: #5b616e; font-size: .85rem; }
-.ok { color: #1a7f37; }
-.off { color: #5b616e; }
-.warn { color: #b42318; }
-.tag { background: #eceef1; color: #3c414b; border-radius: .3rem; padding: .05rem .35rem; font-size: .75rem; }
-.notice { background: #e6f4ea; border: 1px solid #b7dcc0; color: #14532d; padding: .6rem .9rem;
-          border-radius: .5rem; }
-input { font: inherit; padding: .35rem .5rem; border: 1px solid #d0d5dd; border-radius: .35rem; }
-button { font: inherit; padding: .35rem .7rem; border-radius: .35rem; border: 0; cursor: pointer;
-         background: #16181d; color: #fff; }
-button.danger { background: #fff; color: #b42318; border: 1px solid #d0d5dd; }
-button + button { margin-left: .35rem; }
-code { background: #f1f2f4; padding: .1rem .3rem; border-radius: .25rem; }
-pre { background: #fff; border-radius: .35rem; padding: .75rem; overflow-x: auto; font-size: .85rem; }
-dl { display: grid; grid-template-columns: max-content 1fr; gap: .4rem 1rem; }
-dt { color: #5b616e; }
-.field { display: flex; gap: .75rem; align-items: center; margin: .5rem 0; flex-wrap: wrap; }
-footer { text-align: center; color: #5b616e; font-size: .8rem; }
+.table-filter { display: block; width: 100%; max-width: 22rem; margin: .7rem 0 0; font: inherit;
+                padding: .45rem .6rem; border: 1px solid var(--border-2); border-radius: var(--radius-sm);
+                background: var(--surface); color: var(--fg); }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(9.5rem, 1fr)); gap: .7rem;
+         margin: 1rem 0 1.6rem; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+        padding: .85rem 1rem; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: .15rem; }
+.card .num { font-size: 1.45rem; font-weight: 650; letter-spacing: -.01em; }
+.card span:last-child { color: var(--muted); font-size: .82rem; }
+.ok { color: var(--ok); font-weight: 600; }
+.off { color: var(--muted); }
+.warn { color: var(--warn); font-weight: 600; }
+.tag { display: inline-block; background: var(--surface-2); color: var(--muted); border: 1px solid var(--border);
+       border-radius: 999px; padding: .05rem .45rem; font-size: .72rem; font-weight: 600; }
+.tag.warn { color: var(--warn); background: var(--warn-bg); border-color: currentColor; }
+.notice { background: var(--ok-bg); border: 1px solid var(--border); border-color: var(--ok);
+          color: var(--fg); padding: .6rem .9rem; border-radius: var(--radius-sm); margin: .6rem 0; }
+.notice.warn { background: var(--warn-bg); border-color: var(--warn); }
+input:not([type="hidden"]):not([type="checkbox"]) { font: inherit; padding: .4rem .55rem;
+  border: 1px solid var(--border-2); border-radius: var(--radius-sm); background: var(--surface); color: var(--fg); }
+input::placeholder { color: var(--muted); }
+a:focus-visible, input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button { font: inherit; font-size: .86rem; font-weight: 600; padding: .4rem .75rem;
+         border: 1px solid transparent; border-radius: var(--radius-sm); cursor: pointer;
+         background: var(--accent); color: var(--accent-fg); }
+button:hover { filter: brightness(1.06); }
+button.ghost { background: transparent; color: var(--muted); border-color: var(--border-2); }
+button.ghost:hover { color: var(--fg); background: var(--surface-2); }
+button.danger { background: transparent; color: var(--warn); border-color: var(--warn); }
+button + button { margin-left: .3rem; }
+code { font-family: var(--mono); font-size: .82em; background: var(--surface-2); border: 1px solid var(--border);
+       padding: .05rem .3rem; border-radius: 5px; }
+pre { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      padding: .75rem; overflow-x: auto; font-size: .82rem; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: .35rem 1.1rem; margin: .6rem 0 1rem; }
+dt { color: var(--muted); }
+dd { margin: 0; }
+.field { display: flex; gap: .6rem; align-items: center; margin: .55rem 0; flex-wrap: wrap; }
+.field label { color: var(--muted); font-size: .86rem; }
+footer { text-align: center; color: var(--muted); font-size: .78rem; padding: 1.5rem 1rem 2rem; }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+           clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.nav-toggle, .theme-toggle { display: none; }
+html.js .nav-toggle, html.js .theme-toggle { display: inline-flex; align-items: center; background: transparent;
+  color: var(--muted); border: 1px solid var(--border-2); padding: .3rem .6rem; }
+html.js .theme-toggle { padding: .3rem .5rem; }
+@media (max-width: 860px) {
+  .topbar { padding: .6rem .9rem; }
+  html.js #console-nav { display: none; flex-direction: column; width: 100%; order: 9; }
+  html.js .topbar.nav-open #console-nav { display: flex; }
+  nav a { padding: .55rem .6rem; }
+  main { padding: 0 .9rem; margin-top: 1rem; }
+  dl { grid-template-columns: 1fr; gap: .1rem; }
+  dt { margin-top: .5rem; }
+  h2 { font-size: 1.1rem; }
+  .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 </style>
 </head>
 <body>
-<header>
-<h1>Xunara <span>console</span></h1>
-<nav>
-<a href="/console/"{{if eq .Nav "overview"}} class="active"{{end}}>Overview</a>
-<a href="/console/machines"{{if eq .Nav "machines"}} class="active"{{end}}>Machines</a>
-<a href="/console/exit-nodes"{{if eq .Nav "exit-nodes"}} class="active"{{end}}>Exit nodes</a>
-<a href="/console/services"{{if eq .Nav "services"}} class="active"{{end}}>Services</a>
-<a href="/console/relays"{{if eq .Nav "relays"}} class="active"{{end}}>Relays</a>
-<a href="/console/serve"{{if eq .Nav "serve"}} class="active"{{end}}>Serve</a>
-<a href="/console/devices"{{if eq .Nav "devices"}} class="active"{{end}}>Devices</a>
-<a href="/console/users"{{if eq .Nav "users"}} class="active"{{end}}>Users</a>
-<a href="/console/passkeys"{{if eq .Nav "passkeys"}} class="active"{{end}}>Passkeys</a>
-<a href="/console/dns"{{if eq .Nav "dns"}} class="active"{{end}}>DNS</a>
-<a href="/console/derp"{{if eq .Nav "derp"}} class="active"{{end}}>DERP</a>
-<a href="/console/auth-keys"{{if eq .Nav "auth-keys"}} class="active"{{end}}>Auth keys</a>
-<a href="/console/agents"{{if eq .Nav "agents"}} class="active"{{end}}>Agents</a>
-<a href="/console/api-keys"{{if eq .Nav "api-keys"}} class="active"{{end}}>API keys</a>
-<a href="/console/shares"{{if eq .Nav "shares"}} class="active"{{end}}>Shares</a>
-<a href="/console/reach"{{if eq .Nav "reach"}} class="active"{{end}}>Reach</a>
-<a href="/console/flux"{{if eq .Nav "flux"}} class="active"{{end}}>Flux</a>
-<a href="/console/ssh-check"{{if eq .Nav "ssh-check"}} class="active"{{end}}>SSH checks</a>
-<a href="/console/webhooks"{{if eq .Nav "webhooks"}} class="active"{{end}}>Webhooks</a>
-<a href="/console/policy"{{if eq .Nav "policy"}} class="active"{{end}}>Policy</a>
-<a href="/console/security"{{if eq .Nav "security"}} class="active"{{end}}>Security</a>
-<a href="/console/audit"{{if eq .Nav "audit"}} class="active"{{end}}>Audit</a>
+<a class="skip" href="#main">Skip to content</a>
+<header class="topbar">
+<span class="brand">Xunara <span>console</span></span>
+<button class="nav-toggle" type="button" aria-expanded="false" aria-controls="console-nav" hidden>Menu</button>
+<nav id="console-nav" aria-label="Console sections">
+<a href="/console/"{{if eq .Nav "overview"}} class="active" aria-current="page"{{end}}>Overview</a>
+<a href="/console/machines"{{if eq .Nav "machines"}} class="active" aria-current="page"{{end}}>Machines</a>
+<a href="/console/exit-nodes"{{if eq .Nav "exit-nodes"}} class="active" aria-current="page"{{end}}>Exit nodes</a>
+<a href="/console/services"{{if eq .Nav "services"}} class="active" aria-current="page"{{end}}>Services</a>
+<a href="/console/relays"{{if eq .Nav "relays"}} class="active" aria-current="page"{{end}}>Relays</a>
+<a href="/console/serve"{{if eq .Nav "serve"}} class="active" aria-current="page"{{end}}>Serve</a>
+<a href="/console/devices"{{if eq .Nav "devices"}} class="active" aria-current="page"{{end}}>Devices</a>
+<a href="/console/users"{{if eq .Nav "users"}} class="active" aria-current="page"{{end}}>Users</a>
+<a href="/console/passkeys"{{if eq .Nav "passkeys"}} class="active" aria-current="page"{{end}}>Passkeys</a>
+<a href="/console/dns"{{if eq .Nav "dns"}} class="active" aria-current="page"{{end}}>DNS</a>
+<a href="/console/derp"{{if eq .Nav "derp"}} class="active" aria-current="page"{{end}}>DERP</a>
+<a href="/console/auth-keys"{{if eq .Nav "auth-keys"}} class="active" aria-current="page"{{end}}>Auth keys</a>
+<a href="/console/agents"{{if eq .Nav "agents"}} class="active" aria-current="page"{{end}}>Agents</a>
+<a href="/console/api-keys"{{if eq .Nav "api-keys"}} class="active" aria-current="page"{{end}}>API keys</a>
+<a href="/console/shares"{{if eq .Nav "shares"}} class="active" aria-current="page"{{end}}>Shares</a>
+<a href="/console/reach"{{if eq .Nav "reach"}} class="active" aria-current="page"{{end}}>Reach</a>
+<a href="/console/flux"{{if eq .Nav "flux"}} class="active" aria-current="page"{{end}}>Flux</a>
+<a href="/console/ssh-check"{{if eq .Nav "ssh-check"}} class="active" aria-current="page"{{end}}>SSH checks</a>
+<a href="/console/webhooks"{{if eq .Nav "webhooks"}} class="active" aria-current="page"{{end}}>Webhooks</a>
+<a href="/console/policy"{{if eq .Nav "policy"}} class="active" aria-current="page"{{end}}>Policy</a>
+<a href="/console/security"{{if eq .Nav "security"}} class="active" aria-current="page"{{end}}>Security</a>
+<a href="/console/audit"{{if eq .Nav "audit"}} class="active" aria-current="page"{{end}}>Audit</a>
 </nav>
-<div class="who">{{.User}} <span class="tag">{{.Role}}</span>
-<form method="post" action="/logout"><button type="submit">Sign out</button></form>
+<div class="who"><span class="who-name">{{.User}}</span> <span class="tag">{{.Role}}</span>
+<button class="theme-toggle" type="button" hidden aria-label="Switch color theme">◐</button>
+<form method="post" action="/logout"><button class="ghost" type="submit">Sign out</button></form>
 </div>
 </header>
-<main>
+<main id="main" tabindex="-1">
 {{if not .CanWrite}}<p class="notice">Your role is read-only; controls that change the tailnet are hidden.</p>{{end}}
-{{if .Notice}}<p class="notice">{{.Notice}}</p>{{end}}
+{{if .Notice}}<p class="notice" role="status">{{.Notice}}</p>{{end}}
 `
 
 const consoleFoot = `</main>
 <footer>Xunara {{.Version}}</footer>
+<script>` + consoleJS + `</script>
 </body></html>`
+
+// consoleJS is the console's progressive enhancement: the pages work without
+// JavaScript, and this adds a persisted dark-mode toggle, a collapsible mobile
+// nav, scrollable tables with a row filter, and a confirmation for destructive
+// submissions. It is inline like the passkey ceremony, so the console keeps
+// its no-external-assets rule, and it never receives server data.
+const consoleJS = `
+(function () {
+  var root = document.documentElement;
+  root.classList.add("js");
+
+  function preferredTheme() {
+    var stored = null;
+    try { stored = localStorage.getItem("xunara-theme"); } catch (err) { stored = null; }
+    if (stored === "dark" || stored === "light") return stored;
+    return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  var themeButton = document.querySelector(".theme-toggle");
+  if (themeButton) {
+    themeButton.hidden = false;
+    var label = function () {
+      var next = preferredTheme() === "dark" ? "light" : "dark";
+      themeButton.textContent = next === "dark" ? "\u263e" : "\u2600";
+      themeButton.setAttribute("aria-label", "Switch to " + next + " theme");
+      themeButton.title = themeButton.getAttribute("aria-label");
+    };
+    label();
+    themeButton.addEventListener("click", function () {
+      var next = preferredTheme() === "dark" ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("xunara-theme", next); } catch (err) {}
+      label();
+    });
+  }
+
+  var navToggle = document.querySelector(".nav-toggle");
+  var topbar = document.querySelector(".topbar");
+  if (navToggle && topbar) {
+    navToggle.hidden = false;
+    navToggle.addEventListener("click", function () {
+      var open = topbar.classList.toggle("nav-open");
+      navToggle.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll("main table"), function (table) {
+    if (table.parentElement && table.parentElement.className === "table-wrap") return;
+    var wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+    table.parentNode.insertBefore(wrap, table);
+    wrap.appendChild(table);
+    if (!table.tBodies.length || table.tBodies[0].rows.length < 6) return;
+    var box = document.createElement("input");
+    box.type = "search";
+    box.className = "table-filter";
+    box.placeholder = "Filter rows\u2026";
+    box.setAttribute("aria-label", "Filter table rows");
+    wrap.parentNode.insertBefore(box, wrap);
+    box.addEventListener("input", function () {
+      var needle = box.value.toLowerCase();
+      Array.prototype.forEach.call(table.tBodies, function (body) {
+        Array.prototype.forEach.call(body.rows, function (row) {
+          row.hidden = needle !== "" && row.textContent.toLowerCase().indexOf(needle) < 0;
+        });
+      });
+    });
+  });
+
+  document.addEventListener("submit", function (event) {
+    var form = event.target;
+    if (!form || form.dataset.confirm === "skip") return;
+    var danger = form.querySelector("button.danger");
+    if (!danger) return;
+    var verb = danger.textContent.trim() || "Confirm";
+    if (!window.confirm(verb + " \u2014 are you sure?")) event.preventDefault();
+  });
+})();
+`
 
 // consoleTitles label each section; the nav identifier doubles as the key so a
 // handler cannot forget to set a page title.
@@ -214,7 +387,7 @@ so it has no issuer URL to be a trust anchor for, and nodes receive 501 from
 	consoleMachinesTemplate = consolePage("machines", `
 <h2>Machines</h2>
 <table>
-<thead><tr><th>Machine</th><th>Status</th><th>Owner</th><th>Method</th><th>Addresses</th><th>Routes</th><th>Posture</th><th>Services</th><th>Actions</th></tr></thead>
+<thead><tr><th scope="col">Machine</th><th scope="col">Status</th><th scope="col">Owner</th><th scope="col">Method</th><th scope="col">Addresses</th><th scope="col">Routes</th><th scope="col">Posture</th><th scope="col">Services</th><th scope="col">Actions</th></tr></thead>
 <tbody>
 {{range .Machines}}
 <tr>
@@ -259,7 +432,7 @@ so it has no issuer URL to be a trust anchor for, and nodes receive 501 from
 device a human identity.</p>
 {{if .Devices}}
 <table>
-<thead><tr><th>Device</th><th>Operating system</th><th>Requested</th><th>Expires</th><th>Actions</th></tr></thead>
+<thead><tr><th scope="col">Device</th><th scope="col">Operating system</th><th scope="col">Requested</th><th scope="col">Expires</th><th scope="col">Actions</th></tr></thead>
 <tbody>
 {{range .Devices}}
 <tr>
@@ -291,7 +464,7 @@ device a human identity.</p>
 	consoleUsersTemplate = consolePage("users", `
 <h2>Users</h2>
 <table>
-<thead><tr><th>Login name</th><th>Display name</th><th>Role</th><th>Email</th><th>Created</th><th>Identities</th></tr></thead>
+<thead><tr><th scope="col">Login name</th><th scope="col">Display name</th><th scope="col">Role</th><th scope="col">Email</th><th scope="col">Created</th><th scope="col">Identities</th></tr></thead>
 <tbody>
 {{range .Users}}
 <tr>
@@ -335,7 +508,7 @@ device a human identity.</p>
 <p>Extra records served to clients alongside MagicDNS.</p>
 {{if .Records}}
 <table>
-<thead><tr><th>Name</th><th>Type</th><th>Value</th><th>Created</th><th></th></tr></thead>
+<thead><tr><th scope="col">Name</th><th scope="col">Type</th><th scope="col">Value</th><th scope="col">Created</th><th scope="col"></th></tr></thead>
 <tbody>
 {{range .Records}}
 <tr>
@@ -381,7 +554,7 @@ is shown once, at creation time, and never again.</p>
 {{end}}
 {{if .AuthKeys}}
 <table>
-<thead><tr><th>ID</th><th>Owner</th><th>Tags</th><th>Reusable</th><th>Ephemeral</th><th>Used</th><th>Expires</th><th>Created</th><th></th></tr></thead>
+<thead><tr><th scope="col">ID</th><th scope="col">Owner</th><th scope="col">Tags</th><th scope="col">Reusable</th><th scope="col">Ephemeral</th><th scope="col">Used</th><th scope="col">Expires</th><th scope="col">Created</th><th scope="col"></th></tr></thead>
 <tbody>
 {{range .AuthKeys}}
 <tr>
@@ -416,7 +589,7 @@ is shown once, at creation time, and never again.</p>
 immediately; the device keeps its node identity and can enroll again.</p>
 {{if .Tokens}}
 <table>
-<thead><tr><th>ID</th><th>Node</th><th>Hostname</th><th>Live</th><th>Created</th><th>Expires</th><th>Last used</th><th>Revoked</th><th></th></tr></thead>
+<thead><tr><th scope="col">ID</th><th scope="col">Node</th><th scope="col">Hostname</th><th scope="col">Live</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Last used</th><th scope="col">Revoked</th><th scope="col"></th></tr></thead>
 <tbody>
 {{range .Tokens}}
 <tr>
@@ -462,7 +635,7 @@ private key stays on your device; the server stores only its public key.</p>
 {{end}}
 {{if .Passkeys}}
 <table>
-<thead><tr><th>Name</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+<thead><tr><th scope="col">Name</th><th scope="col">Created</th><th scope="col">Last used</th><th scope="col"></th></tr></thead>
 <tbody>
 {{range .Passkeys}}
 <tr>
@@ -521,7 +694,7 @@ organizations still decide who may connect). A service whose
 nodes that may already connect to it.</p>
 {{if .Services}}
 <table>
-<thead><tr><th>Name</th><th>Protocol</th><th>Port</th><th>DNS name</th><th>Visibility</th><th>Shared</th><th>Health</th><th>Node</th><th>Updated</th><th>Metadata</th></tr></thead>
+<thead><tr><th scope="col">Name</th><th scope="col">Protocol</th><th scope="col">Port</th><th scope="col">DNS name</th><th scope="col">Visibility</th><th scope="col">Shared</th><th scope="col">Health</th><th scope="col">Node</th><th scope="col">Updated</th><th scope="col">Metadata</th></tr></thead>
 <tbody>
 {{range .Services}}
 <tr>
@@ -574,7 +747,7 @@ again:</p>
 {{end}}
 {{if .Keys}}
 <table>
-<thead><tr><th>Name</th><th>Owner</th><th>Scopes</th><th>Created</th><th>Expires</th><th>Last used</th><th>State</th>{{if .CanWrite}}<th></th>{{end}}</tr></thead>
+<thead><tr><th scope="col">Name</th><th scope="col">Owner</th><th scope="col">Scopes</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Last used</th><th scope="col">State</th>{{if .CanWrite}}<th scope="col"></th>{{end}}</tr></thead>
 <tbody>
 {{range .Keys}}
 <tr>
@@ -601,7 +774,7 @@ again:</p>
 sealed and is never shown again after creation.</p>
 {{if .Webhooks}}
 <table>
-<thead><tr><th>ID</th><th>URL</th><th>Events</th><th>State</th><th>Source</th><th>Created</th><th></th></tr></thead>
+<thead><tr><th scope="col">ID</th><th scope="col">URL</th><th scope="col">Events</th><th scope="col">State</th><th scope="col">Source</th><th scope="col">Created</th><th scope="col"></th></tr></thead>
 <tbody>
 {{range .Webhooks}}
 <tr>
@@ -664,7 +837,7 @@ An operator enables it with <code>-flux</code> (single organization) or
 </form>
 {{if .Transfers}}
 <table>
-<thead><tr><th>Created</th><th>State</th><th>File</th><th>Size</th><th>Sender</th><th>Recipient</th><th>Note</th></tr></thead>
+<thead><tr><th scope="col">Created</th><th scope="col">State</th><th scope="col">File</th><th scope="col">Size</th><th scope="col">Sender</th><th scope="col">Recipient</th><th scope="col">Note</th></tr></thead>
 <tbody>
 {{range .Transfers}}
 <tr>
@@ -734,7 +907,7 @@ operator enables it per organization (<code>reach_enabled</code>) and runs
 </form>
 {{if .Sessions}}
 <table>
-<thead><tr><th>Created</th><th>State</th><th>Sender</th><th>Target</th><th>Command</th><th>stdout / stderr</th><th>Exit</th></tr></thead>
+<thead><tr><th scope="col">Created</th><th scope="col">State</th><th scope="col">Sender</th><th scope="col">Target</th><th scope="col">Command</th><th scope="col">stdout / stderr</th><th scope="col">Exit</th></tr></thead>
 <tbody>
 {{range .Sessions}}
 <tr>
@@ -807,7 +980,7 @@ enforceable half, and it only covers the relay Xunara runs.</p>
 </dl>
 {{if .Status.Regions}}
 <table>
-<thead><tr><th>ID</th><th>Code</th><th>Name</th><th>Relays</th><th>Machines</th></tr></thead>
+<thead><tr><th scope="col">ID</th><th scope="col">Code</th><th scope="col">Name</th><th scope="col">Relays</th><th scope="col">Machines</th></tr></thead>
 <tbody>
 {{range .Status.Regions}}
 <tr>
@@ -830,7 +1003,7 @@ until one is.</p>
 <h3>Machine placement</h3>
 {{if .Nodes}}
 <table>
-<thead><tr><th>Machine</th><th>Status</th><th>Home region</th></tr></thead>
+<thead><tr><th scope="col">Machine</th><th scope="col">Status</th><th scope="col">Home region</th></tr></thead>
 <tbody>
 {{range .Nodes}}
 <tr>
@@ -869,7 +1042,7 @@ ignoring them can only tighten the policy, never widen it.</p>
 <h3>Traffic rules</h3>
 {{if .ACLs}}
 <table>
-<thead><tr><th>Action</th><th>Proto</th><th>Source</th><th>Destination</th></tr></thead>
+<thead><tr><th scope="col">Action</th><th scope="col">Proto</th><th scope="col">Source</th><th scope="col">Destination</th></tr></thead>
 <tbody>
 {{range .ACLs}}<tr>
 <td>{{.Action}}</td>
@@ -884,7 +1057,7 @@ ignoring them can only tighten the policy, never widen it.</p>
 <h3>Grants</h3>
 {{if .Grants}}
 <table>
-<thead><tr><th>Source</th><th>Destination</th><th>Protocols / ports</th><th>App capabilities</th></tr></thead>
+<thead><tr><th scope="col">Source</th><th scope="col">Destination</th><th scope="col">Protocols / ports</th><th scope="col">App capabilities</th></tr></thead>
 <tbody>
 {{range .Grants}}<tr>
 <td>{{join .Src}}</td>
@@ -899,7 +1072,7 @@ ignoring them can only tighten the policy, never widen it.</p>
 <h3>Groups</h3>
 {{if .Groups}}
 <table>
-<thead><tr><th>Group</th><th>Members</th></tr></thead>
+<thead><tr><th scope="col">Group</th><th scope="col">Members</th></tr></thead>
 <tbody>
 {{range $name, $members := .Groups}}<tr><td><code>{{$name}}</code></td><td>{{join $members}}</td></tr>{{end}}
 </tbody>
@@ -909,7 +1082,7 @@ ignoring them can only tighten the policy, never widen it.</p>
 <h3>Hosts</h3>
 {{if .Hosts}}
 <table>
-<thead><tr><th>Alias</th><th>Value</th></tr></thead>
+<thead><tr><th scope="col">Alias</th><th scope="col">Value</th></tr></thead>
 <tbody>
 {{range $alias, $value := .Hosts}}<tr><td><code>{{$alias}}</code></td><td><code>{{$value}}</code></td></tr>{{end}}
 </tbody>
@@ -919,7 +1092,7 @@ ignoring them can only tighten the policy, never widen it.</p>
 <h3>Tag owners</h3>
 {{if .TagOwners}}
 <table>
-<thead><tr><th>Tag</th><th>Owners</th></tr></thead>
+<thead><tr><th scope="col">Tag</th><th scope="col">Owners</th></tr></thead>
 <tbody>
 {{range $tag, $owners := .TagOwners}}<tr><td><code>{{$tag}}</code></td><td>{{join $owners}}</td></tr>{{end}}
 </tbody>
@@ -929,7 +1102,7 @@ ignoring them can only tighten the policy, never widen it.</p>
 <h3>SSH rules</h3>
 {{if .SSH}}
 <table>
-<thead><tr><th>Action</th><th>Source</th><th>Destination</th><th>Users</th><th>Environment</th><th>Check period</th></tr></thead>
+<thead><tr><th scope="col">Action</th><th scope="col">Source</th><th scope="col">Destination</th><th scope="col">Users</th><th scope="col">Environment</th><th scope="col">Check period</th></tr></thead>
 <tbody>
 {{range .SSH}}<tr>
 <td>{{.Action}}</td>
@@ -946,7 +1119,7 @@ ignoring them can only tighten the policy, never widen it.</p>
 <h3>Node attributes</h3>
 {{if .NodeAttrs}}
 <table>
-<thead><tr><th>Target</th><th>Attributes</th></tr></thead>
+<thead><tr><th scope="col">Target</th><th scope="col">Attributes</th></tr></thead>
 <tbody>
 {{range .NodeAttrs}}<tr><td>{{join .Target}}</td><td>{{join .Attr}}</td></tr>{{end}}
 </tbody>
@@ -956,7 +1129,7 @@ ignoring them can only tighten the policy, never widen it.</p>
 <h3>Policy tests</h3>
 {{if .Tests.Results}}
 <table>
-<thead><tr><th>#</th><th>Source</th><th>Proto</th><th>Result</th></tr></thead>
+<thead><tr><th scope="col">#</th><th scope="col">Source</th><th scope="col">Proto</th><th scope="col">Result</th></tr></thead>
 <tbody>
 {{range .Tests.Results}}<tr>
 <td>{{.Index}}</td>
@@ -987,7 +1160,7 @@ page is read-only. A verdict is handed to exactly one follow-up request, so
 </form>
 {{if .Sessions}}
 <table>
-<thead><tr><th>Check</th><th>State</th><th>Source</th><th>Destination</th><th>Local user</th><th>Created</th><th>Expires</th><th>Verdict</th></tr></thead>
+<thead><tr><th scope="col">Check</th><th scope="col">State</th><th scope="col">Source</th><th scope="col">Destination</th><th scope="col">Local user</th><th scope="col">Created</th><th scope="col">Expires</th><th scope="col">Verdict</th></tr></thead>
 <tbody>
 {{range .Sessions}}
 <tr>
@@ -1015,7 +1188,7 @@ state or use the API to page through the rest.</p>{{end}}
 <p>The most recent events first, at most 200.</p>
 {{if .Events}}
 <table>
-<thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead>
+<thead><tr><th scope="col">Time</th><th scope="col">Actor</th><th scope="col">Action</th><th scope="col">Target</th><th scope="col">Detail</th></tr></thead>
 <tbody>
 {{range .Events}}
 <tr>

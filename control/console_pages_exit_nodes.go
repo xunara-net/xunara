@@ -14,7 +14,7 @@ halves. Approval and withdrawal live on the Machines page.</p>
 <h3>Approved exit nodes</h3>
 {{if .View.ExitNodes}}
 <table>
-<thead><tr><th>Node</th><th>Owner</th><th>Status</th><th>Addresses</th><th>DERP home</th><th>Clients</th></tr></thead>
+<thead><tr><th scope="col">Node</th><th scope="col">Owner</th><th scope="col">Status</th><th scope="col">Addresses</th><th scope="col">DERP home</th><th scope="col">Clients</th></tr></thead>
 <tbody>
 {{range .View.ExitNodes}}
 <tr>
@@ -42,7 +42,7 @@ names an approved exit node stays listed as unresolved: approving or restoring
 the node makes it effective again.</p>
 {{if .View.Clients}}
 <table>
-<thead><tr><th>Node</th><th>Owner</th><th>Status</th><th>Selected exit node</th><th>State</th></tr></thead>
+<thead><tr><th scope="col">Node</th><th scope="col">Owner</th><th scope="col">Status</th><th scope="col">Selected exit node</th><th scope="col">State</th></tr></thead>
 <tbody>
 {{range .View.Clients}}
 <tr>

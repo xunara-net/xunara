@@ -36,7 +36,7 @@ its <code>sub</code>); email addresses are attributes, never identity keys.</p>
 <h3>Outgoing</h3>
 {{if .Outgoing}}
 <table>
-<thead><tr><th>Machine</th><th>Target</th><th>Identity</th><th>Status</th><th>Created</th><th>Accepted</th>{{if .CanWrite}}<th></th>{{end}}</tr></thead>
+<thead><tr><th scope="col">Machine</th><th scope="col">Target</th><th scope="col">Identity</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Accepted</th>{{if .CanWrite}}<th scope="col"></th>{{end}}</tr></thead>
 <tbody>
 {{range .Outgoing}}
 <tr>
@@ -58,7 +58,7 @@ its <code>sub</code>); email addresses are attributes, never identity keys.</p>
 <h3>Incoming</h3>
 {{if .Incoming}}
 <table>
-<thead><tr><th>Machine</th><th>Source</th><th>Identity</th><th>Status</th><th>Created</th><th>Accepted</th><th></th></tr></thead>
+<thead><tr><th scope="col">Machine</th><th scope="col">Source</th><th scope="col">Identity</th><th scope="col">Status</th><th scope="col">Created</th><th scope="col">Accepted</th><th scope="col"></th></tr></thead>
 <tbody>
 {{range .Incoming}}
 <tr>
