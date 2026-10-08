@@ -72,7 +72,7 @@ func main() {
 		platformStateDir = flag.String("platform-state-dir", "",
 			"directory holding the platform registry and platform-managed organizations; empty disables runtime organization CRUD")
 		plansFile = flag.String("plans", "",
-			"JSON file with the plans this deployment sells (default: the built-in free/pro/business catalog); enables plan quotas")
+			"JSON file with the plans this deployment sells, or 'builtin' for the shipped free/pro/business catalog; empty disables plan quotas")
 		networkPool = flag.String("network-pool", "100.100.0.0/16",
 			"range tenant tailnet blocks are allocated from, carved into /24s; 'none' disables automatic allocation")
 		webhookURL = flag.String("webhook-url", "",
@@ -354,7 +354,7 @@ func planSourceFor(registry *control.PlanRegistry) func(tenantID string) plan.Pl
 // does not sell plans, which is the self-hosted default.
 func loadPlanRegistry(ctx context.Context, dbPath, plansFile, networkPool string) (*control.PlanRegistry, error) {
 	catalog := plan.DefaultCatalog()
-	if plansFile != "" {
+	if plansFile != "" && !strings.EqualFold(strings.TrimSpace(plansFile), "builtin") {
 		raw, err := os.ReadFile(plansFile)
 		if err != nil {
 			return nil, err
