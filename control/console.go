@@ -84,6 +84,7 @@ func (s *Server) consoleRouter() http.Handler {
 	r.Get("/flux/{id}", s.handleConsoleFluxTransfer)
 	r.Get("/webhooks", s.handleConsoleWebhooks)
 	r.Get("/policy", s.handleConsolePolicy)
+	r.Get("/ssh-check", s.handleConsoleSSHCheck)
 	r.Get("/audit", s.handleConsoleAudit)
 	r.Get("/passkeys", s.handleConsolePasskeys)
 
@@ -1153,6 +1154,38 @@ func (s *Server) handleConsolePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	data["View"] = s.policyView()
 	s.renderConsole(w, consolePolicyTemplate, data)
+}
+
+// consoleSSHCheckLimit bounds the console's SSH check table.
+const consoleSSHCheckLimit = 200
+
+// handleConsoleSSHCheck implements GET /console/ssh-check: the read-only SSH
+// check session list (spec section 35.2).
+func (s *Server) handleConsoleSSHCheck(w http.ResponseWriter, r *http.Request) {
+	_, data, ok := s.consoleSession(w, r, "ssh-check")
+	if !ok {
+		return
+	}
+
+	// The filter is fail-closed for the same reason the API's is: a filter
+	// that silently widens its result is a security bug.
+	stateFilter := r.URL.Query().Get("state")
+	if stateFilter != "" && !sshCheckStateValid(stateFilter) {
+		s.renderError(w, http.StatusBadRequest, "Unknown state",
+			"That is not an SSH check state.")
+		return
+	}
+	sessions, next, err := s.sshCheckPage(stateFilter, 0, consoleSSHCheckLimit, time.Time{}, "")
+	if err != nil {
+		s.renderError(w, http.StatusInternalServerError, "SSH checks unavailable",
+			"The identity store could not be read. Please try again.")
+		return
+	}
+	data["Sessions"] = sessions
+	data["StateFilter"] = stateFilter
+	data["States"] = sshCheckStates
+	data["More"] = next != ""
+	s.renderConsole(w, consoleSSHCheckTemplate, data)
 }
 
 // handleConsoleAudit implements GET /console/audit.

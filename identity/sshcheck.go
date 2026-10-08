@@ -105,6 +105,12 @@ type SSHCheckStore interface {
 	// GetSSHCheckSession returns a session by ID.
 	GetSSHCheckSession(id string) (SSHCheckSession, bool)
 
+	// ListSSHCheckSessions returns up to limit sessions, newest first
+	// (createdAt descending, ID ascending). limit <= 0 returns no rows: the
+	// management surface always asks for a bounded page, and the janitor's
+	// TTL keeps the table small.
+	ListSSHCheckSessions(limit int) ([]SSHCheckSession, error)
+
 	// GetPendingSSHCheckSession returns the newest pending, unexpired session
 	// bound to the exact (source, destination, local user) triple. Repeated
 	// hold requests for one connection reuse a single approval instead of

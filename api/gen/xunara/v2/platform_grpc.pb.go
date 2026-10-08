@@ -51,6 +51,7 @@ const (
 	PlatformService_GetIDTokenIssuer_FullMethodName        = "/xunara.v2.PlatformService/GetIDTokenIssuer"
 	PlatformService_GetDERPStatus_FullMethodName           = "/xunara.v2.PlatformService/GetDERPStatus"
 	PlatformService_GetPolicyStatus_FullMethodName         = "/xunara.v2.PlatformService/GetPolicyStatus"
+	PlatformService_ListSSHCheckSessions_FullMethodName    = "/xunara.v2.PlatformService/ListSSHCheckSessions"
 	PlatformService_GetMachineDeviceAttrs_FullMethodName   = "/xunara.v2.PlatformService/GetMachineDeviceAttrs"
 	PlatformService_ListMachines_FullMethodName            = "/xunara.v2.PlatformService/ListMachines"
 	PlatformService_ListServices_FullMethodName            = "/xunara.v2.PlatformService/ListServices"
@@ -100,6 +101,11 @@ type PlatformServiceClient interface {
 	// and reloaded by the watcher: this surface is read-only, and a document
 	// whose tests fail is data, not an RPC error.
 	GetPolicyStatus(ctx context.Context, in *GetPolicyStatusRequest, opts ...grpc.CallOption) (*PolicyStatus, error)
+	// ListSSHCheckSessions returns the Tailscale SSH "check" authorizations of
+	// this organization (GET /api/v2/ssh-check/sessions), newest first and
+	// resumable with page_token. Read-only: verdicts are only made on the
+	// browser approval page, and state is derived from the durable record.
+	ListSSHCheckSessions(ctx context.Context, in *ListSSHCheckSessionsRequest, opts ...grpc.CallOption) (*ListSSHCheckSessionsResponse, error)
 	// GetMachineDeviceAttrs returns the device posture attributes a machine
 	// reported about itself (PATCH /machine/set-device-attr). Values are the
 	// JSON scalars the node sent. Another organization's machine is NOT_FOUND.
@@ -201,6 +207,16 @@ func (c *platformServiceClient) GetPolicyStatus(ctx context.Context, in *GetPoli
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PolicyStatus)
 	err := c.cc.Invoke(ctx, PlatformService_GetPolicyStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) ListSSHCheckSessions(ctx context.Context, in *ListSSHCheckSessionsRequest, opts ...grpc.CallOption) (*ListSSHCheckSessionsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSSHCheckSessionsResponse)
+	err := c.cc.Invoke(ctx, PlatformService_ListSSHCheckSessions_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -344,6 +360,11 @@ type PlatformServiceServer interface {
 	// and reloaded by the watcher: this surface is read-only, and a document
 	// whose tests fail is data, not an RPC error.
 	GetPolicyStatus(context.Context, *GetPolicyStatusRequest) (*PolicyStatus, error)
+	// ListSSHCheckSessions returns the Tailscale SSH "check" authorizations of
+	// this organization (GET /api/v2/ssh-check/sessions), newest first and
+	// resumable with page_token. Read-only: verdicts are only made on the
+	// browser approval page, and state is derived from the durable record.
+	ListSSHCheckSessions(context.Context, *ListSSHCheckSessionsRequest) (*ListSSHCheckSessionsResponse, error)
 	// GetMachineDeviceAttrs returns the device posture attributes a machine
 	// reported about itself (PATCH /machine/set-device-attr). Values are the
 	// JSON scalars the node sent. Another organization's machine is NOT_FOUND.
@@ -408,6 +429,9 @@ func (UnimplementedPlatformServiceServer) GetDERPStatus(context.Context, *GetDER
 }
 func (UnimplementedPlatformServiceServer) GetPolicyStatus(context.Context, *GetPolicyStatusRequest) (*PolicyStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetPolicyStatus not implemented")
+}
+func (UnimplementedPlatformServiceServer) ListSSHCheckSessions(context.Context, *ListSSHCheckSessionsRequest) (*ListSSHCheckSessionsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListSSHCheckSessions not implemented")
 }
 func (UnimplementedPlatformServiceServer) GetMachineDeviceAttrs(context.Context, *GetMachineDeviceAttrsRequest) (*MachineDeviceAttrs, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetMachineDeviceAttrs not implemented")
@@ -564,6 +588,24 @@ func _PlatformService_GetPolicyStatus_Handler(srv interface{}, ctx context.Conte
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).GetPolicyStatus(ctx, req.(*GetPolicyStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_ListSSHCheckSessions_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListSSHCheckSessionsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).ListSSHCheckSessions(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_ListSSHCheckSessions_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).ListSSHCheckSessions(ctx, req.(*ListSSHCheckSessionsRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -778,6 +820,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetPolicyStatus",
 			Handler:    _PlatformService_GetPolicyStatus_Handler,
+		},
+		{
+			MethodName: "ListSSHCheckSessions",
+			Handler:    _PlatformService_ListSSHCheckSessions_Handler,
 		},
 		{
 			MethodName: "GetMachineDeviceAttrs",

@@ -1571,3 +1571,64 @@ GET /api/v2/policy
 SSH、nodeAttrs 的表；自测结果（每条 `index/src/proto` 的通过/失败与失败
 原因）；`warnings`、`unsupported` 与磁盘解析失败（`loadError`）显式标注。
 只读，页面不提供任何按钮；未配置策略时说明"默认放行"。
+
+## 35. SSH 审批管理面（只读，v1）
+
+目标：管理员能回答"谁正在尝试 SSH 到哪台机器、本地的哪个账号、上一次检查
+结果如何"，不必等用户把 HoldAndDelegate 链接贴过来。审批本身仍只在既有的
+`/ssh/check/{authID}` 页面上进行（console session + write 角色 + CSRF），
+管理面没有任何写入口。
+
+### 35.1 HTTP（`/api/v2`，read scope）
+
+```text
+GET /api/v2/ssh-check/sessions?state=&node=&limit=&cursor=  # 最新在前，游标分页
+```
+
+```json
+{
+  "items": [
+    {
+      "id": "…",
+      "state": "pending",
+      "verdict": "pending",
+      "src": {"nodeId": 1, "stableId": "n…", "hostname": "laptop"},
+      "dst": {"nodeId": 2, "stableId": "n…", "hostname": "server"},
+      "localUser": "root",
+      "createdAt": "…",
+      "expiresAt": "…"
+    }
+  ],
+  "nextCursor": ""
+}
+```
+
+- 记录与审批流是同一份（identity 的持久化 session），管理面没有第二份副本：
+  janitor 按 TTL 删除后，这里同样看不到。列表条目就是详情——记录很小，
+  v1 没有单独的详情端点。
+- `state` 是派生的、互斥的生命周期状态（按优先级）：
+  `expired`（pending 且已过 TTL、janitor 还没删）→ `pending`（仍可决定）→
+  `consumed`（判定已被一次后续请求取走）→ `accepted` / `rejected`（已决定
+  但尚未被消费）。`verdict` 保留原始判定 `pending|accept|reject`，因为
+  `consumed` 会掩盖判定的方向。
+- 过滤 fail-closed：未知 `state=` 400（不是忽略）；`node=` 接受节点 id 或
+  stable ID，匹配**任一端**，未知节点返回空集。游标不透明、带 kind 校验，
+  按 `(createdAt, id)` 最新在前；扫描上限 1 万条（TTL 15 分钟内的自然边界，
+  上限只为坏掉的 janitor 兜底）。
+- 节点删除后条目保留（session 不在节点级联里）：只显示 `nodeId`，stable ID
+  与 hostname 为空。`decidedBy`（决定人：console 用户
+  `{"userId": 1, "loginName": "…"}`）与 `decidedAt` 只在已决定时出现；
+  `consumedAt` 只在已消费时出现。
+- 认证/角色与其它 v2 read 端点一致；响应 `Cache-Control: no-store`。
+- gRPC 对应 `PlatformService.ListSSHCheckSessions`（语义、认证、游标与错误
+  映射与 HTTP 一致：未认证 `UNAUTHENTICATED`，缺 scope
+  `PERMISSION_DENIED`，坏 state/游标 `INVALID_ARGUMENT`）。
+- 不做（v1）：管理面 approve/deny、删除/清理记录（janitor 按 TTL 负责）、
+  按 local user/时间窗过滤、实时推送（长轮询仍在 `/machine/ssh/action`）。
+
+### 35.2 Console
+
+`/console/ssh-check`：最新在前的会话表（ID、状态、两端、local user、创建/
+过期时间、判定与决定人），state 过滤（未知值 400，与 API 一致），pending 行
+显式标注；最多 200 条。页面本身只读、不含任何写表单：ID 链接到既有审批页
+`/ssh/check/{authID}`，该页自行要求 console session、write 角色与 CSRF。

@@ -569,6 +569,41 @@ func TestConsolePolicyWardenSections(t *testing.T) {
 	}
 }
 
+// TestConsoleSSHCheckPage covers the read-only SSH check page: the lifecycle
+// states, the fail-closed filter, and the absence of decision controls (the
+// ID links to the existing approval page, which guards itself).
+func TestConsoleSSHCheckPage(t *testing.T) {
+	_, hs, _, _ := sshCheckTestServer(t)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/ssh-check")
+
+	page := bodyString(t, getRequest(t, client, hs.URL+"/console/ssh-check", cookie))
+	for _, want := range []string{
+		"SSH checks", "pending", "consumed", "accepted", "expired",
+		"ssh-src", "ssh-dst", "root", "deploy",
+		`href="/ssh/check/check-pending"`,
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("ssh check page lacks %q:\n%s", want, page)
+		}
+	}
+	if strings.Contains(page, `action="/ssh/check`) {
+		t.Errorf("the ssh check page embeds a decision form:\n%s", page)
+	}
+
+	filtered := bodyString(t, getRequest(t, client, hs.URL+"/console/ssh-check?state=pending", cookie))
+	if !strings.Contains(filtered, "check-pending") {
+		t.Errorf("filtered page lacks the pending check:\n%s", filtered)
+	}
+	if strings.Contains(filtered, "check-accepted") {
+		t.Errorf("state=pending still shows a decided check:\n%s", filtered)
+	}
+
+	if resp := getRequest(t, client, hs.URL+"/console/ssh-check?state=nope", cookie); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("unknown state status = %d, want 400", resp.StatusCode)
+	}
+}
+
 // TestConsoleAuditNewestFirst checks the audit page shows recent events first.
 func TestConsoleAuditNewestFirst(t *testing.T) {
 	s := newTestServer(t)

@@ -800,6 +800,68 @@ func grpcReachSession(view reachAdminSession) *xunarav2.ReachSession {
 	return out
 }
 
+// ListSSHCheckSessions implements PlatformService.ListSSHCheckSessions: the
+// same read-only listing as GET /api/v2/ssh-check/sessions (spec section
+// 35.1), with the same derived states, filters and cursor. Verdicts are only
+// made on the browser approval page; there is no decide RPC.
+func (g *grpcPlatformServer) ListSSHCheckSessions(ctx context.Context, req *xunarav2.ListSSHCheckSessionsRequest) (*xunarav2.ListSSHCheckSessionsResponse, error) {
+	s, _, err := g.authorize(ctx, identity.ScopeRead)
+	if err != nil {
+		return nil, err
+	}
+
+	limit := grpcPageSize(req.GetPageSize(), 100)
+	afterCreated, afterID, ok := grpcCursorTime(req.GetPageToken(), "sshcheck")
+	if !ok {
+		return nil, status.Error(codes.InvalidArgument, "invalid page token")
+	}
+	stateFilter := strings.TrimSpace(req.GetState())
+	if stateFilter != "" && !sshCheckStateValid(stateFilter) {
+		return nil, status.Error(codes.InvalidArgument, "invalid state filter")
+	}
+	nodeFilter := s.sshCheckNodeFilter(strings.TrimSpace(req.GetNode()))
+
+	items, next, err := s.sshCheckPage(stateFilter, nodeFilter, limit, afterCreated, afterID)
+	if err != nil {
+		return nil, status.Error(codes.Internal, "could not list ssh checks")
+	}
+	out := &xunarav2.ListSSHCheckSessionsResponse{
+		Sessions:      make([]*xunarav2.SSHCheckSession, 0, len(items)),
+		NextPageToken: next,
+	}
+	for _, view := range items {
+		out.Sessions = append(out.Sessions, grpcSSHCheckSession(view))
+	}
+	return out, nil
+}
+
+// grpcSSHCheckSession converts one management view.
+func grpcSSHCheckSession(view sshCheckAdminSession) *xunarav2.SSHCheckSession {
+	out := &xunarav2.SSHCheckSession{
+		Id:        view.ID,
+		State:     view.State,
+		Verdict:   view.Verdict,
+		Src:       &xunarav2.SSHCheckPeer{NodeId: view.Src.NodeID, StableId: view.Src.StableID, Hostname: view.Src.Hostname},
+		Dst:       &xunarav2.SSHCheckPeer{NodeId: view.Dst.NodeID, StableId: view.Dst.StableID, Hostname: view.Dst.Hostname},
+		LocalUser: view.LocalUser,
+		CreatedAt: timestamppb.New(view.CreatedAt),
+		ExpiresAt: timestamppb.New(view.ExpiresAt),
+	}
+	if view.DecidedAt != nil {
+		out.DecidedAt = timestamppb.New(*view.DecidedAt)
+	}
+	if view.DecidedBy != nil {
+		out.DecidedBy = &xunarav2.SSHCheckDecider{
+			UserId:    view.DecidedBy.UserID,
+			LoginName: view.DecidedBy.LoginName,
+		}
+	}
+	if view.ConsumedAt != nil {
+		out.ConsumedAt = timestamppb.New(*view.ConsumedAt)
+	}
+	return out
+}
+
 // grpcCursorTime decodes a newest-first list page token; an empty token
 // starts at the top of the list.
 func grpcCursorTime(raw, want string) (time.Time, string, bool) {

@@ -1538,6 +1538,39 @@ nil，端点 404），补上单组织 flag 与多组织组织表接线；规格�
 
 ---
 
+## M29 — SSH 审批管理面（只读，v1，已完成）
+
+目标：管理员能回答"谁正在尝试 SSH 到哪台机器、本地哪个账号、上次检查结果
+如何"，不必等用户把 HoldAndDelegate 链接贴出来。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §35（spec §20 P2
+"SSH Console"）。审批本身仍在 `/ssh/check/{authID}`（console session +
+write 角色 + CSRF），管理面没有任何写入口。
+
+- identity：`SSHCheckStore.ListSSHCheckSessions(limit)`（created_at DESC,
+  id ASC 的最新在前分页来源；limit<=0 返回空），SQLite 实现复用同一份列
+  定义与行扫描函数，管理面看的仍是审批流唯一那份记录。
+- HTTP `GET /api/v2/ssh-check/sessions`（read scope、no-store）：派生状态
+  `pending|expired|consumed|accepted|rejected`（互斥，TTL 优先于 verdict），
+  同时保留原始 `verdict`（`consumed` 会掩盖判定方向）；列表条目就是详情
+  （记录很小，v1 无详情端点）；节点删除后条目保留并只显示 `nodeId`。
+  过滤 fail-closed：未知 `state=` 400；`node=` 接受节点 id/stable ID、匹配
+  任一端，未知（包括 `0`）返回空集；`(createdAt,id)` 不透明游标，扫描上限
+  1 万条（TTL 15 分钟内的自然边界，仅为坏 janitor 兜底）。
+- gRPC `PlatformService.ListSSHCheckSessions`（proto 重新生成）：语义、认证、
+  游标与错误映射与 HTTP 一致（坏 state/游标 `INVALID_ARGUMENT`；没有决定
+  RPC）。
+- Console `/console/ssh-check`（nav "SSH checks"）：状态过滤（未知值 400，
+  与 API 一致）、最新 200 条、pending 高亮、判定与决定人；ID 链接到既有
+  审批页，页面自身没有任何写表单。
+- 测试：`identity/sshcheck_test.go`（最新在前、上限、已决定仍在列表）；
+  `control/api_v2_sshcheck_test.go`（状态派生与顺序、两端详情、401/403、
+  过滤 fail-closed 含 `node=0`、游标分页、gRPC 认证/镜像/错误映射）；
+  `control/console_test.go`（渲染、状态过滤、无决定表单、未知 state 400）。
+- 明确不做（v1）：管理面 approve/deny、删除/清理记录（janitor 按 TTL 负责）、
+  按 local user/时间窗过滤、实时推送（长轮询仍在 `/machine/ssh/action`）。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。

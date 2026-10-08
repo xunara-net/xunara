@@ -72,6 +72,12 @@ service PlatformService {
   // whose tests fail is data, not an RPC error.
   rpc GetPolicyStatus(GetPolicyStatusRequest) returns (PolicyStatus);
 
+  // ListSSHCheckSessions returns the Tailscale SSH "check" authorizations of
+  // this organization (GET /api/v2/ssh-check/sessions), newest first and
+  // resumable with page_token. Read-only: verdicts are only made on the
+  // browser approval page, and state is derived from the durable record.
+  rpc ListSSHCheckSessions(ListSSHCheckSessionsRequest) returns (ListSSHCheckSessionsResponse);
+
   // GetMachineDeviceAttrs returns the device posture attributes a machine
   // reported about itself (PATCH /machine/set-device-attr). Values are the
   // JSON scalars the node sent. Another organization's machine is NOT_FOUND.
@@ -451,6 +457,53 @@ message ListFluxTransfersRequest {
 
 message ListFluxTransfersResponse {
   repeated FluxTransfer transfers = 1;
+  string next_page_token = 2;
+}
+
+message SSHCheckPeer {
+  int64 node_id = 1;
+  // stable_id and hostname are absent when the node row is gone; the ID is
+  // still the ID the session is bound to.
+  string stable_id = 2;
+  string hostname = 3;
+}
+
+message SSHCheckDecider {
+  uint64 user_id = 1;
+  string login_name = 2;
+}
+
+message SSHCheckSession {
+  string id = 1;
+  // state is the derived lifecycle state: pending, expired, consumed,
+  // accepted or rejected.
+  string state = 2;
+  // verdict is the raw decision: pending, accept or reject. It stays
+  // distinguishable from state because "consumed" hides the direction.
+  string verdict = 3;
+  SSHCheckPeer src = 4;
+  SSHCheckPeer dst = 5;
+  string local_user = 6;
+  google.protobuf.Timestamp created_at = 7;
+  google.protobuf.Timestamp expires_at = 8;
+  // decided_at/decided_by and consumed_at are absent until the session is
+  // decided and consumed respectively.
+  google.protobuf.Timestamp decided_at = 9;
+  SSHCheckDecider decided_by = 10;
+  google.protobuf.Timestamp consumed_at = 11;
+}
+
+message ListSSHCheckSessionsRequest {
+  uint32 page_size = 1;
+  string page_token = 2;
+  // state filters by derived lifecycle state; an unknown value is invalid.
+  string state = 3;
+  // node filters by either end: a node ID or a stable ID.
+  string node = 4;
+}
+
+message ListSSHCheckSessionsResponse {
+  repeated SSHCheckSession sessions = 1;
   string next_page_token = 2;
 }
 

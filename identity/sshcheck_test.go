@@ -150,3 +150,43 @@ func TestSSHCheckAuthMemory(t *testing.T) {
 		t.Error("SSHCheckAuth returned an approval after ClearSSHCheckAuth")
 	}
 }
+
+// TestListSSHCheckSessions covers the management listing: newest first, a
+// stable tiebreak, and a bounded page.
+func TestListSSHCheckSessions(t *testing.T) {
+	s := openTestStore(t)
+
+	first, err := s.CreateSSHCheckSession(NewSSHCheckOptions{ID: "a", SrcNodeID: 1, DstNodeID: 2})
+	if err != nil {
+		t.Fatalf("CreateSSHCheckSession: %v", err)
+	}
+	// Distinct creation times make "newest first" unambiguous.
+	time.Sleep(time.Millisecond)
+	if _, err := s.CreateSSHCheckSession(NewSSHCheckOptions{ID: "c", SrcNodeID: 3, DstNodeID: 4}); err != nil {
+		t.Fatalf("CreateSSHCheckSession: %v", err)
+	}
+	// A decided session stays in the listing: it is history until reaped.
+	if _, err := s.DecideSSHCheckSession(first.ID, SSHCheckAccepted, 1, time.Now().UTC()); err != nil {
+		t.Fatalf("DecideSSHCheckSession: %v", err)
+	}
+
+	all, err := s.ListSSHCheckSessions(100)
+	if err != nil {
+		t.Fatalf("ListSSHCheckSessions: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("ListSSHCheckSessions = %d sessions, want 2", len(all))
+	}
+	if all[0].ID != "c" || all[1].ID != "a" {
+		t.Errorf("session order = %s, %s; want newest (c) first", all[0].ID, all[1].ID)
+	}
+	if all[1].Verdict != SSHCheckAccepted {
+		t.Errorf("decided session verdict = %q, want accept", all[1].Verdict)
+	}
+	if got, err := s.ListSSHCheckSessions(1); err != nil || len(got) != 1 {
+		t.Errorf("ListSSHCheckSessions(1) = %d rows, %v; want 1 row", len(got), err)
+	}
+	if got, err := s.ListSSHCheckSessions(0); err != nil || len(got) != 0 {
+		t.Errorf("ListSSHCheckSessions(0) = %d rows, %v; want no rows", len(got), err)
+	}
+}

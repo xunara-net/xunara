@@ -64,6 +64,33 @@ func (s *SQLiteStore) GetSSHCheckSession(id string) (SSHCheckSession, bool) {
 	return sess, true
 }
 
+// ListSSHCheckSessions implements [SSHCheckStore].
+func (s *SQLiteStore) ListSSHCheckSessions(limit int) ([]SSHCheckSession, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(context.Background(),
+		"SELECT "+sshCheckColumns+` FROM ssh_check_sessions
+		 ORDER BY created_at DESC, id ASC LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("identity: listing ssh check sessions: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]SSHCheckSession, 0, min(limit, 64))
+	for rows.Next() {
+		sess, err := scanSSHCheckSession(rows)
+		if err != nil {
+			return nil, fmt.Errorf("identity: scanning ssh check session: %w", err)
+		}
+		out = append(out, sess)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("identity: listing ssh check sessions: %w", err)
+	}
+	return out, nil
+}
+
 // GetPendingSSHCheckSession implements [SSHCheckStore].
 func (s *SQLiteStore) GetPendingSSHCheckSession(srcNodeID, dstNodeID int64, localUser string, now time.Time) (SSHCheckSession, bool) {
 	row := s.db.QueryRowContext(context.Background(),

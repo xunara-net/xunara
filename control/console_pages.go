@@ -82,6 +82,7 @@ footer { text-align: center; color: #5b616e; font-size: .8rem; }
 <a href="/console/agents"{{if eq .Nav "agents"}} class="active"{{end}}>Agents</a>
 <a href="/console/reach"{{if eq .Nav "reach"}} class="active"{{end}}>Reach</a>
 <a href="/console/flux"{{if eq .Nav "flux"}} class="active"{{end}}>Flux</a>
+<a href="/console/ssh-check"{{if eq .Nav "ssh-check"}} class="active"{{end}}>SSH checks</a>
 <a href="/console/webhooks"{{if eq .Nav "webhooks"}} class="active"{{end}}>Webhooks</a>
 <a href="/console/policy"{{if eq .Nav "policy"}} class="active"{{end}}>Policy</a>
 <a href="/console/audit"{{if eq .Nav "audit"}} class="active"{{end}}>Audit</a>
@@ -114,6 +115,7 @@ var consoleTitles = map[string]string{
 	"agents":    "Agents",
 	"reach":     "Reach",
 	"flux":      "Flux",
+	"ssh-check": "SSH checks",
 	"webhooks":  "Webhooks",
 	"policy":    "Policy",
 	"audit":     "Audit",
@@ -895,6 +897,45 @@ ignoring them can only tighten the policy, never widen it.</p>
 </table>
 {{else}}<p>Not run ({{.Tests.Total}} in the document){{if .Tests.Reason}}: {{.Tests.Reason}}{{end}}.</p>{{end}}
 {{end}}
+{{end}}
+`)
+
+	consoleSSHCheckTemplate = consolePage("ssh-check", `
+<h2>SSH checks</h2>
+<p>Tailscale SSH "check" mode: connections held until a human decides. This
+page is read-only. A verdict is handed to exactly one follow-up request, so
+"consumed" means the connection that asked for it already took the verdict;
+"expired" is a pending check whose TTL passed before the janitor removed it.</p>
+<form method="get" action="/console/ssh-check">
+<div class="field"><label for="ssh-check-state">State</label>
+<select id="ssh-check-state" name="state">
+<option value="">all</option>
+{{range .States}}<option value="{{.}}"{{if eq . $.StateFilter}} selected{{end}}>{{.}}</option>{{end}}
+</select>
+<button type="submit">Filter</button></div>
+</form>
+{{if .Sessions}}
+<table>
+<thead><tr><th>Check</th><th>State</th><th>Source</th><th>Destination</th><th>Local user</th><th>Created</th><th>Expires</th><th>Verdict</th></tr></thead>
+<tbody>
+{{range .Sessions}}
+<tr>
+<td><a href="/ssh/check/{{.ID}}"><code>{{.ID}}</code></a></td>
+<td>{{if eq .State "pending"}}<span class="ok">pending</span>{{else}}{{.State}}{{end}}</td>
+<td>{{if .Src.Hostname}}{{.Src.Hostname}}<br>{{end}}<code>node {{.Src.NodeID}}</code>{{if .Src.StableID}} <code>{{.Src.StableID}}</code>{{end}}</td>
+<td>{{if .Dst.Hostname}}{{.Dst.Hostname}}<br>{{end}}<code>node {{.Dst.NodeID}}</code>{{if .Dst.StableID}} <code>{{.Dst.StableID}}</code>{{end}}</td>
+<td>{{if .LocalUser}}<code>{{.LocalUser}}</code>{{else}}—{{end}}</td>
+<td>{{fmtTime .CreatedAt}}</td>
+<td>{{fmtTime .ExpiresAt}}</td>
+<td>{{.Verdict}}{{if .DecidedBy}} by {{.DecidedBy.LoginName}}{{end}}{{if .ConsumedAt}}<br>consumed {{fmtTime .ConsumedAt}}{{end}}</td>
+</tr>
+{{end}}
+</tbody>
+</table>
+{{if .More}}<p>Only the newest {{len .Sessions}} sessions are shown; filter by
+state or use the API to page through the rest.</p>{{end}}
+{{else}}
+<p>No SSH checks match.</p>
 {{end}}
 `)
 
