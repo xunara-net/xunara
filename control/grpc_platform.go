@@ -587,6 +587,7 @@ func (g *grpcPlatformServer) ListServices(ctx context.Context, req *xunarav2.Lis
 			Hostname:   view.Hostname,
 			DnsName:    view.DNSName,
 			Visibility: view.Visibility,
+			Shared:     view.Shared,
 			Created:    timestamppb.New(view.Created),
 			Updated:    timestamppb.New(view.Updated),
 			Health:     view.Health,

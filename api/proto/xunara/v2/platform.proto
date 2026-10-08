@@ -588,6 +588,11 @@ message Service {
   // MagicDNS; ["*"] is the default (the whole organization). It narrows
   // discovery only: the ACL rules still decide who may connect.
   repeated string visibility = 13;
+  // shared reports whether the service is projected into the MagicDNS of
+  // organizations whose users accepted a share of the advertising node.
+  // Projected records resolve to the consumer's masquerade address for the
+  // machine; reachability is still decided by ACL rules alone.
+  bool shared = 14;
 }
 
 message AuditEvent {

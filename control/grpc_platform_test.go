@@ -736,7 +736,7 @@ func TestPlatformGRPCListServices(t *testing.T) {
 	web := seedAPIMachine(t, s, "web", nil)
 	seedAPIMachine(t, s, "quiet", nil)
 	if err := s.store.ReplaceNodeServices(web.ID, []state.Service{
-		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"}, Visibility: []string{"tag:app"}},
+		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"}, Visibility: []string{"tag:app"}, Shared: true},
 		{Name: "metrics", Protocol: "udp", Port: 9090},
 	}); err != nil {
 		t.Fatalf("ReplaceNodeServices: %v", err)
@@ -774,6 +774,12 @@ func TestPlatformGRPCListServices(t *testing.T) {
 	}
 	if len(list.GetServices()[1].GetVisibility()) != 1 || list.GetServices()[1].GetVisibility()[0] != "*" {
 		t.Errorf("default visibility = %v, want [*]", list.GetServices()[1].GetVisibility())
+	}
+	if !first.GetShared() {
+		t.Error("first service shared = false, want true")
+	}
+	if list.GetServices()[1].GetShared() {
+		t.Error("default shared = true, want false")
 	}
 	if first.GetCreated() == nil || first.GetUpdated() == nil {
 		t.Errorf("first service has no timestamps: %+v", first)

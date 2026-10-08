@@ -11,7 +11,7 @@ import (
 func TestValidateServicesCanonicalizes(t *testing.T) {
 	services, err := ValidateServices([]Service{
 		{Name: "api", Protocol: " TCP ", Port: 8080, Metadata: map[string]string{"version": "1.2"},
-			Visibility: []string{" tag:prod ", "group:eng", "tag:prod"}},
+			Visibility: []string{" tag:prod ", "group:eng", "tag:prod"}, Shared: true},
 		{Name: "metrics", Protocol: "UDP", Port: 9090},
 	})
 	if err != nil {
@@ -34,6 +34,12 @@ func TestValidateServicesCanonicalizes(t *testing.T) {
 	}
 	if services[1].Visibility != nil {
 		t.Errorf("default visibility = %v, want nil", services[1].Visibility)
+	}
+	if !services[0].Shared {
+		t.Error("shared flag = false, want true")
+	}
+	if services[1].Shared {
+		t.Error("default shared flag = true, want false")
 	}
 }
 

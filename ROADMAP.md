@@ -1839,6 +1839,29 @@ A/AAAA 记录；ACL 仍是唯一授权来源（发现不等于授权）。规格
 
 ---
 
+## M40 — 跨组织服务共享（Atlas × Share，v2，已完成）
+
+目标：补齐 spec §22.7 的第二条缺口。被共享机器上声明 `shared` 的服务，在
+接收组织里"已接受共享的用户"的节点 MagicDNS 中以 `<name>-<source-org>` 解析
+到该机器的 masquerade 地址；只投影发现，ACL 仍是唯一授权来源（§38.5）。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §47。前置的 §38.6
+对侧通知补齐已作为独立提交 `fix: 跨组织共享的对侧通知补齐` 交付。
+
+- `state`（迁移 v17，独立表 `node_service_shared`，可重放）：`Service.Shared`
+  随 republish 重写，读回默认未共享；内存/SQLite 语义一致。
+- `control`：agent 发布校验接受 `shared`（§46 可见性与 §26 健康照常生效）；
+  `sharedServiceDNSRecordsFor(self)` 只给接受共享的用户的节点生成投影记录，
+  名字经 `shareHostname` 命名空间化，与本地名字冲突时跳过（本地永远优先）；
+  地址复用 §38.4 的 masq 分配；源服务 unhealthy、共享非 accepted、任一侧
+  TKA、无 domain 一律无投影；gRPC/Console/CLI/agent 视图新增 `shared`。
+- 兼容性：官方客户端协议不变（只影响逐节点 `DNSConfig.ExtraRecords`）；
+  老 agent / 老数据默认未共享，行为与 v2 之前一致。
+- 测试：`control/shares_services_test.go`（投影与地址、租户隔离、名字冲突、
+  健康摘除、吊销后消失、输出确定性、agent 发布往返、声明比较）、state
+  v16→v17 迁移、protocol/gRPC/Console/CLI 断言。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。

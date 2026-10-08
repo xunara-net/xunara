@@ -248,6 +248,18 @@ CREATE TABLE IF NOT EXISTS node_service_visibility (
 	PRIMARY KEY (node_id, name)
 );
 `,
+
+	// v17: cross-organization service discovery (section 47). Like the
+	// visibility table, a separate table keeps the migration replayable: a
+	// republish replaces the declaration rows and must rewrite the flag with
+	// them. A missing row means the default: not shared.
+	`
+CREATE TABLE IF NOT EXISTS node_service_shared (
+	node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+	name    TEXT    NOT NULL,
+	PRIMARY KEY (node_id, name)
+);
+`,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.

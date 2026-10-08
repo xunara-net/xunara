@@ -20,7 +20,7 @@ func runServiceConformance(t *testing.T, newStore storeFactory) {
 		if err := s.ReplaceNodeServices(first.ID, []Service{
 			{Name: "metrics", Protocol: "tcp", Port: 9090},
 			{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"},
-				Visibility: []string{"group:eng", "tag:prod"}},
+				Visibility: []string{"group:eng", "tag:prod"}, Shared: true},
 		}); err != nil {
 			t.Fatalf("ReplaceNodeServices: %v", err)
 		}
@@ -37,6 +37,12 @@ func runServiceConformance(t *testing.T, newStore storeFactory) {
 		}
 		if !slices.Equal(all[0].Visibility, []string{"group:eng", "tag:prod"}) {
 			t.Errorf("api visibility = %v, want group:eng then tag:prod", all[0].Visibility)
+		}
+		if !all[0].Shared {
+			t.Error("api shared flag = false, want true")
+		}
+		if all[1].Shared {
+			t.Error("metrics shared flag = true, want false")
 		}
 		if all[1].Visibility != nil {
 			t.Errorf("metrics visibility = %v, want nil (default discovery)", all[1].Visibility)

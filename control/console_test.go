@@ -904,7 +904,7 @@ func TestConsoleServicesPage(t *testing.T) {
 	seedAPIMachine(t, s, "quiet", nil)
 	if err := s.store.ReplaceNodeServices(web.ID, []state.Service{
 		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"}},
-		{Name: "db", Protocol: "tcp", Port: 5432, Health: true, Visibility: []string{"tag:app", "group:eng"}},
+		{Name: "db", Protocol: "tcp", Port: 5432, Health: true, Visibility: []string{"tag:app", "group:eng"}, Shared: true},
 	}); err != nil {
 		t.Fatalf("ReplaceNodeServices: %v", err)
 	}
@@ -920,6 +920,17 @@ func TestConsoleServicesPage(t *testing.T) {
 	}
 	if strings.Contains(page, "/console/services/") {
 		t.Errorf("the services page offers a write control:\n%s", page)
+	}
+	// The shared column reports the cross-organization projection.
+	var sharedRow string
+	for _, row := range strings.Split(page, "<tr>") {
+		if strings.Contains(row, "db.example.com") {
+			sharedRow = row
+			break
+		}
+	}
+	if !strings.Contains(sharedRow, ">yes<") {
+		t.Errorf("db row lacks the shared marker:\n%s", sharedRow)
 	}
 
 	// The machines page counts services per machine, with a dash when there

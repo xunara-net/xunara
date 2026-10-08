@@ -30,6 +30,13 @@ type Service struct {
 	// Visibility narrows discovery only; the ACL rules still decide who may
 	// connect.
 	Visibility []string
+	// Shared marks the service for cross-organization discovery: when the
+	// advertising node itself is shared (section 38), the target user's nodes
+	// see it in their MagicDNS as "<name>-<source-org>". It is an independent
+	// axis from Visibility, which only narrows discovery inside the
+	// organization. Sharing never changes reachability: the ACL rules of both
+	// organizations still decide who may connect.
+	Shared bool
 	// Metadata is operator-facing description (version, region, ...). It is
 	// never a secret and never written to the audit log.
 	Metadata map[string]string

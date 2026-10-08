@@ -3369,7 +3369,12 @@ type Service struct {
 	// visibility lists the selectors that may discover the service through
 	// MagicDNS; ["*"] is the default (the whole organization). It narrows
 	// discovery only: the ACL rules still decide who may connect.
-	Visibility    []string `protobuf:"bytes,13,rep,name=visibility,proto3" json:"visibility,omitempty"`
+	Visibility []string `protobuf:"bytes,13,rep,name=visibility,proto3" json:"visibility,omitempty"`
+	// shared reports whether the service is projected into the MagicDNS of
+	// organizations whose users accepted a share of the advertising node.
+	// Projected records resolve to the consumer's masquerade address for the
+	// machine; reachability is still decided by ACL rules alone.
+	Shared        bool `protobuf:"varint,14,opt,name=shared,proto3" json:"shared,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3493,6 +3498,13 @@ func (x *Service) GetVisibility() []string {
 		return x.Visibility
 	}
 	return nil
+}
+
+func (x *Service) GetShared() bool {
+	if x != nil {
+		return x.Shared
+	}
+	return false
 }
 
 type AuditEvent struct {
@@ -5088,7 +5100,7 @@ const file_xunara_v2_platform_proto_rawDesc = "" +
 	"\b_node_id\"n\n" +
 	"\x14ListServicesResponse\x12.\n" +
 	"\bservices\x18\x01 \x03(\v2\x12.xunara.v2.ServiceR\bservices\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xa9\x04\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xc1\x04\n" +
 	"\aService\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprotocol\x18\x02 \x01(\tR\bprotocol\x12\x12\n" +
@@ -5106,7 +5118,8 @@ const file_xunara_v2_platform_proto_rawDesc = "" +
 	"\x12health_reported_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\x10healthReportedAt\x12\x1e\n" +
 	"\n" +
 	"visibility\x18\r \x03(\tR\n" +
-	"visibility\x1a;\n" +
+	"visibility\x12\x16\n" +
+	"\x06shared\x18\x0e \x01(\bR\x06shared\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xaa\x01\n" +

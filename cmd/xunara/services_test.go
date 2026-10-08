@@ -31,7 +31,7 @@ func seedServiceStore(t *testing.T) (state.Store, state.Node) {
 		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"}},
 		{Name: "metrics", Protocol: "tcp", Port: 9090},
 		{Name: "db", Protocol: "tcp", Port: 5432, Health: true},
-		{Name: "cache", Protocol: "tcp", Port: 6379, Health: true, Visibility: []string{"group:eng"}},
+		{Name: "cache", Protocol: "tcp", Port: 6379, Health: true, Visibility: []string{"group:eng"}, Shared: true},
 	}); err != nil {
 		t.Fatalf("ReplaceNodeServices: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestWriteServicesList(t *testing.T) {
 		t.Fatalf("writeServicesList: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"api", "metrics", "tcp", "8080", "9090", "web", web.StableID, "healthy", "unhealthy", "group:eng"} {
+	for _, want := range []string{"api", "metrics", "tcp", "8080", "9090", "web", web.StableID, "healthy", "unhealthy", "group:eng", "yes"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("list output lacks %q:\n%s", want, out)
 		}
@@ -60,15 +60,16 @@ func TestWriteServicesList(t *testing.T) {
 		t.Errorf("list shows a node without services:\n%s", out)
 	}
 
-	// The visibility column says "*" for the organization default, and the
-	// health column says "-" for services that never opted in.
+	// The visibility column says "*" for the organization default, the shared
+	// column says "-" for services that are not projected, and the health
+	// column says "-" for services that never opted in.
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) > 4 && fields[0] == "api" && (fields[3] != "*" || fields[4] != "-") {
-			t.Errorf("api row = %v, want visibility * and health -:\n%s", fields, out)
+		if len(fields) > 5 && fields[0] == "api" && (fields[3] != "*" || fields[4] != "-" || fields[5] != "-") {
+			t.Errorf("api row = %v, want visibility *, shared - and health -:\n%s", fields, out)
 		}
-		if len(fields) > 4 && fields[0] == "cache" && fields[3] != "group:eng" {
-			t.Errorf("cache visibility = %q, want group:eng:\n%s", fields[3], out)
+		if len(fields) > 5 && fields[0] == "cache" && (fields[3] != "group:eng" || fields[4] != "yes") {
+			t.Errorf("cache row = %v, want visibility group:eng and shared yes:\n%s", fields, out)
 		}
 	}
 
@@ -95,6 +96,9 @@ func TestWriteServicesShow(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("show output lacks %q:\n%s", want, out)
 		}
+	}
+	if !strings.Contains(out, "SHARED") {
+		t.Errorf("show output lacks the shared line:\n%s", out)
 	}
 
 	if err := writeServicesShow(&bytes.Buffer{}, store, "nope"); !errors.Is(err, errServiceNotFound) {

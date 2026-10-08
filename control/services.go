@@ -73,6 +73,11 @@ type agentService struct {
 	// it the service is always discoverable, exactly as before health
 	// reporting existed.
 	Health bool `json:"health,omitempty"`
+	// Shared marks the service for cross-organization discovery (section 47):
+	// users who accepted a share of this node also see it, under
+	// "<name>-<source-org>". Health and visibility still apply on the source
+	// side, and reachability is still decided by the ACL rules alone.
+	Shared bool `json:"shared,omitempty"`
 }
 
 // serviceView is the JSON shape of a stored service on every read surface.
@@ -84,9 +89,12 @@ type serviceView struct {
 	// Visibility lists the selectors that may discover the service; ["*"] is
 	// the default (the whole organization).
 	Visibility []string `json:"visibility"`
-	NodeID     uint64   `json:"nodeId"`
-	StableID   string   `json:"stableId"`
-	Hostname   string   `json:"hostname"`
+	// Shared reports whether the service is projected into the MagicDNS of
+	// organizations whose users accepted a share of the advertising node.
+	Shared   bool   `json:"shared"`
+	NodeID   uint64 `json:"nodeId"`
+	StableID string `json:"stableId"`
+	Hostname string `json:"hostname"`
 	// DNSName is the MagicDNS name the service is reachable under, when the
 	// deployment has a domain configured.
 	DNSName string `json:"dnsName,omitempty"`
@@ -216,6 +224,9 @@ func sameServiceSet(stored, declared []state.Service) bool {
 		if svc.Protocol != other.Protocol || svc.Port != other.Port || svc.Health != other.Health {
 			return false
 		}
+		if svc.Shared != other.Shared {
+			return false
+		}
 		if !slices.Equal(svc.Visibility, other.Visibility) {
 			return false
 		}
@@ -281,6 +292,7 @@ func (s *Server) normalizeAgentServices(services []agentService) ([]state.Servic
 			Protocol:   protocol,
 			Port:       uint16(svc.Port),
 			Visibility: visibility,
+			Shared:     svc.Shared,
 			Metadata:   metadata,
 			Health:     svc.Health,
 		})
@@ -443,6 +455,7 @@ func (s *Server) serviceView(svc state.Service, node state.Node) serviceView {
 		Port:       svc.Port,
 		Metadata:   svc.Metadata,
 		Visibility: visibilityOrDefault(svc.Visibility),
+		Shared:     svc.Shared,
 		NodeID:     uint64(node.ID),
 		StableID:   node.StableID,
 		Hostname:   node.Hostname,

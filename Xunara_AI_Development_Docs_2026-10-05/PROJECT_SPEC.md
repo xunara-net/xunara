@@ -715,7 +715,8 @@ node.services_updated   # target=节点，detail=服务名列表（含协议/端
   选择器，MagicDNS 只对命中的节点发布记录；ACL 自动派生（"能连才可见"）
   的取舍见 §46.4；
 - ~~服务就绪/健康状态与自动摘除~~：已由 §26（M19）交付；
-- 跨组织服务共享（Sharing）；
+- ~~跨组织服务共享（Sharing）~~：§47（M40）交付**服务名投影**（`shared`
+  声明的服务进入接收组织 MagicDNS）；机器本身的共享仍由 §38 定义；
 - 与 `svc:`（Tailscale Services VIP）互通——需要上游控制面语义，不猜 API。
 
 ## 23. Xunara Atlas — 目录导入（v1，Consul）
@@ -1812,7 +1813,8 @@ ID：
 ### 38.7 明确不做（v1）
 
 - 跨 Router/多实例共享、共享给整个组织、邀请链接/token、邮件通知；
-- 子网路由/exit node/服务 VIP 的共享；per-port/per-路径范围；
+- 子网路由/exit node/服务 VIP 的共享；per-port/per-路径范围；**服务**（仅
+  MagicDNS 名投影，`shared` 声明）是例外，由 §47（M40）交付；
 - tag 暴露与 `CapMap`（Taildrive、Funnel、Serve 等能力不传递）；
 - TKA 环境下的共享；共享审计/日志内容的跨租户读取；
 - 共享命名空间的回收/复用统计（38.4 的保留策略是刻意的）。
@@ -2359,3 +2361,71 @@ TLS listener，不需要额外开放 80 端口，也不依赖 DNS provider。
 - `state/service_test.go` + `state/sqlite_test.go`：往返、拷贝隔离、
   v15→v16 迁移（老服务读回默认可见性）。
 - Console 与 gRPC：服务页与 `ListServices` 渲染 `visibility`。
+
+## 47. Xunara Atlas — 跨组织服务共享（v2）
+
+目标：§38 的机器共享让接收用户的节点能与被共享机器互相连接；本节让被共享
+机器上**显式声明**的服务名也能被接收用户发现——在接收组织的 MagicDNS 里以
+`<name>-<source-org>` 解析到该机器在接收组织的 masquerade 地址。与 §46 一样，
+这只改变"谁能解析这个名字"：访问控制仍然全部由两个组织的 ACL 决定
+（发现不等于授权，§38.5）。
+
+### 47.1 声明与语义
+
+- 声明字段：`shared`（布尔，默认 false）。它与 §46 的 `visibility` 是两个
+  独立的轴：`visibility` 只在源组织内收敛发现范围；`shared` 决定是否跨"已
+  接受的共享"投影。两者可同时使用；健康（§26）与 §46 的可见性在**源侧**
+  照常生效（被 §46 收敛掉的服务，投影一侧也按源侧判定）。
+- 只有被共享机器（§38.4 的 masquerade 节点）参与投影。发布者仍是唯一写入者
+  （§22.2），管理面（HTTP/gRPC/Console/CLI）仍然只读。
+- 投影名是 `<service>-<source-org>`：与 §38.4 的节点名同一套规范化与截断
+  （`shareHostname`），保证单个 DNS label 且不会与本地主机名混淆；再加上接收
+  组织的 magic domain。
+- 记录值是接收组织为对方节点分配的 masq A/AAAA 地址（§38.4 的同一对分配，
+  同源同值）。源组织的真实地址、节点/用户数字 ID、tags、metadata、CapMap
+  一律不跨界（§38.4 的剥离清单不变）。
+- 只投影给**接受共享的那个用户的节点**；接收组织的其它用户与第三方节点看不到
+  任何变化（与 §38.4 的暴露范围一致）。同一被共享机器的多个已接受共享
+  （例如同一用户重新接受）不会产生重复记录：投影按名字去重，且是派生的。
+
+### 47.2 失败模式（全部 fail-closed）
+
+- 未启用共享、共享不是 accepted（pending/rejected/revoked）、任一侧启用
+  tailnet lock → 无投影（§38.5 的 TKA 边界不变）。
+- `shared` 未声明（默认 false）→ 无投影；老 agent 不发送该字段即默认。
+- 源服务的 §26 健康为 unhealthy → 不投影（与源组织内一致）。
+- 名字冲突：投影名与接收组织里的任何现有名字（节点 FQDN、管理员 DNS 记录、
+  本地 Atlas 服务名、或更早加入的投影名）冲突时**跳过投影**；本地名字永远
+  优先，绝不覆盖、遮蔽或改写本地解析。
+- 源机器被删除、源组织不在同一 Router（§38.2）、源服务被取消声明 → 投影
+  随之消失；投影不落库，不存在"孤儿"记录。
+- 撤回/变更即时生效：声明改写、共享撤销、健康变化都经 §38.6 的对侧通知
+  （`notifyNodePeers`）唤醒接收组织的 netmap 会话，无需客户端重连。
+
+### 47.3 兼容性与边界
+
+- 官方客户端协议不变：只改变节点自己 `DNSConfig.ExtraRecords` 的内容，而
+  逐节点的 DNS 差异本来就是协议内行为；`MapResponse`/TS2021/Noise/ACL 编译
+  都不动。
+- agent 协议（`/api/agent/v1/services`）新增可选字段 `shared`；管理面响应
+  新增 `shared`（HTTP v2/gRPC/Console/CLI/agent 视图）。
+- 消费侧不新增管理面：接收组织只能通过 DNS 解析看到投影名，看不到外来服务
+  的清单或元数据；源组织看到的是自己的声明本身。
+- 规模：投影上限就是来源侧 §22.4 的每节点上限（32 条）；不新增跨组织配额，
+  也不做服务 VIP / 负载均衡 / 代理（§22 的边界不变）。
+
+### 47.4 明确不做（v2）
+
+- 共享给整个组织、匿名/邀请链接共享（§38.7 不变）；
+- 把服务名当作身份，或让消费方通过 API 读写源组织的服务声明（AGENTS §5/§12）；
+- `svc:` VIP、Funnel 公网 ingress、自动健康探测代理（§22/§44 的边界不变）。
+
+### 47.5 测试
+
+- `state/service_test.go` + `state/sqlite_test.go`：`shared` 往返与切片/映射
+  隔离；v16→v17 迁移（老服务读回未共享，新写入可置位）。
+- `control/shares_services_test.go`：投影名与 masq 地址（不泄漏源地址）、
+  仅接受共享的用户可见、未声明不投影、名字冲突本地优先、健康未就绪不投影、
+  吊销共享后消失、输出确定性、agent 发布往返（置位→取消）、声明比较。
+- `client/protocol/validate_test.go`：镜像校验保留 `shared`。
+- `control/grpc_platform_test.go`、Console 与 CLI 断言：管理面渲染 `shared`。

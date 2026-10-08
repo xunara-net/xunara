@@ -32,6 +32,10 @@ type ShareOrg interface {
 	ShareNode(nodeID state.NodeID) (state.Node, bool)
 	// ShareNodesOfUser returns the nodes owned by one user.
 	ShareNodesOfUser(userID tailcfg.UserID) []state.Node
+	// ShareServices returns the services a node advertises. Only the fields
+	// the other side of a share needs cross the boundary: the caller decides
+	// which of them are projected (spec section 47).
+	ShareServices(nodeID state.NodeID) []state.Service
 	// ShareUser returns one user.
 	ShareUser(userID tailcfg.UserID) (identity.User, bool)
 	// ShareOnline reports whether a node holds a live control session.
@@ -138,6 +142,16 @@ func (s *Server) ShareNodesOfUser(userID tailcfg.UserID) []state.Node {
 		}
 	}
 	return out
+}
+
+// ShareServices implements [ShareOrg].
+func (s *Server) ShareServices(nodeID state.NodeID) []state.Service {
+	services, err := s.store.ServicesForNode(nodeID)
+	if err != nil {
+		s.log.Warn("sharing: reading a shared node's services", "node_id", int(nodeID), "err", err)
+		return nil
+	}
+	return services
 }
 
 // ShareUser implements [ShareOrg].

@@ -55,6 +55,9 @@ func (s *SQLiteStore) ReplaceNodeServices(id NodeID, services []Service) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM node_service_visibility WHERE node_id = ?", int64(id)); err != nil {
 		return fmt.Errorf("state: clearing service visibility of node %d: %w", id, err)
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM node_service_shared WHERE node_id = ?", int64(id)); err != nil {
+		return fmt.Errorf("state: clearing shared services of node %d: %w", id, err)
+	}
 
 	seen := make(map[string]bool, len(services))
 	for _, svc := range services {
@@ -111,6 +114,13 @@ func (s *SQLiteStore) ReplaceNodeServices(id NodeID, services []Service) error {
 				VALUES (?, ?, ?)`,
 				int64(id), svc.Name, string(visibility)); err != nil {
 				return fmt.Errorf("state: storing visibility of service %q: %w", svc.Name, err)
+			}
+		}
+		if svc.Shared {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO node_service_shared (node_id, name) VALUES (?, ?)`,
+				int64(id), svc.Name); err != nil {
+				return fmt.Errorf("state: storing shared flag of service %q: %w", svc.Name, err)
 			}
 		}
 	}
@@ -258,6 +268,7 @@ func scanService(row rowScanner) (Service, error) {
 		port       int
 		metadata   string
 		visibility string
+		shared     int
 		created    int64
 		updated    int64
 		healthy    int
@@ -265,12 +276,13 @@ func scanService(row rowScanner) (Service, error) {
 		reportedAt *int64
 		until      *int64
 	)
-	if err := row.Scan(&nodeID, &svc.Name, &svc.Protocol, &port, &metadata, &visibility, &created, &updated,
-		&healthy, &reportedAt, &until, &tracked); err != nil {
+	if err := row.Scan(&nodeID, &svc.Name, &svc.Protocol, &port, &metadata, &visibility,
+		&created, &updated, &healthy, &reportedAt, &until, &tracked, &shared); err != nil {
 		return Service{}, err
 	}
 	svc.NodeID = NodeID(nodeID)
 	svc.Port = uint16(port)
+	svc.Shared = shared != 0
 	svc.Created = time.Unix(created, 0).UTC()
 	svc.Updated = time.Unix(updated, 0).UTC()
 	svc.Health = tracked != 0
@@ -297,10 +309,11 @@ func scanService(row rowScanner) (Service, error) {
 // own filter/order clause over the aliases.
 func serviceSelect(suffix string) string {
 	return `SELECT s.node_id, s.name, s.protocol, s.port, s.metadata, COALESCE(v.visibility, ''), s.created, s.updated,
-			COALESCE(h.healthy, 0), h.reported_at, h.until, h.name IS NOT NULL
+			COALESCE(h.healthy, 0), h.reported_at, h.until, h.name IS NOT NULL, sh.name IS NOT NULL
 		FROM node_services s
 		LEFT JOIN node_service_visibility v ON v.node_id = s.node_id AND v.name = s.name
-		LEFT JOIN node_service_health h ON h.node_id = s.node_id AND h.name = s.name ` + suffix
+		LEFT JOIN node_service_health h ON h.node_id = s.node_id AND h.name = s.name
+		LEFT JOIN node_service_shared sh ON sh.node_id = s.node_id AND sh.name = s.name ` + suffix
 }
 
 // ReportServiceHealth implements [ServiceStore].

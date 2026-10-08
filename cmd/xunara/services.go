@@ -63,7 +63,7 @@ func writeServicesList(w io.Writer, store state.Store) error {
 	// The MagicDNS name depends on the deployment's configured domain, which
 	// the state directory does not record; the platform API reports it.
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tPROTO\tPORT\tVISIBILITY\tHEALTH\tNODE")
+	fmt.Fprintln(tw, "NAME\tPROTO\tPORT\tVISIBILITY\tSHARED\tHEALTH\tNODE")
 	for _, svc := range services {
 		publisher := fmt.Sprintf("node %d", svc.NodeID)
 		if node, ok := store.GetNodeByID(svc.NodeID); ok {
@@ -72,10 +72,19 @@ func writeServicesList(w io.Writer, store state.Store) error {
 				publisher = node.Hostname + " (" + node.StableID + ")"
 			}
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\n", svc.Name, svc.Protocol, svc.Port,
-			serviceVisibilityCell(svc), serviceHealthCell(svc), publisher)
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%s\t%s\n", svc.Name, svc.Protocol, svc.Port,
+			serviceVisibilityCell(svc), serviceSharedCell(svc), serviceHealthCell(svc), publisher)
 	}
 	return tw.Flush()
+}
+
+// serviceSharedCell renders whether a service is projected across an accepted
+// share: "yes" or a dash.
+func serviceSharedCell(svc state.Service) string {
+	if svc.Shared {
+		return "yes"
+	}
+	return "-"
 }
 
 // serviceVisibilityCell renders a service's discovery scope: the v1 default
@@ -141,6 +150,7 @@ func writeServicesShow(w io.Writer, store state.Store, name string) error {
 	fmt.Fprintf(tw, "PORT\t%d\n", svc.Port)
 	fmt.Fprintf(tw, "NODE\t%s (%s)\n", node.Hostname, node.StableID)
 	fmt.Fprintf(tw, "VISIBILITY\t%s\n", serviceVisibilityCell(svc))
+	fmt.Fprintf(tw, "SHARED\t%s\n", serviceSharedCell(svc))
 	if svc.Health {
 		fmt.Fprintf(tw, "HEALTH\t%s\n", svc.EffectiveHealth())
 		if !svc.HealthReportedAt.IsZero() {

@@ -297,9 +297,12 @@ type serviceRow struct {
 	// Visibility lists the selectors that may discover the service; empty
 	// (or "*") means the whole organization.
 	Visibility []string
-	Health     string
-	Updated    time.Time
-	Metadata   map[string]string
+	// Shared reports whether the service is projected into organizations
+	// that accepted a share of the advertising node.
+	Shared   bool
+	Health   string
+	Updated  time.Time
+	Metadata map[string]string
 }
 
 // writeHealthHint tells the operator where a health-tracked service's
@@ -330,6 +333,7 @@ func writePublishedServices(w io.Writer, views []protocol.ServiceView) error {
 			Port:       uint32(view.Port),
 			DNSName:    view.DNSName,
 			Visibility: view.Visibility,
+			Shared:     view.Shared,
 			Health:     view.Health,
 			Updated:    view.Updated,
 			Metadata:   view.Metadata,
@@ -343,7 +347,7 @@ func writeDeclaredServices(w io.Writer, services []protocol.Service) error {
 	rows := make([]serviceRow, 0, len(services))
 	for _, svc := range services {
 		row := serviceRow{Name: svc.Name, Protocol: svc.Protocol, Port: svc.Port,
-			Visibility: svc.Visibility, Metadata: svc.Metadata}
+			Visibility: svc.Visibility, Shared: svc.Shared, Metadata: svc.Metadata}
 		if svc.Health {
 			row.Health = "tracked"
 		}
@@ -364,6 +368,7 @@ func writeServicesTable(w io.Writer, rows []serviceRow, empty string) error {
 	stored := false
 	tracked := false
 	restricted := false
+	shared := false
 	for _, row := range rows {
 		if row.DNSName != "" || !row.Updated.IsZero() {
 			stored = true
@@ -373,6 +378,9 @@ func writeServicesTable(w io.Writer, rows []serviceRow, empty string) error {
 		}
 		if len(row.Visibility) > 0 && !(len(row.Visibility) == 1 && row.Visibility[0] == "*") {
 			restricted = true
+		}
+		if row.Shared {
+			shared = true
 		}
 	}
 
@@ -387,6 +395,9 @@ func writeServicesTable(w io.Writer, rows []serviceRow, empty string) error {
 	if restricted {
 		header = append(header, "VISIBILITY")
 	}
+	if shared {
+		header = append(header, "SHARED")
+	}
 	fmt.Fprintln(tw, strings.Join(header, "\t"))
 	for _, row := range rows {
 		fields := []string{row.Name, row.Protocol, strconv.FormatUint(uint64(row.Port), 10)}
@@ -398,6 +409,9 @@ func writeServicesTable(w io.Writer, rows []serviceRow, empty string) error {
 		}
 		if restricted {
 			fields = append(fields, visibilityCell(row.Visibility))
+		}
+		if shared {
+			fields = append(fields, sharedCell(row.Shared))
 		}
 		fmt.Fprintln(tw, strings.Join(fields, "\t"))
 	}
@@ -425,6 +439,14 @@ func writeServicesTable(w io.Writer, rows []serviceRow, empty string) error {
 		}
 	}
 	return nil
+}
+
+// sharedCell renders whether a service is projected across an accepted share.
+func sharedCell(shared bool) string {
+	if shared {
+		return "yes"
+	}
+	return "-"
 }
 
 // dashIfEmpty renders an unknown value.

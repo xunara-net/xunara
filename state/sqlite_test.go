@@ -436,6 +436,53 @@ func TestSQLiteMigratesV15ToV16(t *testing.T) {
 	}
 }
 
+// TestSQLiteMigratesV16ToV17 simulates a database written before
+// cross-organization service sharing existed: reopening it must add the
+// column, read the old services back as not shared, and accept new writes
+// that do set the flag.
+func TestSQLiteMigratesV16ToV17(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	ctx := context.Background()
+	first := openTestSQLite(t, path)
+	node := Node{Hostname: "old", NodeKey: key.NewNode().Public()}
+	if err := first.CreateNode(&node); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	if err := first.ReplaceNodeServices(node.ID, []Service{
+		{Name: "api", Protocol: "tcp", Port: 8080},
+	}); err != nil {
+		t.Fatalf("ReplaceNodeServices: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "DROP TABLE node_service_shared"); err != nil {
+		t.Fatalf("dropping node_service_shared: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "PRAGMA user_version = 16"); err != nil {
+		t.Fatalf("downgrading schema version: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second := openTestSQLite(t, path)
+	svc, ok := second.GetServiceByName("api")
+	if !ok || svc.Port != 8080 {
+		t.Fatalf("service after migration = %+v, %v", svc, ok)
+	}
+	if svc.Shared {
+		t.Error("service after migration is shared, want the v2 default (not shared)")
+	}
+
+	if err := second.ReplaceNodeServices(node.ID, []Service{
+		{Name: "api", Protocol: "tcp", Port: 8080, Shared: true},
+	}); err != nil {
+		t.Fatalf("ReplaceNodeServices(shared): %v", err)
+	}
+	if svc, ok := second.GetServiceByName("api"); !ok || !svc.Shared {
+		t.Errorf("shared flag after migration = %+v, %v, want true", svc, ok)
+	}
+}
+
 func TestSQLiteStoreConcurrentAccess(t *testing.T) {
 	s := openTestSQLite(t, filepath.Join(t.TempDir(), "state.db"))
 

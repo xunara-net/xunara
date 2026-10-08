@@ -148,6 +148,12 @@ type Service struct {
 	// withdraws it from MagicDNS while it is not ready or its report
 	// expired. Without it the service is always discoverable.
 	Health bool `json:"health,omitempty"`
+	// Shared projects the service into the MagicDNS of organizations whose
+	// users accepted a share of this node (Xunara Share): they resolve it as
+	// "<name>-<org>" at the machine's masquerade address. It never grants
+	// access - the ACL rules of both organizations still decide who may
+	// connect.
+	Shared bool `json:"shared,omitempty"`
 }
 
 // ServiceView is a stored service as the control plane reports it.
@@ -159,9 +165,12 @@ type ServiceView struct {
 	// Visibility lists the selectors that may discover the service; ["*"] is
 	// the default (the whole organization).
 	Visibility []string `json:"visibility"`
-	NodeID     uint64   `json:"nodeId"`
-	StableID   string   `json:"stableId"`
-	Hostname   string   `json:"hostname"`
+	// Shared reports whether the service is projected into organizations
+	// that accepted a share of the advertising node.
+	Shared   bool   `json:"shared"`
+	NodeID   uint64 `json:"nodeId"`
+	StableID string `json:"stableId"`
+	Hostname string `json:"hostname"`
 	// DNSName is the MagicDNS name the service is reachable under; empty when
 	// the deployment has no domain configured.
 	DNSName string `json:"dnsName,omitempty"`

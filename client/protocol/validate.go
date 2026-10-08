@@ -76,6 +76,7 @@ func ValidateServices(services []Service) ([]Service, error) {
 			Port:       svc.Port,
 			Metadata:   metadata,
 			Visibility: visibility,
+			Shared:     svc.Shared,
 			Health:     svc.Health,
 		})
 	}
