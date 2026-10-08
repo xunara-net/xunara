@@ -360,23 +360,7 @@ func (s *Server) handleConsoleDevices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pending := s.identity.ListPendingDeviceAuthorizations(time.Now())
-	devices := make([]consoleDevice, 0, len(pending))
-	for _, da := range pending {
-		meta := decodeDeviceMetadata(da.ClientMetadata)
-		hostname := meta.Hostname
-		if hostname == "" {
-			hostname = "unnamed device"
-		}
-		os := meta.OS
-		if os == "" {
-			os = "unknown"
-		}
-		devices = append(devices, consoleDevice{
-			ID: da.ID, Hostname: hostname, OS: os, Created: da.CreatedAt, Expires: da.ExpiresAt,
-		})
-	}
-	data["Devices"] = devices
+	data["Devices"] = consoleDeviceViews(s.pendingDeviceViews(time.Now()).Devices)
 	s.renderConsole(w, consoleDevicesTemplate, data)
 }
 
@@ -422,24 +406,28 @@ func (s *Server) handleConsoleDevice(approve bool) http.HandlerFunc {
 
 // handleConsoleDevicesNotice re-renders the device list after a decision.
 func (s *Server) handleConsoleDevicesNotice(w http.ResponseWriter, data map[string]any) {
-	pending := s.identity.ListPendingDeviceAuthorizations(time.Now())
+	data["Devices"] = consoleDeviceViews(s.pendingDeviceViews(time.Now()).Devices)
+	s.renderConsole(w, consoleDevicesTemplate, data)
+}
+
+// consoleDeviceViews renders the shared pending-device shape for the console,
+// with display fallbacks the API leaves to its caller.
+func consoleDeviceViews(pending []pendingDeviceView) []consoleDevice {
 	devices := make([]consoleDevice, 0, len(pending))
 	for _, da := range pending {
-		meta := decodeDeviceMetadata(da.ClientMetadata)
-		hostname := meta.Hostname
+		hostname := da.Hostname
 		if hostname == "" {
 			hostname = "unnamed device"
 		}
-		os := meta.OS
+		os := da.OS
 		if os == "" {
 			os = "unknown"
 		}
 		devices = append(devices, consoleDevice{
-			ID: da.ID, Hostname: hostname, OS: os, Created: da.CreatedAt, Expires: da.ExpiresAt,
+			ID: da.ID, Hostname: hostname, OS: os, Created: da.Created, Expires: da.Expires,
 		})
 	}
-	data["Devices"] = devices
-	s.renderConsole(w, consoleDevicesTemplate, data)
+	return devices
 }
 
 // handleConsoleUsers implements GET /console/users.

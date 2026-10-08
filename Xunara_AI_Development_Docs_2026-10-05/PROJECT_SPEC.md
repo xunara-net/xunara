@@ -1977,3 +1977,74 @@ Console `/console/exit-nodes`（nav "Exit nodes"，任意角色可看）：
   - 没有选择的节点不出现在 clients；
   - HTTP：匿名 401、read scope 200、member 可读；响应不含密钥材料；
   - Console：页面渲染两个表、无表单、member 可读。
+
+---
+
+## 41. Xunara 设备授权管理面（v1）
+
+目标：把"等待批准的设备"从浏览器页面变成可审计、可自动化的 API 面。设备授权
+是机器身份的准入环节：客户端在注册时提交 `(machine key, node key)` 对，人在此
+确认"这台机器可以被接入"，而不是把自己的身份变成机器身份（AGENTS.md §5）。
+
+### 41.1 身份与决策语义
+
+- 每个待批准项是一条 `DeviceAuthorization`：key 对在注册时提交并落库，审批
+  **只**作用于该行。
+- 审批请求只携带授权 ID，不携带任何 key；审批从存储行读取 key 对，因此 API
+  调用者不能替换成自己指定的 key 对（AGENTS.md §10/§11）。
+- 批准把机器归属到**调用者**：会话 cookie 或 API key 的所有者成为节点 owner
+  （与 `/register/{authID}` 页面、Console 一致）。审批不创建人类身份。
+- User Approval 不引入新的存储：OIDC 用户在首次登录时自动建立（§21），角色
+  管理在 Users 面（§23）与 `/api/v2/organization`；没有"用户审批队列"这种
+  东西，也不得从邮箱推导机器信任（§5/§6）。
+- 决策与既有入口（Console、`/register/{authID}`、v1 API）共享同一服务函数与
+  审计；重复同向决策幂等，反向决策冲突，过期 fail-closed。
+
+### 41.2 HTTP 与 Console
+
+`GET /api/v2/devices`（read scope）：
+
+```text
+{
+  "devices": [
+    { id, hostname, os, ephemeral?, requestedTags?, created, expires }
+  ],
+  "truncated": false
+}
+```
+
+- 只列 pending 且未过期的授权，最新在前；响应上限 500 条，超出时
+  `truncated=true`——被截断的是最旧的、最不可能还能被处理的条目。
+- **不返回 machine key / node key**：审批不需要 key 材料（v1
+  `GET /api/v1/devices` 的稳定形状不在本面改变）。`requestedTags` 与
+  `ephemeral` 是客户端对策略的声明，审批人需要看到；hostname/os 为空时原样
+  返回空串，显示层再兜底。
+- `POST /api/v2/devices/{id}/approve`、`POST /api/v2/devices/{id}/deny`
+  （write scope + 可写角色）：返回 `{id, state}`。
+  - 未知 ID → 404；已过期 → 410；已决定后的反向决策 → 409；重复同向决策 →
+    200（幂等）；
+  - 批准创建/原地轮换节点并唤醒等待中的注册（既有 `approveDevice`）；
+  - 拒绝只记录状态并唤醒注册，使客户端尽快得到失败（既有 `denyDevice`）。
+- 审计复用既有动作：批准记 `node.approved`（节点存在时）、拒绝记
+  `device.denied`；actor 是调用者（会话或 `user:N/apikey:key-X`）。
+- Console `/console/devices` 不变：与 API 共用列表构造与决策函数，避免两处
+  口径漂移。
+
+### 41.3 明确不做（v1）
+
+- 不做批量审批、审批规则引擎或自动批准（自动化必须显式调用 API）；
+- 不返回或接受 key 材料，不允许调用者指定 key、地址或节点 ID；
+- 不提供"以他人身份批准"，也不提供批准后的所有权转移；
+- 不做用户审批队列、邀请制注册、邮箱验证（人类身份来自 OIDC，见 §21）；
+- 不做 gRPC（管理面走 HTTP/Console，与 §31/§33/§35/§39/§40 同构）。
+
+### 41.4 测试
+
+- `control/devices_test.go`：
+  - 匿名 401；read scope 列表 200 且 member 可读；
+  - 列表不泄漏 key 材料（原始响应不含 machine/node key 值）；
+  - read scope 决策 403；member 写 scope 403；可写角色 200；
+  - 批准创建节点、owner 记为调用者、重复批准幂等、审计归属 API key；
+  - 拒绝 200 且状态落库，之后列表不再包含该设备；
+  - 未知 ID 404、已过期 410、已批准后拒绝 409；
+  - 超过上限时 `truncated=true` 且保留最新。

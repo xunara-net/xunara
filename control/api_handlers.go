@@ -758,31 +758,6 @@ func (s *Server) handleAPIDenyDevice(w http.ResponseWriter, r *http.Request) {
 	s.apiDecideDevice(w, r, principal, false)
 }
 
-func (s *Server) apiDecideDevice(w http.ResponseWriter, r *http.Request, principal apiPrincipal, approve bool) {
-	id := chi.URLParam(r, "id")
-
-	var (
-		da  identity.DeviceAuthorization
-		err error
-	)
-	if approve {
-		da, err = s.approveDevice(id, principal.UserID, principal.actor())
-	} else {
-		da, err = s.denyDevice(id, principal.UserID, principal.actor())
-	}
-	if err != nil {
-		var he HTTPError
-		if errors.As(err, &he) {
-			writeAPIError(w, he.Code, he.Msg)
-			return
-		}
-		s.log.Error("deciding device", "device", id, "err", err)
-		writeAPIError(w, http.StatusInternalServerError, "could not record the decision")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": da.ID, "state": string(da.State)})
-}
-
 // handleAPIAudit implements GET /api/v1/audit.
 func (s *Server) handleAPIAudit(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.requireScope(w, r, identity.ScopeRead); !ok {

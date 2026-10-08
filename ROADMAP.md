@@ -1710,6 +1710,33 @@ write 角色 + CSRF），管理面没有任何写入口。
 
 ---
 
+## M35 — 设备授权管理面（v1，已完成）
+
+目标：把"等待批准的设备"从浏览器页面变成可审计、可自动化的 API 面。设备授权
+是机器身份的准入环节：客户端在注册时提交 `(machine key, node key)` 对，人在此
+确认"这台机器可以被接入"，而不是把自己的身份变成机器身份。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §41（spec §20 P1
+"Device/User Approval"；User 侧即 OIDC 首次登录自动建用户 + 角色管理，不新增
+存储）。
+
+- HTTP `GET /api/v2/devices`（read scope）：pending 且未过期的授权，最新在前，
+  上限 500 条（超出 `truncated=true`，截断最旧）；字段 `id/hostname/os/
+  ephemeral/requestedTags/created/expires`，**不含 machine key / node key**
+  （v1 形状不变）。
+- HTTP `POST /api/v2/devices/{id}/approve|deny`（write scope + 可写角色）：
+  复用 `approveDevice`/`denyDevice`——批准创建/原地轮换节点并唤醒注册，拒绝记录
+  状态并唤醒注册；未知 404、过期 410、反向决策 409、重复同向 200（幂等）；
+  审计 actor 是会话或 `user:N/apikey:key-X`。
+- 审批只携带授权 ID，key 对从存储行读取，调用者无法替换 key（§5/§10/§11）。
+- Console `/console/devices` 不变，只与 API 共用列表构造与决策函数。
+- 不做：批量审批/规则引擎/自动批准、key 材料返回或接受、以他人身份批准或
+  转移所有权、用户审批队列/邀请制/邮箱验证、gRPC（§41.3）。
+- 测试：`control/devices_test.go`（匿名 401、member 可读、列表字段闭包与不泄漏
+  key、read/member 决策 403、批准创建节点与归属、幂等、审计归属、拒绝后不再
+  出现在列表、404/410/409、截断保留最新）。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。
