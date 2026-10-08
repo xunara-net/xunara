@@ -630,7 +630,8 @@ Network / Service / Application / Data
 - 不做代理、转发、VIP、负载均衡、健康检查与故障转移；
 - 不新增官方客户端内层端点、不改 TS2021 / Noise / MapRequest / MapResponse
   的结构（AGENTS §4）；官方客户端经 MagicDNS 解析服务名后按既有 ACL 连接；
-- 不做跨组织发现：服务在组织内可见（AGENTS §12）；
+- v1 不做跨组织发现：服务默认只在组织内可见（AGENTS §12）；v2 的例外是
+  §47（M40）的显式 `shared` 声明——仍只在"已接受的共享"边界内投影；
 - 不把服务名当作身份：service ≠ user ≠ machine ≠ node（AGENTS §5）。
 
 ### 22.1 模型
@@ -2331,8 +2332,8 @@ TLS listener，不需要额外开放 80 端口，也不依赖 DNS provider。
   `mapSession.dns` 指纹继续保证只在变化时下发。
 - 升级：老数据没有 visibility 行（state 迁移 v16 只加表），读出为空 = 默认，
   行为与 v1 完全一致。
-- 跨组织（§38 Share）不适用：可见性只在本组织的节点之间判定，共享不会扩展
-  服务发现。
+- 本节的选择器只在本组织内判定，共享不改变它的语义；跨组织服务发现是 §47
+  （M40）的独立轴（`shared` 声明），与 visibility 互不影响。
 
 ### 46.4 与 ACL 派生的取舍
 
