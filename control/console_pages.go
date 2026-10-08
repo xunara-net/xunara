@@ -141,11 +141,12 @@ footer { text-align: center; color: var(--muted); font-size: .78rem; padding: 1.
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
            clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .nav-toggle, .theme-toggle { display: none; }
-html.js .nav-toggle, html.js .theme-toggle { display: inline-flex; align-items: center; background: transparent;
-  color: var(--muted); border: 1px solid var(--border-2); padding: .3rem .6rem; }
-html.js .theme-toggle { padding: .3rem .5rem; }
+html.js .theme-toggle { display: inline-flex; align-items: center; background: transparent; color: var(--muted);
+  border: 1px solid var(--border-2); padding: .3rem .5rem; }
 @media (max-width: 860px) {
   .topbar { padding: .6rem .9rem; }
+  html.js .nav-toggle { display: inline-flex; align-items: center; background: transparent; color: var(--muted);
+    border: 1px solid var(--border-2); padding: .3rem .6rem; }
   html.js #console-nav { display: none; flex-direction: column; width: 100%; order: 9; }
   html.js .topbar.nav-open #console-nav { display: flex; }
   nav a { padding: .55rem .6rem; }
