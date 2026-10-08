@@ -204,6 +204,27 @@ func TestNodeMarksExpiredKeys(t *testing.T) {
 	}
 }
 
+// TestNodeCarriesMachineAuthorization pins the field the client's ipn state
+// machine reads: without MachineAuthorized a registered, approved and online
+// node still parks every client in NeedsMachineAuth, which the apps render as
+// "Admin approval required".
+func TestNodeCarriesMachineAuthorization(t *testing.T) {
+	valid := testNode(1, "valid")
+	if got := Node(valid, true, neverOnline, nil, Config{}); !got.MachineAuthorized {
+		t.Error("MachineAuthorized = false for an unexpired node")
+	}
+
+	if got := Node(valid, false, neverOnline, nil, Config{}); !got.MachineAuthorized {
+		t.Error("MachineAuthorized = false for a peer")
+	}
+
+	expired := testNode(2, "expired")
+	expired.Expiry = time.Now().Add(-time.Hour)
+	if got := Node(expired, true, neverOnline, nil, Config{}); got.MachineAuthorized {
+		t.Error("MachineAuthorized = true for a node whose key expiry has passed")
+	}
+}
+
 // withRoutes marks a node as advertising and being approved for routes.
 func withRoutes(n state.Node, announced, approved []netip.Prefix) state.Node {
 	n.Hostinfo = &tailcfg.Hostinfo{RoutableIPs: announced}

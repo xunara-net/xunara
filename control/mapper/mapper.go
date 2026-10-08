@@ -227,6 +227,8 @@ func Node(n state.Node, self bool, online OnlineFunc, routes RouteTable, cfg Con
 	}
 	slices.SortFunc(allowed, netip.Prefix.Compare)
 
+	expired := n.Expired(time.Now())
+
 	out := &tailcfg.Node{
 		ID:            tailcfg.NodeID(n.ID),
 		StableID:      tailcfg.StableNodeID(n.StableID),
@@ -234,7 +236,7 @@ func Node(n state.Node, self bool, online OnlineFunc, routes RouteTable, cfg Con
 		User:          nodeUserID(n),
 		Key:           n.NodeKey,
 		KeyExpiry:     n.Expiry,
-		Expired:       n.Expired(time.Now()),
+		Expired:       expired,
 		Machine:       n.MachineKey,
 		DiscoKey:      n.DiscoKey,
 		Addresses:     addresses,
@@ -247,6 +249,11 @@ func Node(n state.Node, self bool, online OnlineFunc, routes RouteTable, cfg Con
 		LastSeen:      n.LastSeen,
 		Tags:          slices.Clone(n.Tags),
 		KeySignature:  slices.Clone(n.KeySignature),
+		// The client's ipn state machine reads this field to decide between
+		// ipn.Running and ipn.NeedsMachineAuth ("Admin approval required");
+		// a node only reaches the netmap after an administrator approved it,
+		// so it is authorized until its key expires, as in headscale.
+		MachineAuthorized: !expired,
 	}
 
 	if n.Hostinfo != nil {
