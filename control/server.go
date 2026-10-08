@@ -188,6 +188,12 @@ type Server struct {
 	// directory, or nil when file transfer is disabled.
 	flux *fluxServer
 
+	// org is the identity of the organization this server serves when the
+	// deployment has an organization table (spec section 30). The router sets
+	// it from the registered OrgSite; updates are atomic because the platform
+	// API renames organizations while requests read.
+	org atomic.Pointer[OrgIdentity]
+
 	// secureCookies marks cookies Secure; sessionTTL bounds browser sessions;
 	// authTTL bounds pending login transactions.
 	secureCookies bool

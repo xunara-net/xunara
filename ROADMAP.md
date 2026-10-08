@@ -687,10 +687,9 @@ reference/{go-oidc,oauth2,dex,webauthn}
     `control/platform_orgs_test.go`（HTTP 全生命周期 + 路由跟随 + 独立 Noise
     key + 列表 managed 标记、11 条 400/409/404 拒绝表、未启用注册表 403、
     跨进程重启后同一 Noise key）。
-- 待办（M7 剩余）：`api/v2` 组织级 API 版本。说明：每个组织已经通过 Host
-  路由直接提供 `/api/v2/*`（M5d），组织生命周期在 `/api/platform/v1`
-  （M7a/M7d）；若还需要"组织自省"的 v2 形状，应先补 spec 定义再实现
-  （不猜 API）。
+- 待办（M7 剩余）：无。"组织自省"的 v2 形状已由 M23 交付（spec §30）：
+  `GET /api/v2/organization` + gRPC `GetOrganizationIdentity`；组织生命周期
+  仍在 `/api/platform/v1`（M7a/M7d）。
 
 ---
 
@@ -1347,6 +1346,32 @@ M16e 的 Consul 导入同一模式：导入器在节点侧运行，控制面拿�
   表格渲染）。
 - 明确不做（v1）：交互式终端、sudo/runas、持久会话、控制面代理数据面、
   Console 页面（只有 CLI 与 agent API）。
+
+---
+
+## M23 — 组织自省（v1，已完成）
+
+目标：任何已认证的调用方都能确认"我现在连的是哪个组织"，供多租户客户端、
+自动化与排障使用。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §30（先写 spec 再
+实现——这是 M7 明确留下的最后一项）。
+
+- HTTP `GET /api/v2/organization`（read scope）：返回 `id`/`name`（单租户
+  部署省略）、`domains`（路由域，恒为数组、绝不 null）、`managed`、
+  `magicDnsDomain`、`serverUrl`；永不返回用户/节点/密钥/secret。
+- 身份的权威来源是 Host 路由：Router 注册 OrgSite 时把
+  ID/Name/Domains/managed 交给该组织的 Server（`Server.setOrganization`，
+  `atomic.Pointer` 读写，平台面改名与请求读取可并行）；托管组织 PATCH
+  name/domains 后自省结果同步更新，ID 不可变。请求无法指定组织——跨组织的
+  凭据在别的 Server 上不会通过校验，未知 Host 仍是 404。
+- gRPC `PlatformService.GetOrganizationIdentity`：语义、认证、错误映射与
+  HTTP 一致（未认证 `UNAUTHENTICATED`、缺 scope `PERMISSION_DENIED`、
+  未知 authority `NOT_FOUND`），组织同样由 authority 决定，请求不带 ID。
+- 测试：`control/organization_test.go`（单租户最小形状与 `domains: []`、
+  401/scope、双组织按 Host 各自自省、跨组织凭据 401、未知 Host 404、托管
+  组织改名后身份跟随、gRPC 语义与权限）。
+- 明确不做（v1）：组织级配额/计量、跨组织目录（`/api/platform/v1` 的
+  ListOrganizations 只接受平台令牌）。
 
 ---
 

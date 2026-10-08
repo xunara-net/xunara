@@ -48,6 +48,7 @@ func (s *Server) apiV2Router() http.Handler {
 	r.Use(apiV2QueryGuard)
 
 	r.Get("/meta", s.handleAPIV2Meta)
+	r.Get("/organization", s.handleAPIV2Organization)
 	r.Get("/tka", s.handleAPIV2TKA)
 	r.Get("/id-token", s.handleAPIV2IDToken)
 

@@ -200,6 +200,30 @@ func (g *grpcPlatformServer) GetMeta(ctx context.Context, _ *xunarav2.GetMetaReq
 	}, nil
 }
 
+// GetOrganizationIdentity implements PlatformService.GetOrganizationIdentity:
+// the same read-only identity as GET /api/v2/organization. The organization is
+// the one the call's authority routed to; the request cannot name another.
+func (g *grpcPlatformServer) GetOrganizationIdentity(ctx context.Context, _ *xunarav2.GetOrganizationIdentityRequest) (*xunarav2.OrganizationIdentity, error) {
+	s, _, err := g.authorize(ctx, identity.ScopeRead)
+	if err != nil {
+		return nil, err
+	}
+
+	org := s.Organization()
+	domains := org.Domains
+	if domains == nil {
+		domains = []string{}
+	}
+	return &xunarav2.OrganizationIdentity{
+		Id:             org.ID,
+		Name:           org.Name,
+		Domains:        domains,
+		Managed:        org.Managed,
+		MagicDnsDomain: s.cfg.Domain,
+		ServerUrl:      s.cfg.ServerURL,
+	}, nil
+}
+
 // GetIDTokenIssuer implements PlatformService.GetIDTokenIssuer: the same
 // read-only issuer state as GET /api/v2/id-token. Only public key material
 // (the JWKS content) and bookkeeping are reported; the private keys never

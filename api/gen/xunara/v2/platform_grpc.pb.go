@@ -45,15 +45,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PlatformService_GetMeta_FullMethodName               = "/xunara.v2.PlatformService/GetMeta"
-	PlatformService_GetTailnetLock_FullMethodName        = "/xunara.v2.PlatformService/GetTailnetLock"
-	PlatformService_GetIDTokenIssuer_FullMethodName      = "/xunara.v2.PlatformService/GetIDTokenIssuer"
-	PlatformService_GetMachineDeviceAttrs_FullMethodName = "/xunara.v2.PlatformService/GetMachineDeviceAttrs"
-	PlatformService_ListMachines_FullMethodName          = "/xunara.v2.PlatformService/ListMachines"
-	PlatformService_ListServices_FullMethodName          = "/xunara.v2.PlatformService/ListServices"
-	PlatformService_ListAudit_FullMethodName             = "/xunara.v2.PlatformService/ListAudit"
-	PlatformService_ListWebhooks_FullMethodName          = "/xunara.v2.PlatformService/ListWebhooks"
-	PlatformService_RevokeAgentToken_FullMethodName      = "/xunara.v2.PlatformService/RevokeAgentToken"
+	PlatformService_GetMeta_FullMethodName                 = "/xunara.v2.PlatformService/GetMeta"
+	PlatformService_GetOrganizationIdentity_FullMethodName = "/xunara.v2.PlatformService/GetOrganizationIdentity"
+	PlatformService_GetTailnetLock_FullMethodName          = "/xunara.v2.PlatformService/GetTailnetLock"
+	PlatformService_GetIDTokenIssuer_FullMethodName        = "/xunara.v2.PlatformService/GetIDTokenIssuer"
+	PlatformService_GetMachineDeviceAttrs_FullMethodName   = "/xunara.v2.PlatformService/GetMachineDeviceAttrs"
+	PlatformService_ListMachines_FullMethodName            = "/xunara.v2.PlatformService/ListMachines"
+	PlatformService_ListServices_FullMethodName            = "/xunara.v2.PlatformService/ListServices"
+	PlatformService_ListAudit_FullMethodName               = "/xunara.v2.PlatformService/ListAudit"
+	PlatformService_ListWebhooks_FullMethodName            = "/xunara.v2.PlatformService/ListWebhooks"
+	PlatformService_RevokeAgentToken_FullMethodName        = "/xunara.v2.PlatformService/RevokeAgentToken"
 )
 
 // PlatformServiceClient is the client API for PlatformService service.
@@ -65,6 +66,13 @@ type PlatformServiceClient interface {
 	// GetMeta reports what this control plane is and which optional features
 	// are configured. It never returns secrets or key material.
 	GetMeta(ctx context.Context, in *GetMetaRequest, opts ...grpc.CallOption) (*Meta, error)
+	// GetOrganizationIdentity reports the identity of the organization this
+	// call addresses (GET /api/v2/organization): its platform ID, name, routing
+	// domains and whether the platform registry manages it. The organization is
+	// chosen by the authority, so the request carries no ID and another
+	// organization's identity cannot be requested. A single-tenant deployment
+	// has no platform identity: id and name are empty.
+	GetOrganizationIdentity(ctx context.Context, in *GetOrganizationIdentityRequest, opts ...grpc.CallOption) (*OrganizationIdentity, error)
 	// GetTailnetLock reports the state of the tailnet key authority (tailnet
 	// lock): whether it is enabled, the current chain head, and how many nodes
 	// carry a node-key signature. It never returns the AUM chain contents, the
@@ -107,6 +115,16 @@ func (c *platformServiceClient) GetMeta(ctx context.Context, in *GetMetaRequest,
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Meta)
 	err := c.cc.Invoke(ctx, PlatformService_GetMeta_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) GetOrganizationIdentity(ctx context.Context, in *GetOrganizationIdentityRequest, opts ...grpc.CallOption) (*OrganizationIdentity, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(OrganizationIdentity)
+	err := c.cc.Invoke(ctx, PlatformService_GetOrganizationIdentity_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -202,6 +220,13 @@ type PlatformServiceServer interface {
 	// GetMeta reports what this control plane is and which optional features
 	// are configured. It never returns secrets or key material.
 	GetMeta(context.Context, *GetMetaRequest) (*Meta, error)
+	// GetOrganizationIdentity reports the identity of the organization this
+	// call addresses (GET /api/v2/organization): its platform ID, name, routing
+	// domains and whether the platform registry manages it. The organization is
+	// chosen by the authority, so the request carries no ID and another
+	// organization's identity cannot be requested. A single-tenant deployment
+	// has no platform identity: id and name are empty.
+	GetOrganizationIdentity(context.Context, *GetOrganizationIdentityRequest) (*OrganizationIdentity, error)
 	// GetTailnetLock reports the state of the tailnet key authority (tailnet
 	// lock): whether it is enabled, the current chain head, and how many nodes
 	// carry a node-key signature. It never returns the AUM chain contents, the
@@ -242,6 +267,9 @@ type UnimplementedPlatformServiceServer struct{}
 
 func (UnimplementedPlatformServiceServer) GetMeta(context.Context, *GetMetaRequest) (*Meta, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetMeta not implemented")
+}
+func (UnimplementedPlatformServiceServer) GetOrganizationIdentity(context.Context, *GetOrganizationIdentityRequest) (*OrganizationIdentity, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetOrganizationIdentity not implemented")
 }
 func (UnimplementedPlatformServiceServer) GetTailnetLock(context.Context, *GetTailnetLockRequest) (*TailnetLockStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetTailnetLock not implemented")
@@ -302,6 +330,24 @@ func _PlatformService_GetMeta_Handler(srv interface{}, ctx context.Context, dec 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).GetMeta(ctx, req.(*GetMetaRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_GetOrganizationIdentity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetOrganizationIdentityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).GetOrganizationIdentity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_GetOrganizationIdentity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).GetOrganizationIdentity(ctx, req.(*GetOrganizationIdentityRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -460,6 +506,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetMeta",
 			Handler:    _PlatformService_GetMeta_Handler,
+		},
+		{
+			MethodName: "GetOrganizationIdentity",
+			Handler:    _PlatformService_GetOrganizationIdentity_Handler,
 		},
 		{
 			MethodName: "GetTailnetLock",

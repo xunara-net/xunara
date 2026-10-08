@@ -174,6 +174,15 @@ func (r *Router) register(site OrgSite, managed bool) error {
 	}
 
 	org := &routerOrg{site: site, handler: site.Server.Handler(), managed: managed}
+	// Host routing is the authority on which organization a request belongs
+	// to, so the server learns its own identity from the site it serves
+	// (spec section 30).
+	site.Server.setOrganization(OrgIdentity{
+		ID:      site.ID,
+		Name:    site.Name,
+		Domains: site.Domains,
+		Managed: managed,
+	})
 	for _, domain := range site.Domains {
 		pattern, err := normalizeRouterDomain(domain)
 		if err != nil {
@@ -357,6 +366,12 @@ func (r *Router) UpdateManagedOrg(ctx context.Context, id string, name *string, 
 	org.site.Domains = append([]string(nil), record.Domains...)
 	org.patterns = patterns
 	org.record = record
+	org.site.Server.setOrganization(OrgIdentity{
+		ID:      org.site.ID,
+		Name:    org.site.Name,
+		Domains: org.site.Domains,
+		Managed: true,
+	})
 	return org.site, nil
 }
 

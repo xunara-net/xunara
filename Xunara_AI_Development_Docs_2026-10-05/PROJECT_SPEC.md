@@ -1285,3 +1285,44 @@ xunara-agent reach serve  # 目标侧执行循环（run 内默认启动；见下
 
 `xunara-agent run` 默认启动 reach 执行循环（目标侧）；`reach run` 是发起侧
 一条命令走完 offer → 等待 → 打印 → 退出。
+
+## 30. 组织自省（v1）
+
+目标：任何已认证的调用方（浏览器会话或服务身份 API key）都能确认"我现在连的
+是哪个组织"。多租户部署里客户端通常只拿到一个基础 URL，排障、自动化与
+客户端 UI 需要一个权威答案；该答案必须来自 Host 路由实际选中的那个组织，
+不能由调用方指定。
+
+```text
+GET /api/v2/organization        # read scope；与 /api/v2/meta 同一认证与角色规则
+```
+
+响应（只读、无 secret）：
+
+```json
+{
+  "id": "acme",
+  "name": "Acme Corp",
+  "domains": ["login.acme.example.com", "*.acme.example.com"],
+  "managed": true,
+  "magicDnsDomain": "acme.internal",
+  "serverUrl": "https://login.acme.example.com"
+}
+```
+
+- `domains` 恒为数组（无域时 `[]`，绝不返回 null），是**路由域**（该组织响应
+  的 Host 模式），不是 MagicDNS 后缀。
+- `managed` 表示组织来自平台注册表（其生命周期可由 `/api/platform/v1` 改动）；
+  配置型组织为 false。
+- 单租户部署（无组织表）没有平台身份：`id`/`name` 省略，`domains` 为 `[]`，
+  `managed` 为 false；其余字段照常返回。客户端不得把空 `id` 当作错误。
+- 组织身份的权威来源是 Router 注册的 `OrgSite`；托管组织 PATCH（name/domains）
+  后自省结果同步更新，ID 不可变。实现必须用并发安全方式更新（自省读路径与
+  平台写路径可以并行）。
+- 永不返回：用户/节点/密钥材料/secret/provider 配置细节（那些属于别的端点，
+  且受各自 scope 约束）。
+- gRPC 对应 `PlatformService.GetOrganizationIdentity`（语义、认证、错误映射与 HTTP
+  一致：未认证 `UNAUTHENTICATED`，缺 scope `PERMISSION_DENIED`，未知 authority
+  `NOT_FOUND`）。
+- 不做（v1）：组织级配额/计量、跨组织目录（那是 `/api/platform/v1` 的
+  ListOrganizations，只接受平台令牌）。

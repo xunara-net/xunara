@@ -39,6 +39,14 @@ service PlatformService {
   // are configured. It never returns secrets or key material.
   rpc GetMeta(GetMetaRequest) returns (Meta);
 
+  // GetOrganizationIdentity reports the identity of the organization this
+  // call addresses (GET /api/v2/organization): its platform ID, name, routing
+  // domains and whether the platform registry manages it. The organization is
+  // chosen by the authority, so the request carries no ID and another
+  // organization's identity cannot be requested. A single-tenant deployment
+  // has no platform identity: id and name are empty.
+  rpc GetOrganizationIdentity(GetOrganizationIdentityRequest) returns (OrganizationIdentity);
+
   // GetTailnetLock reports the state of the tailnet key authority (tailnet
   // lock): whether it is enabled, the current chain head, and how many nodes
   // carry a node-key signature. It never returns the AUM chain contents, the
@@ -94,6 +102,25 @@ message Meta {
   string derp_policy = 13;
   uint32 derp_regions_served = 14;
   bool identity_tokens_enabled = 15;
+}
+
+message GetOrganizationIdentityRequest {}
+
+// OrganizationIdentity mirrors GET /api/v2/organization. It never carries
+// secrets.
+message OrganizationIdentity {
+  // Id is the platform organization ID; empty for a single-tenant
+  // deployment that has no organization table.
+  string id = 1;
+  string name = 2;
+  // Domains are the routing domains (Host patterns) this organization
+  // answers; never nil over HTTP, empty for a single-tenant deployment.
+  repeated string domains = 3;
+  // Managed is true when the platform registry owns the lifecycle of this
+  // organization (it can be updated or deleted through PlatformAdminService).
+  bool managed = 4;
+  string magic_dns_domain = 5;
+  string server_url = 6;
 }
 
 message GetTailnetLockRequest {}
