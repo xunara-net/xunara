@@ -1,11 +1,14 @@
 #!/bin/sh
 # Install or upgrade the Xunara control plane on a systemd host.
 #
-#   sudo ./deploy/install.sh /path/to/xunarad
+#   sudo ./deploy/install.sh /path/to/xunarad [/path/to/xunara] [/path/to/xunara-agent]
 #
 # The script is idempotent: it installs the binary (keeping the previous one
 # for rollback), the service account, the state directory and the unit file,
 # then enables and restarts the service. Re-running it is the upgrade path.
+#
+# Extra binaries are installed next to the daemon under the same prefix: the
+# admin CLI (xunara) and the native client (xunara-agent).
 set -eu
 
 BIN=${1:-}
@@ -37,7 +40,16 @@ install -d -o xunara -g xunara -m 0700 "$state"
 if [ -f "$prefix/bin/xunarad" ]; then
 	cp -p "$prefix/bin/xunarad" "$prefix/bin/xunarad.previous"
 fi
-install -o root -g root -m 0755 "$BIN" "$prefix/bin/xunarad"
+if [ "$(readlink -f "$BIN")" != "$(readlink -f "$prefix/bin/xunarad" 2>/dev/null)" ]; then
+	install -o root -g root -m 0755 "$BIN" "$prefix/bin/xunarad"
+fi
+
+shift
+for extra in "$@"; do
+	[ -f "$extra" ] || { echo "error: $extra is not a file" >&2; exit 2; }
+	install -o root -g root -m 0755 "$extra" "$prefix/bin/$(basename "$extra")"
+	echo "installed $prefix/bin/$(basename "$extra")"
+done
 
 install -o root -g root -m 0644 "$here/systemd/xunarad.service" \
 	/etc/systemd/system/xunarad.service

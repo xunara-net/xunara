@@ -13,6 +13,7 @@
 | `/var/lib/xunara` | 状态目录（`xunara:xunara` 0700，systemd `StateDirectory`） |
 
 日志走 journald：`journalctl -u xunarad -f`。
+（新加的用户需要重新登录才会进入 `systemd-journal` 组。）
 
 单元里的 `-server-url`、监听端口与功能开关按本机部署填写；换主机或换域名时改
 `ExecStart` 那一段（`deploy/systemd/xunarad.service`），并同步仓库中的这份文件。
@@ -54,6 +55,37 @@ Secret 只写进 `/etc/xunara/xunarad.env`（OIDC client secret、平台 token�
 - 状态全在 `/var/lib/xunara`：节点、用户、Session、预认证密钥、审计、策略快照，
   Flux 的密文也在其下。备份该目录即可（先 `systemctl stop xunarad` 保证一致）。
 - Session 存在状态目录里，不是进程内存：重启不掉登录，也是多实例的前提。
+
+## 同机工具（可选安装）
+
+`install.sh` 可以顺带安装两个二进制到同一前缀：
+
+```sh
+sudo deploy/install.sh /tmp/xunarad /tmp/xunara /tmp/xunara-agent
+```
+
+- `xunara`（管理 CLI）直接读写状态目录，因此必须以便于服务账号的身份运行，
+  例如创建一把可复用预认证密钥（给节点做实测）：
+
+  ```sh
+  sudo -u xunara /opt/xunara/bin/xunara preauthkey create \
+      -state-dir /var/lib/xunara -user 1 -reusable -expiry 24h
+  sudo -u xunara /opt/xunara/bin/xunara user list -state-dir /var/lib/xunara
+  ```
+
+  预认证密钥与一次性凭据只在终端显示一次，不要贴进聊天工具或工单。
+
+- `xunara-agent`（原生客户端）在网络可达的任何机器上运行，把预认证密钥放在
+  环境变量里（不放命令行，`ps` 对同机所有用户可见）：
+
+  ```sh
+  XUNARA_AGENT_AUTH_KEY=<key> /opt/xunara/bin/xunara-agent enroll \
+      -server http://<host>:9090 -state-dir ~/.xunara-agent
+  /opt/xunara/bin/xunara-agent run -state-dir ~/.xunara-agent
+  ```
+
+  官方 Tailscale 客户端则不需要 agent：`tailscale up --login-server http://<host>:9090`
+  会走 TS2021 注册流程，设备在控制台的「设备授权」页批准后加入网络。
 
 ## HTTPS 与通行密钥
 
