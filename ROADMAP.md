@@ -1886,6 +1886,27 @@ A/AAAA 记录；ACL 仍是唯一授权来源（发现不等于授权）。规格
   发布者恒可见、无策略等价默认、缓存失效、发布校验）、protocol/gRPC/Console/
   CLI 断言、state v17→v18 迁移。
 
+## M42 — 目录导入携带声明字段（v2，已完成）
+
+目标：§46/§47/§48 的三个声明轴（`visibility`、`visibilityFromACL`、
+`shared`）此前只有手工 `services.json` 能表达，目录导入的节点无法表达可见
+范围与共享。M42 让 Consul 与 Kubernetes 导入器携带这三个字段。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §49。
+
+- 契约：Consul Meta 键 `xunara-visibility` / `xunara-visibility-from-acl` /
+  `xunara-shared`（键的字符集与长度约束已对照 hashicorp/consul 的
+  `metaKeyFormat`/`validateMetaPair`）；K8s 注解 `xunara.io/visibility` /
+  `xunara.io/visibility-from-acl` / `xunara.io/shared`。`visibility` 值一律是
+  JSON 字符串数组，两个布尔只接受精确的 `"true"`/`"false"`。
+- fail-closed：畸形 JSON/超界/布尔拼写错误、`visibility` 与
+  `visibilityFromACL` 互斥冲突 → 整个服务跳过并告警，告警不回显值；Consul
+  同名多注册的一致性规则扩展到三个声明轴（任一轴不一致整名跳过）。
+- Consul 的三个声明键从 `metadata` 中剔除（导入器指令不是业务元数据）；
+  导入器只做形状与限额校验，选择器可解析性与共享语义仍由服务端发布时判定。
+- 测试：`client/catalog/declaration_test.go`（JSON/布尔解码）、
+  `consul_test.go` 与 `kubernetes_test.go` 新增声明映射与失败路径用例；
+  CLI 帮助文本补充声明字段说明。
+
 ---
 
 ## 后续计划（用户指定的排序）

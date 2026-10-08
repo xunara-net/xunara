@@ -260,13 +260,17 @@ The pre-auth key is read from the environment variable `+authKeyEnv+` or from
 
 The services declaration file is
   {"services": [{"name": "api", "protocol": "tcp", "port": 443, "health": true}]}
+It may also carry "visibility" (ACL source selectors), "visibilityFromACL"
+and "shared" (spec sections 46-49).
 Services with "health": true are withdrawn from MagicDNS until
 <state-dir>/services-health.json reports them ready:
   {"services": [{"name": "api", "ready": true}]}
 
 The Kubernetes import reads Services annotated
 xunara.io/advertise: "true" that have ready endpoints on this node
-($NODE_NAME); it only reads the cluster (spec section 27).
+($NODE_NAME); annotations xunara.io/visibility, xunara.io/visibility-from-acl
+and xunara.io/shared carry the declaration fields above (spec section 49).
+It only reads the cluster (spec section 27).
 Import reads the Consul ACL token from the environment variable
 `+consulTokenEnv+`; it is never accepted as a flag.
 

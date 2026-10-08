@@ -33,6 +33,17 @@ const (
 	// object of strings. Labels and other annotations are never imported:
 	// they routinely hold credentials (AGENTS section 8).
 	KubernetesMetadataAnnotation = "xunara.io/metadata"
+	// KubernetesVisibilityAnnotation carries the visibility selectors as a
+	// JSON array of strings (spec sections 46, 49). Absent means the whole
+	// organization.
+	KubernetesVisibilityAnnotation = "xunara.io/visibility"
+	// KubernetesVisibilityFromACLAnnotation is "true" to derive discovery
+	// from the ACL instead of the selector list (spec sections 48, 49); it
+	// cannot be combined with KubernetesVisibilityAnnotation.
+	KubernetesVisibilityFromACLAnnotation = "xunara.io/visibility-from-acl"
+	// KubernetesSharedAnnotation is "true" to project the service into the
+	// MagicDNS of organizations sharing this node (spec sections 47, 49).
+	KubernetesSharedAnnotation = "xunara.io/shared"
 	// KubernetesServiceNameLabel links an EndpointSlice to its Service.
 	KubernetesServiceNameLabel = "kubernetes.io/service-name"
 
@@ -51,6 +62,9 @@ const (
 	kubernetesMaxResponseBytes = 16 << 20
 	kubernetesMaxErrorBytes    = 4 << 10
 	kubernetesMaxMetadataBytes = 8 << 10
+	// kubernetesMaxDeclarationBytes bounds one declaration annotation value
+	// before decoding; services.json has the same limits enforced at publish.
+	kubernetesMaxDeclarationBytes = 4 << 10
 )
 
 // KubernetesConfig configures the Kubernetes importer. The zero value reads
@@ -78,9 +92,9 @@ type KubernetesConfig struct {
 }
 
 // KubernetesServices reads the Services a node provides in one namespace and
-// maps them to a Xunara Atlas declaration, following spec section 27. The
-// returned warnings explain what was skipped and never contain annotation or
-// label values; the declaration is validated and sorted by name.
+// maps them to a Xunara Atlas declaration, following spec sections 27 and 49.
+// The returned warnings explain what was skipped and never contain annotation
+// or label values; the declaration is validated and sorted by name.
 func KubernetesServices(ctx context.Context, cfg KubernetesConfig) ([]protocol.Service, []string, error) {
 	conn, err := newKubernetesConnection(cfg)
 	if err != nil {
@@ -396,12 +410,32 @@ func mapKubernetesServices(services []kubernetesService, slices []kubernetesEndp
 			warnings = append(warnings, fmt.Sprintf("skipping Kubernetes service %q: %s", name, reason))
 			continue
 		}
+		visibility, reason := kubernetesVisibility(svc.Metadata.Annotations[KubernetesVisibilityAnnotation])
+		if reason != "" {
+			warnings = append(warnings, fmt.Sprintf("skipping Kubernetes service %q: %s", name, reason))
+			continue
+		}
+		visibilityFromACL, reason := kubernetesDeclarationBool(
+			svc.Metadata.Annotations[KubernetesVisibilityFromACLAnnotation], KubernetesVisibilityFromACLAnnotation)
+		if reason != "" {
+			warnings = append(warnings, fmt.Sprintf("skipping Kubernetes service %q: %s", name, reason))
+			continue
+		}
+		shared, reason := kubernetesDeclarationBool(
+			svc.Metadata.Annotations[KubernetesSharedAnnotation], KubernetesSharedAnnotation)
+		if reason != "" {
+			warnings = append(warnings, fmt.Sprintf("skipping Kubernetes service %q: %s", name, reason))
+			continue
+		}
 
 		candidate := protocol.Service{
-			Name:     name,
-			Protocol: port.protocol,
-			Port:     uint32(port.number),
-			Metadata: metadata,
+			Name:              name,
+			Protocol:          port.protocol,
+			Port:              uint32(port.number),
+			Metadata:          metadata,
+			Visibility:        visibility,
+			VisibilityFromACL: visibilityFromACL,
+			Shared:            shared,
 		}
 		validated, err := protocol.ValidateServices([]protocol.Service{candidate})
 		if err != nil {
@@ -521,4 +555,25 @@ func kubernetesMetadata(raw string) (map[string]string, string) {
 		return nil, fmt.Sprintf("annotation %s is not a JSON object of strings", KubernetesMetadataAnnotation)
 	}
 	return metadata, ""
+}
+
+// kubernetesVisibility decodes the visibility annotation (spec section 49).
+// The reason string fits the skip-warning shape and never contains the value.
+func kubernetesVisibility(raw string) ([]string, string) {
+	selectors, err := parseDeclarationVisibility(raw, kubernetesMaxDeclarationBytes)
+	if err != nil {
+		return nil, fmt.Sprintf("annotation %s %s", KubernetesVisibilityAnnotation, err)
+	}
+	return selectors, ""
+}
+
+// kubernetesDeclarationBool decodes one boolean declaration annotation. Only
+// "true" and "false" are accepted: a typo must skip the Service with a
+// warning instead of silently dropping a declaration the operator wrote.
+func kubernetesDeclarationBool(raw, annotation string) (bool, string) {
+	value, err := parseDeclarationBool(raw)
+	if err != nil {
+		return false, fmt.Sprintf("annotation %s %s", annotation, err)
+	}
+	return value, ""
 }

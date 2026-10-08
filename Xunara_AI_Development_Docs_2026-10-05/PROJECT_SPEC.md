@@ -750,6 +750,10 @@ node.services_updated   # target=节点，detail=服务名列表（含协议/端
 | `Ports` 中 `Default=true` 的端口，否则 `Port` | `port`；0 或越界则跳过并告警 |
 | `Meta` | `metadata`；不满足 §22.4 任一限制（键/值/条目数/编码大小）则跳过该服务并告警（不截断） |
 
+§49（M42）在 v1 映射之外增加三个声明 Meta 键：
+`xunara-visibility`、`xunara-visibility-from-acl`、`xunara-shared`，分别携带
+`visibility`、`visibilityFromACL`、`shared`；这三个键从 `metadata` 中剔除。
+
 跳过并告警（绝不猜测）：`Kind != ""`（Connect proxy 与各类 gateway 不是应用
 服务）、`SocketPath != ""`（unix socket 不是 tcp/udp 端口）、`PeerName != ""`
 （peering 引入的服务不是本节点事实）、`Service` 为空。
@@ -1157,6 +1161,9 @@ GET /apis/discovery.k8s.io/v1/namespaces/{ns}/endpointslices
 - `metadata` 仅来自注解 `xunara.io/metadata` 的 JSON 对象（string→string）；
   缺省为空；解码失败或含非字符串值 → 跳过并告警。绝不整体导入
   labels/annotations：注解常用于携带凭据，值可能被写进日志（AGENTS §8）。
+- `visibility` / `visibilityFromACL` / `shared` 来自 §49（M42）的三个注解
+  `xunara.io/visibility`、`xunara.io/visibility-from-acl`、`xunara.io/shared`；
+  缺省不声明，畸形值跳过并告警。
 - 告警只说明跳过了什么与原因，不回显注解/标签值。
 
 ### 27.3 限额与原子性
@@ -2501,3 +2508,76 @@ TLS listener，不需要额外开放 80 端口，也不依赖 DNS provider。
   通配授权、协议不匹配不可见）、发布者恒可见、无策略等价默认、节点身份变化
   与策略重载后的缓存失效、发布校验（两轴互斥 400）与视图回显。
 - `client/protocol/validate_test.go`、gRPC、Console 与 CLI：镜像校验与渲染。
+
+## 49. Xunara Atlas — 目录导入携带声明字段（v2，M42）
+
+目标：§46 的 `visibility`、§47 的 `shared`、§48 的 `visibilityFromACL` 都是
+声明字段，但 §23/§27 的导入器只映射 name/protocol/port/metadata——用目录自动
+发布的节点无法表达可见范围与共享，只能退回手工 `services.json`。本节让两个
+导入器携带这三个声明轴。导入器只做"目录 → 声明"的忠实转换；值本身仍由服务端
+在发布时按 §22.4/§46/§48 校验，因为"选择器是否在当前策略文档里可解析"只有
+服务端知道。
+
+### 49.1 Consul 契约（Meta 键）
+
+Consul 的 Meta 键必须匹配 `^[a-zA-Z0-9_-]+$`（≤128 字节），值不做字符限制、
+上限 512 字节（已对照 hashicorp/consul `agent/structs/structs.go` 的
+`metaKeyFormat`、`metaKeyMaxLength`、`metaValueMaxLength` 与
+`validateMetaPair`）。因此键用连字符，值用 JSON：
+
+| Meta 键 | Atlas 字段 | 值 |
+|---|---|---|
+| `xunara-visibility` | `visibility` | JSON 字符串数组，如 `["group:eng","tag:prod"]` |
+| `xunara-visibility-from-acl` | `visibilityFromACL` | 精确 `"true"` / `"false"` |
+| `xunara-shared` | `shared` | 精确 `"true"` / `"false"` |
+
+- 三个键是导入器指令而不是 metadata：映射时从 `metadata` 中剔除，管理面看到的
+  是纯业务元数据。
+- 非法值（JSON 解析失败/非字符串数组/超界、布尔不是精确的 true/false）→ 整条
+  注册跳过并告警；`visibility` 与 `visibilityFromACL` 同时出现由
+  `protocol.ValidateServices` 拒绝后同样跳过。不猜测、不截断，告警不回显 Meta
+  值（值可能被当作敏感信息，AGENTS §8）。
+- 同名多注册的一致性规则从 protocol/port 扩展到
+  visibility/visibilityFromACL/shared：任一轴不一致 → 整个名字跳过并告警；
+  全部一致才去重为一条。
+
+### 49.2 Kubernetes 契约（注解）
+
+| 注解 | Atlas 字段 | 值 |
+|---|---|---|
+| `xunara.io/visibility` | `visibility` | JSON 字符串数组 |
+| `xunara.io/visibility-from-acl` | `visibilityFromACL` | 精确 `"true"` / `"false"` |
+| `xunara.io/shared` | `shared` | 精确 `"true"` / `"false"` |
+
+- 缺省/空 = 不声明：`visibility` 回到全组织，两个布尔为 false；未配置任何新
+  注解的导入行为与 §27 完全一致。
+- 畸形值（JSON 解析失败/超界、布尔拼写错误、与 `xunara.io/visibility` 冲突）
+  → 整个 Service 跳过并告警；告警不回显注解值。
+- 声明值在导入时只做形状与限额校验（JSON 数组 ≤4 KiB，再经
+  `protocol.ValidateServices` 复核 name/protocol/port/metadata 与两轴互斥）；
+  选择器与共享语义的最终校验仍在发布时由服务端完成。
+
+### 49.3 兼容性
+
+- 不新增协议字段：携带的正是 agent 协议与 `services.json` 已有的三个字段；
+  老控制面收到新字段时的行为与手工声明一致。
+- 未配置新键/注解的目录导入零变化（§23/§27 的映射与告警逐字保持）。
+- 导入器仍在节点侧运行：控制面拿不到目录与凭据；服务端拒绝发布时导入失败，
+  已发布声明不变（§23.2 的整批替换原子性不变）。
+
+### 49.4 明确不做（v2）
+
+- 不在导入器里校验选择器是否可解析（策略文档在控制面，导入器不持有策略）；
+- 不从 Consul tags / K8s labels 或其它注解推断声明（tags/labels 是自由文本，
+  常用于携带凭据，AGENTS §8）；
+- 不做 watch/持续同步：快照语义不变（§27），集群或目录变化后重跑 `import`。
+
+### 49.5 测试
+
+- `client/catalog/declaration_test.go`：JSON 数组解码（空/null/畸形/超界，
+  错误不回显值）、布尔严格解码。
+- `client/catalog/consul_test.go`：三个 Meta 键映射、声明键不进入 metadata、
+  畸形值与两轴冲突跳过并告警（不回显值）、同名多注册在可见性不一致时整名
+  跳过、一致时去重。
+- `client/catalog/kubernetes_test.go`：注解映射（含规范化排序）、畸形布尔/JSON
+  与两轴冲突跳过、告警不回显值。

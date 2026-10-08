@@ -153,3 +153,79 @@ func TestConsulServicesEmpty(t *testing.T) {
 		t.Errorf("services = %+v, warnings = %v", services, warnings)
 	}
 }
+
+// TestConsulServicesDeclarations covers the declaration Meta keys (spec
+// section 49): they are carried into the declaration, stripped from metadata,
+// and anything malformed skips the registration without echoing the value.
+func TestConsulServicesDeclarations(t *testing.T) {
+	catalog := map[string]consulAgentService{
+		"vis": {ID: "vis", Service: "vis", Port: 80, Meta: map[string]string{
+			ConsulVisibilityMetaKey: `["tag:prod","group:eng","tag:prod"]`,
+			"version":               "2",
+		}},
+		"acl":    {ID: "acl", Service: "acl", Port: 80, Meta: map[string]string{ConsulVisibilityFromACLMetaKey: "true"}},
+		"shared": {ID: "shared", Service: "shared", Port: 80, Meta: map[string]string{ConsulSharedMetaKey: "true"}},
+		"off":    {ID: "off", Service: "off", Port: 80, Meta: map[string]string{ConsulSharedMetaKey: "false"}},
+		"bad-json": {ID: "bad-json", Service: "bad-json", Port: 80, Meta: map[string]string{
+			ConsulVisibilityMetaKey: `{"password":"super-secret"}`,
+		}},
+		"bad-bool": {ID: "bad-bool", Service: "bad-bool", Port: 80, Meta: map[string]string{ConsulSharedMetaKey: "yes"}},
+		"both": {ID: "both", Service: "both", Port: 80, Meta: map[string]string{
+			ConsulVisibilityMetaKey:        `["*"]`,
+			ConsulVisibilityFromACLMetaKey: "true",
+		}},
+		"dup-1":  {ID: "dup-1", Service: "dup", Port: 80, Meta: map[string]string{ConsulVisibilityMetaKey: `["tag:prod"]`}},
+		"dup-2":  {ID: "dup-2", Service: "dup", Port: 80, Meta: map[string]string{ConsulVisibilityMetaKey: `["tag:dev"]`}},
+		"same-1": {ID: "same-1", Service: "same", Port: 80, Meta: map[string]string{ConsulVisibilityMetaKey: `["tag:prod"]`}},
+		"same-2": {ID: "same-2", Service: "same", Port: 80, Meta: map[string]string{ConsulVisibilityMetaKey: `["tag:prod"]`}},
+	}
+
+	services, warnings, err := mapConsulServices(catalog)
+	if err != nil {
+		t.Fatalf("mapConsulServices: %v", err)
+	}
+
+	byName := make(map[string]protocol.Service, len(services))
+	for _, svc := range services {
+		byName[svc.Name] = svc
+	}
+	if len(services) != 5 {
+		t.Fatalf("services = %+v, want 5", services)
+	}
+
+	vis := byName["vis"]
+	if len(vis.Visibility) != 2 || vis.Visibility[0] != "group:eng" || vis.Visibility[1] != "tag:prod" {
+		t.Errorf("vis visibility = %v", vis.Visibility)
+	}
+	if len(vis.Metadata) != 1 || vis.Metadata["version"] != "2" {
+		t.Errorf("vis metadata = %+v (declaration keys must not be metadata)", vis.Metadata)
+	}
+	if !byName["acl"].VisibilityFromACL || byName["acl"].Shared {
+		t.Errorf("acl = %+v", byName["acl"])
+	}
+	if !byName["shared"].Shared || byName["shared"].VisibilityFromACL {
+		t.Errorf("shared = %+v", byName["shared"])
+	}
+	if byName["off"].Shared {
+		t.Errorf("off = %+v (explicit false must stay false)", byName["off"])
+	}
+	if _, ok := byName["dup"]; ok {
+		t.Error("a name whose registrations disagree on visibility was kept")
+	}
+	if len(byName["same"].Visibility) != 1 || byName["same"].Visibility[0] != "tag:prod" {
+		t.Errorf("same = %+v", byName["same"])
+	}
+
+	joined := strings.Join(warnings, "\n")
+	if len(warnings) != 4 {
+		t.Fatalf("warnings = %v, want 4", warnings)
+	}
+	for _, want := range []string{ConsulVisibilityMetaKey, ConsulSharedMetaKey, "visibilityFromACL", "disagree"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("no warning mentions %q: %v", want, warnings)
+		}
+	}
+	if strings.Contains(joined, "super-secret") {
+		t.Errorf("warnings leaked a Meta value: %v", warnings)
+	}
+}

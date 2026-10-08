@@ -179,6 +179,65 @@ func TestMapKubernetesServices(t *testing.T) {
 		}
 	})
 
+	t.Run("declaration annotations are carried", func(t *testing.T) {
+		annotations := map[string]string{
+			KubernetesAdvertiseAnnotation:  "true",
+			KubernetesVisibilityAnnotation: `["tag:prod","group:eng","tag:prod"]`,
+			KubernetesSharedAnnotation:     "true",
+		}
+		services, warnings, err := mapKubernetesServices(
+			[]kubernetesService{k8sService("api", annotations)},
+			[]kubernetesEndpointSlice{k8sSlice("api", "node-a", k8sBool(true), k8sPort("", "", 8080))},
+			"node-a")
+		if err != nil || len(warnings) != 0 || len(services) != 1 {
+			t.Fatalf("services = %+v, warnings = %v, err = %v", services, warnings, err)
+		}
+		if got := strings.Join(services[0].Visibility, ","); got != "group:eng,tag:prod" {
+			t.Errorf("visibility = %q", got)
+		}
+		if !services[0].Shared || services[0].VisibilityFromACL {
+			t.Errorf("service = %+v", services[0])
+		}
+
+		annotations[KubernetesSharedAnnotation] = "false"
+		annotations[KubernetesVisibilityAnnotation] = `["*"]`
+		annotations[KubernetesVisibilityFromACLAnnotation] = "true"
+		services, warnings, err = mapKubernetesServices(
+			[]kubernetesService{k8sService("api", annotations)},
+			[]kubernetesEndpointSlice{k8sSlice("api", "node-a", k8sBool(true), k8sPort("", "", 8080))},
+			"node-a")
+		if err != nil || len(services) != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "visibilityFromACL") {
+			t.Fatalf("services = %+v, warnings = %v, err = %v", services, warnings, err)
+		}
+	})
+
+	t.Run("malformed declaration annotations skip without echoing values", func(t *testing.T) {
+		annotations := map[string]string{
+			KubernetesAdvertiseAnnotation:  "true",
+			KubernetesVisibilityAnnotation: `{"password":"super-secret"}`,
+		}
+		services, warnings, err := mapKubernetesServices(
+			[]kubernetesService{k8sService("api", annotations)},
+			[]kubernetesEndpointSlice{k8sSlice("api", "node-a", k8sBool(true), k8sPort("", "", 8080))},
+			"node-a")
+		if err != nil || len(services) != 0 || len(warnings) != 1 {
+			t.Fatalf("services = %+v, warnings = %v, err = %v", services, warnings, err)
+		}
+		if !strings.Contains(warnings[0], KubernetesVisibilityAnnotation) || strings.Contains(warnings[0], "super-secret") {
+			t.Errorf("warning = %q", warnings[0])
+		}
+
+		annotations[KubernetesVisibilityAnnotation] = `["tag:prod"]`
+		annotations[KubernetesSharedAnnotation] = "TRUE"
+		services, warnings, err = mapKubernetesServices(
+			[]kubernetesService{k8sService("api", annotations)},
+			[]kubernetesEndpointSlice{k8sSlice("api", "node-a", k8sBool(true), k8sPort("", "", 8080))},
+			"node-a")
+		if err != nil || len(services) != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], KubernetesSharedAnnotation) {
+			t.Fatalf("services = %+v, warnings = %v, err = %v", services, warnings, err)
+		}
+	})
+
 	t.Run("output is sorted by name", func(t *testing.T) {
 		services, warnings, err := mapKubernetesServices(
 			[]kubernetesService{k8sService("zebra", optedIn), k8sService("api", optedIn)},

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -20,6 +21,21 @@ import (
 // DefaultConsulAddress is where the local Consul agent serves its HTTP API.
 const DefaultConsulAddress = "http://127.0.0.1:8500"
 
+// Consul Meta keys that carry a declaration instead of metadata (spec
+// section 49). Consul validates meta keys against ^[a-zA-Z0-9_-]+$ and 128
+// bytes (agent/structs.validateMetaPair), so the keys use hyphens where the
+// Kubernetes annotations use slashes. Values are JSON exactly like
+// services.json; Consul itself caps a meta value at 512 bytes.
+const (
+	// ConsulVisibilityMetaKey carries the visibility selectors as a JSON
+	// array of strings.
+	ConsulVisibilityMetaKey = "xunara-visibility"
+	// ConsulSharedMetaKey enables cross-organization sharing.
+	ConsulSharedMetaKey = "xunara-shared"
+	// ConsulVisibilityFromACLMetaKey enables ACL-derived visibility.
+	ConsulVisibilityFromACLMetaKey = "xunara-visibility-from-acl"
+)
+
 const (
 	// consulTimeout bounds one catalog request.
 	consulTimeout = 30 * time.Second
@@ -27,6 +43,9 @@ const (
 	maxConsulResponseBytes = 8 << 20
 	// maxConsulErrorBytes bounds the error text read from a failed response.
 	maxConsulErrorBytes = 4 << 10
+	// maxConsulDeclarationBytes defensively bounds one declaration value;
+	// Consul already rejects values over 512 bytes at registration.
+	maxConsulDeclarationBytes = 4 << 10
 )
 
 // ConsulConfig configures the Consul importer.
@@ -53,8 +72,11 @@ type ConsulConfig struct {
 // services, services imported from a Consul peer, and anything that cannot be
 // represented faithfully (illegal DNS name, port 0 or out of range, metadata
 // outside the declaration limits). Registrations that share a name must agree
-// on protocol and port; a disagreement skips the whole name rather than
-// guessing.
+// on protocol, port and the declared visibility/sharing; a disagreement skips
+// the whole name rather than guessing. The Meta keys
+// [ConsulVisibilityMetaKey], [ConsulSharedMetaKey] and
+// [ConsulVisibilityFromACLMetaKey] carry declaration fields (spec section 49)
+// instead of metadata and are validated like services.json entries.
 func ConsulServices(ctx context.Context, cfg ConsulConfig) ([]protocol.Service, []string, error) {
 	address := normalizeAddress(cfg.Address)
 	client := cfg.HTTP
@@ -164,13 +186,27 @@ func mapConsulServices(catalog map[string]consulAgentService) ([]protocol.Servic
 			continue
 		}
 
+		visibility, reason := consulVisibility(svc.Meta)
+		fromACL, shared := false, false
+		if reason == "" {
+			fromACL, reason = consulDeclarationBool(svc.Meta, ConsulVisibilityFromACLMetaKey)
+		}
+		if reason == "" {
+			shared, reason = consulDeclarationBool(svc.Meta, ConsulSharedMetaKey)
+		}
+		if reason != "" {
+			warnings = append(warnings, skipWarning(svc, id, reason))
+			continue
+		}
+
 		candidate := protocol.Service{
-			Name:     svc.Service,
-			Protocol: consulProtocol(svc.Tags),
-			Port:     uint32(svc.defaultPort()),
-			// Metadata comes from Consul's Meta map, not from tags: tags are
-			// free-form identity hints and can change meaning per service.
-			Metadata: svc.Meta,
+			Name:              svc.Service,
+			Protocol:          consulProtocol(svc.Tags),
+			Port:              uint32(svc.defaultPort()),
+			Metadata:          consulMetadata(svc.Meta),
+			Visibility:        visibility,
+			VisibilityFromACL: fromACL,
+			Shared:            shared,
 		}
 		validated, err := protocol.ValidateServices([]protocol.Service{candidate})
 		if err != nil {
@@ -183,14 +219,14 @@ func mapConsulServices(catalog map[string]consulAgentService) ([]protocol.Servic
 		switch {
 		case !seen:
 			byName[candidate.Name] = candidate
-		case previous.Protocol == candidate.Protocol && previous.Port == candidate.Port:
+		case consulSameDeclaration(previous, candidate):
 			// The same service registered under two IDs: one declaration.
 		default:
 			delete(byName, candidate.Name)
 			ambiguous[candidate.Name] = true
 			warnings = append(warnings, fmt.Sprintf(
-				"skipping Consul service %q: registrations disagree on protocol/port (%s:%d and %s:%d)",
-				candidate.Name, previous.Protocol, previous.Port, candidate.Protocol, candidate.Port))
+				"skipping Consul service %q: registrations disagree on protocol/port or on the visibility/shared declaration",
+				candidate.Name))
 		}
 	}
 
@@ -221,6 +257,59 @@ func consulProtocol(tags []string) string {
 		}
 	}
 	return "tcp"
+}
+
+// consulVisibility decodes the visibility declaration from Consul Meta. The
+// reason string fits the skip-warning shape and never contains the value.
+func consulVisibility(meta map[string]string) ([]string, string) {
+	selectors, err := parseDeclarationVisibility(meta[ConsulVisibilityMetaKey], maxConsulDeclarationBytes)
+	if err != nil {
+		return nil, fmt.Sprintf("Meta key %s %s", ConsulVisibilityMetaKey, err)
+	}
+	return selectors, ""
+}
+
+// consulDeclarationBool decodes one boolean declaration from Consul Meta.
+func consulDeclarationBool(meta map[string]string, key string) (bool, string) {
+	value, err := parseDeclarationBool(meta[key])
+	if err != nil {
+		return false, fmt.Sprintf("Meta key %s %s", key, err)
+	}
+	return value, ""
+}
+
+// consulMetadata copies Meta without the declaration keys: those are importer
+// directives, not service metadata. Metadata comes from Consul's Meta map, not
+// from tags: tags are free-form identity hints and can change meaning per
+// service.
+func consulMetadata(meta map[string]string) map[string]string {
+	if len(meta) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(meta))
+	for key, value := range meta {
+		switch key {
+		case ConsulVisibilityMetaKey, ConsulSharedMetaKey, ConsulVisibilityFromACLMetaKey:
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// consulSameDeclaration reports whether two registrations of one name describe
+// the same declaration: everything except metadata must match, because the
+// import is a whole-name replacement and metadata differences were already
+// tolerated before this rule (the first registration wins).
+func consulSameDeclaration(a, b protocol.Service) bool {
+	return a.Protocol == b.Protocol &&
+		a.Port == b.Port &&
+		a.VisibilityFromACL == b.VisibilityFromACL &&
+		a.Shared == b.Shared &&
+		slices.Equal(a.Visibility, b.Visibility)
 }
 
 // skipWarning names the skipped registration without echoing metadata values.
