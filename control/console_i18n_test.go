@@ -1,6 +1,7 @@
 package control
 
 import (
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -327,5 +328,109 @@ func TestErrorPageLocalized(t *testing.T) {
 	}
 	if !strings.Contains(body, "返回登录") {
 		t.Errorf("error page lacks the localized sign-in link:\n%.600s", body)
+	}
+}
+
+// TestNotFoundPage checks the handler for unmatched paths: a browser that
+// asked for HTML gets the localized page, while the API and the client
+// binaries keep the plain-text reply they parse today.
+func TestNotFoundPage(t *testing.T) {
+	s := newServerWithConfig(t, Config{ServerURL: testPasskeyOrigin, Passkeys: testPasskeyConfig()})
+	hs := newTestHTTPServer(t, s)
+
+	request := func(target, accept, language string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, hs.URL+target, nil)
+		if err != nil {
+			t.Fatalf("building request: %v", err)
+		}
+		if accept != "" {
+			req.Header.Set("Accept", accept)
+		}
+		if language != "" {
+			req.Header.Set("Accept-Language", language)
+		}
+		resp, err := noRedirectClient().Do(req)
+		if err != nil {
+			t.Fatalf("GET %s: %v", target, err)
+		}
+		t.Cleanup(func() { resp.Body.Close() })
+		return resp
+	}
+
+	browser := request("/no-such-page", "text/html,application/xhtml+xml", "zh-CN,zh;q=0.9")
+	if browser.StatusCode != http.StatusNotFound {
+		t.Errorf("browser status = %d, want 404", browser.StatusCode)
+	}
+	body := bodyString(t, browser)
+	for _, want := range []string{`<html lang="zh"`, "未找到页面", "你访问的页面不存在。"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("Chinese 404 page does not contain %q:\n%.400s", want, body)
+		}
+	}
+
+	english := bodyString(t, request("/no-such-page", "text/html", "en-US,en;q=0.9"))
+	if !strings.Contains(english, "Page not found") || !strings.Contains(english, "The page you asked for does not exist.") {
+		t.Errorf("English 404 page is wrong:\n%.400s", english)
+	}
+
+	// Everything that is not a browser keeps the plain-text reply, including
+	// an HTML-accepting path under /api/.
+	for _, tc := range []struct{ name, target, accept string }{
+		{"api client", "/no-such-page", "application/json"},
+		{"no accept header", "/no-such-page", ""},
+		{"unmatched api path", "/api/v2/no-such-endpoint", "text/html"},
+		{"unmatched console path", "/console/no-such-page", "application/json"},
+	} {
+		req, err := http.NewRequest(http.MethodGet, hs.URL+tc.target, nil)
+		if err != nil {
+			t.Fatalf("building request: %v", err)
+		}
+		if tc.accept != "" {
+			req.Header.Set("Accept", tc.accept)
+		}
+		resp, err := noRedirectClient().Do(req)
+		if err != nil {
+			t.Fatalf("GET %s: %v", tc.target, err)
+		}
+		raw, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			t.Fatalf("reading body: %v", err)
+		}
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("%s status = %d, want 404", tc.name, resp.StatusCode)
+		}
+		if got := string(raw); got != "404 page not found\n" {
+			t.Errorf("%s body = %q, want a plain-text 404", tc.name, got)
+		}
+		if ct := resp.Header.Get("Content-Type"); strings.Contains(ct, "text/html") {
+			t.Errorf("%s content type = %q, want a non-HTML reply", tc.name, ct)
+		}
+	}
+
+	// An unknown page under the console mount is answered by the same handler
+	// as an unknown page at the root.
+	if body := bodyString(t, request("/console/no-such-page", "text/html", "zh-CN,zh;q=0.9")); !strings.Contains(body, "未找到页面") {
+		t.Errorf("console 404 page is not localized:\n%.400s", body)
+	}
+}
+
+// TestSecurityListSeparator pins the localized separator on the security page:
+// Chinese uses its own comma, English keeps the ASCII one.
+func TestSecurityListSeparator(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/security")
+
+	zh := bodyString(t, getRequestWithLanguage(t, client, hs.URL+"/console/security", "zh-CN,zh;q=0.9", cookie))
+	if !strings.Contains(zh, "，") || strings.Contains(zh, "默认地图, ") {
+		t.Errorf("Chinese security page keeps the ASCII list separator:\n%.600s", zh)
+	}
+
+	en := bodyString(t, getRequestWithLanguage(t, client, hs.URL+"/console/security", "en-US,en;q=0.9", cookie))
+	if !strings.Contains(en, "default map, ") {
+		t.Errorf("English security page lost its list separator:\n%.600s", en)
 	}
 }

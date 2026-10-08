@@ -723,6 +723,7 @@ func (s *Server) Handler() http.Handler {
 	r.Mount("/api/v2", s.apiV2Router())
 	r.Mount("/console", s.consoleRouter())
 	r.Get("/", s.handleRoot)
+	r.NotFound(s.handleNotFound)
 
 	return r
 }

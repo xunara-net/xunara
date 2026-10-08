@@ -67,6 +67,6 @@ keys are the actionable subset; the rest is the schedule.</p>
 <dt>API keys</dt><dd>{{T "%d live, %d revoked, %d expired, %d without expiry" .View.APIKeys.Live .View.APIKeys.Revoked .View.APIKeys.Expired .View.APIKeys.NeverExpires}}</dd>
 <dt>Sharing</dt><dd>{{if .View.Sharing.Enabled}}outgoing {{.View.Sharing.OutgoingPending}} pending / {{.View.Sharing.OutgoingAccepted}} accepted; incoming {{.View.Sharing.IncomingPending}} pending / {{.View.Sharing.IncomingAccepted}} accepted{{else}}not enabled{{end}}</dd>
 <dt>Webhooks</dt><dd>{{if .View.Webhooks.Enabled}}delivering ({{.View.Webhooks.Configured}} configured, {{.View.Webhooks.ManagedActive}} managed, {{.View.Webhooks.ManagedPaused}} paused){{else}}not delivering{{end}}</dd>
-<dt>DERP</dt><dd>{{if .View.DERP.MapConfigured}}{{T "map configured"}}{{else}}{{T "default map"}}{{end}}, {{if .View.DERP.Policy}}{{T "policy %s" .View.DERP.Policy}}{{else}}{{T "policy open"}}{{end}}, {{T "%d region(s)" .View.DERP.RegionsServed}}</dd>
+<dt>DERP</dt><dd>{{if .View.DERP.MapConfigured}}{{T "map configured"}}{{else}}{{T "default map"}}{{end}}{{T ", "}}{{if .View.DERP.Policy}}{{T "policy %s" .View.DERP.Policy}}{{else}}{{T "policy open"}}{{end}}{{T ", "}}{{T "%d region(s)" .View.DERP.RegionsServed}}</dd>
 </dl>
 `)

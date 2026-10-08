@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"strings"
 )
 
 // pageHead is shared by every page: the console's design tokens, no external
@@ -186,6 +187,19 @@ func (s *Server) renderError(w http.ResponseWriter, r *http.Request, status int,
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	io.WriteString(w, page)
+}
+
+// handleNotFound answers requests no route matched. Browsers navigating the
+// console get the localized error page; everything else (the client binaries
+// and the API) keeps the plain-text reply it has always received, so an
+// unknown path never turns into an HTML document a machine has to parse.
+func (s *Server) handleNotFound(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/api/") || !strings.Contains(r.Header.Get("Accept"), "text/html") {
+		http.Error(w, "404 page not found", http.StatusNotFound)
+		return
+	}
+	s.renderError(w, r, http.StatusNotFound, "Page not found",
+		"The page you asked for does not exist.")
 }
 
 // translateTitle localizes a page title: the console's T helper is not
