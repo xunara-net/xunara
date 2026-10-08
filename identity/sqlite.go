@@ -252,8 +252,13 @@ CREATE TABLE IF NOT EXISTS counters (
 	name  TEXT    PRIMARY KEY,
 	value INTEGER NOT NULL
 );
-` + identityShareMigration + `
-
+` + identityShareMigration,
+	// v12: local sign-in credentials and single-use registration invites
+	// (section 52). They were briefly part of the migration above, which had
+	// already shipped: a database that recorded v11 never ran the new DDL, so
+	// the tables are created here instead. CREATE TABLE IF NOT EXISTS keeps
+	// this a no-op for databases that got the tables from the earlier build.
+	`
 -- Local sign-in credentials. One row per user that can sign in with a
 -- password; the hash never leaves the store, and the row is keyed by user ID
 -- so renaming a user cannot orphan or steal a password.

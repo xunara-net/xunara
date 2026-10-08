@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"tailscale.com/tailcfg"
 
@@ -356,5 +357,72 @@ VALUES ('veteran@example.com', 'Veteran', '', 1, 1);
 	}
 	if veteran.Role != RoleOwner {
 		t.Errorf("pre-existing user role = %q, want owner", veteran.Role)
+	}
+}
+
+// TestMigrationTwelveCreatesCredentialAndInviteTables simulates the databases
+// that recorded v11 from the build in which the credential and invite tables
+// were briefly appended to that already-shipped migration. Those databases
+// never ran the new DDL, so the tables must be created by the later migration
+// instead: otherwise every password sign-in and every invite is a "no such
+// table" error.
+func TestMigrationTwelveCreatesCredentialAndInviteTables(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "stuck.db")+
+		"?_txlock=immediate&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+
+	// A current database, then rewound to exactly the deployed v11 state:
+	// migrations 1-11 recorded, credential and invite tables absent.
+	if _, err := NewSQLiteStore(ctx, db); err != nil {
+		t.Fatalf("NewSQLiteStore: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `
+DROP TABLE local_credentials;
+DROP TABLE registration_invites;
+UPDATE schema_migrations SET version = 11 WHERE module = 'identity';
+`); err != nil {
+		t.Fatalf("rewinding to v11: %v", err)
+	}
+
+	s, err := NewSQLiteStore(ctx, db)
+	if err != nil {
+		t.Fatalf("NewSQLiteStore after rewind: %v", err)
+	}
+	if got, want := s.CountLocalCredentials(), 0; got != want {
+		t.Errorf("CountLocalCredentials = %d, want %d", got, want)
+	}
+	if invites := s.ListRegistrationInvites(); len(invites) != 0 {
+		t.Errorf("ListRegistrationInvites = %d invites, want 0", len(invites))
+	}
+
+	user := &User{LoginName: "revived@example.com", Role: RoleAdmin}
+	if err := s.CreateUser(user); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	if err := s.SetLocalCredential(&LocalCredential{
+		UserID:       user.ID,
+		PasswordHash: []byte("hash"),
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
+	}); err != nil {
+		t.Fatalf("SetLocalCredential: %v", err)
+	}
+	if got, want := s.CountLocalCredentials(), 1; got != want {
+		t.Errorf("CountLocalCredentials after set = %d, want %d", got, want)
+	}
+	if _, _, err := s.CreateRegistrationInvite(NewRegistrationInviteOptions{
+		Role:      RoleMember,
+		CreatedBy: "admin",
+		TTL:       time.Hour,
+	}); err != nil {
+		t.Fatalf("CreateRegistrationInvite: %v", err)
+	}
+	if invites := s.ListRegistrationInvites(); len(invites) != 1 {
+		t.Errorf("ListRegistrationInvites = %d invites, want 1", len(invites))
 	}
 }
