@@ -64,7 +64,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
 
 ---
 
-## M2 — 完整 netmap（Mapper）—— 进行中
+## M2 — 完整 netmap（Mapper，已完成）
 
 目标：客户端能真正"上线"并看到 tailnet。
 
@@ -189,7 +189,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
   单 region 回退、提示计算与 full/update 下发）、`TestMapSessionClientVersionSync`、
   端到端 `TestStreamingNetmapAdoptsClientPreferredDERP`。
 
-待办（M2b 剩余）：
+已完成（M2b 剩余）：
 - ~~说明：`set-dns` 记录通过 `ExtraRecords` 在 tailnet 内可见，**不**写入外部 DNS 提供商；
   公网 ACME 校验需要额外的 DNS 集成（后续里程碑）。~~
   已完成（M6f）：配置 DNS provider 后，`_acme-challenge.` 记录写入外部权威 DNS。
@@ -208,7 +208,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
     内部 `state.Node.UserID` 仍保留（tagOwners 归属校验需要）。节点 tag 的
     “仅 tag 拥有者”操作语义与角色模型一起在 M5c+ 完善。
 
-## M3 — 持久化与密钥 —— 进行中
+## M3 — 持久化与密钥（已完成）
 
 已完成（M3a/M3b）：
 
@@ -278,7 +278,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
   `mapper` 的伪用户与 UserProfiles 用例、`control/tags_test.go` 端到端断言
   注册响应与 netmap 的 tagged-devices 身份。
 
-## M4 — Identity & Login（Trust Plane）
+## M4 — Identity & Login（Trust Plane，已完成）
 
 - M4a 已完成：见 M3 段落的「Identity 基础层」。
 - M4b-1 已完成：`IdentityProvider` 接口 + Provider Registry + 内置 LocalLogin；
@@ -324,7 +324,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
 - Session 存储必须支持多实例、吊销、过期、审计、轮换（禁止 server-local map 作为核心存储）。
 - 测试：`IDENTITY_LOGIN.md` §18 Security Test Matrix。
 
-## M5 — Platform API 与 Web Console
+## M5 — Platform API 与 Web Console（已完成）
 
 - M5a 已完成：Platform API（`/api/v1`）。
   - 认证：`Authorization: Bearer`（Service Identity API Key，token 只存哈希，
@@ -395,7 +395,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
     已删除用户会话/密钥失效、设备与 SSH check 审批门禁、自助吊销）。
 - 审批流接线（已完成）：`/register/{id}` → 登录 → 审批 → 设备授权。
 
-## M6 — 服务与客户端
+## M6 — 服务与客户端（已完成）
 
 - M6a 已完成：Tailscale SSH（accept 模式）。
   - `policy`：解析/校验文档 `ssh` 段（原为 unsupported）；`CompileSSHPolicy`
@@ -589,7 +589,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
 
 ---
 
-## M7 — 多租户（Organizations）—— 进行中
+## M7 — 多租户（Organizations，已完成）
 
 - M7a 已完成：组织表与按 Host 路由的多租户控制面。
   - `control.Router`（`control/router.go`）：一个监听器承载多个组织，按请求
@@ -693,7 +693,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
 
 ---
 
-## M8 — 自动化与集成 —— 进行中
+## M8 — 自动化与集成（已完成）
 
 - M8a 已完成：Webhook 事件投递（`webhook/`）。
   - 游标驱动：新表 `webhook_cursors`（身份迁移 v6）+ `ListAuditAfter`；
