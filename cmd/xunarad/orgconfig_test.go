@@ -224,9 +224,54 @@ func TestCheckOrgScopedFlags(t *testing.T) {
 	if !strings.Contains(err.Error(), "-state-dir") || !strings.Contains(err.Error(), "-policy") {
 		t.Errorf("error = %v, want both offending flags named", err)
 	}
+	if err := checkOrgScopedFlags([]string{"flux", "flux-ttl"}); err == nil || !strings.Contains(err.Error(), "-flux") {
+		t.Errorf("flux flags in -org-config mode = %v, want them rejected", err)
+	}
 }
 
 // sprintf keeps the table literals readable.
 func sprintf(format string, args ...any) string {
 	return fmt.Sprintf(format, args...)
+}
+
+// TestOrgConfigFlux covers the organization-table half of Flux enablement:
+// the same opt-in rule, with the TTL parsed from its JSON string.
+func TestOrgConfigFlux(t *testing.T) {
+	base := orgConfig{
+		ID:        "acme",
+		StateDir:  t.TempDir(),
+		ServerURL: "https://login.acme.example.com",
+	}
+
+	on := base
+	on.FluxEnabled = true
+	on.FluxDir = "/srv/flux"
+	on.FluxMaxSize = 1 << 20
+	on.FluxTTL = "30m"
+	cfg, err := on.controlConfig(slog.Default())
+	if err != nil {
+		t.Fatalf("controlConfig: %v", err)
+	}
+	if cfg.Flux == nil || cfg.Flux.Disabled || cfg.Flux.Dir != "/srv/flux" ||
+		cfg.Flux.MaxSize != 1<<20 || cfg.Flux.TTL != 30*time.Minute {
+		t.Fatalf("flux config = %+v", cfg.Flux)
+	}
+
+	off := base
+	if cfg, err := off.controlConfig(slog.Default()); err != nil || cfg.Flux != nil {
+		t.Errorf("disabled = %+v, %v; want nil, nil", cfg.Flux, err)
+	}
+
+	settingsOnly := base
+	settingsOnly.FluxTTL = "30m"
+	if _, err := settingsOnly.controlConfig(slog.Default()); err == nil {
+		t.Error("flux_ttl without flux_enabled was accepted")
+	}
+
+	badTTL := base
+	badTTL.FluxEnabled = true
+	badTTL.FluxTTL = "half an hour"
+	if _, err := badTTL.controlConfig(slog.Default()); err == nil || !strings.Contains(err.Error(), "flux_ttl") {
+		t.Errorf("bad flux_ttl error = %v, want it to name flux_ttl", err)
+	}
 }

@@ -984,6 +984,21 @@ POST /api/agent/v1/flux/transfers/{id}/fail          收件人 {reason?}（解�
   cancelled/expired`，detail 只写 id、名字、大小与静态 reason，绝不写密文或
   密钥材料。
 
+
+### 25.7 配置接线（v1）
+
+- 单组织：`xunarad -flux` 打开（**默认关**——与 Reach 同一原则，控制面替
+  agent 存文件必须显式请求）；`-flux-dir`（默认 `<state-dir>/flux`）、
+  `-flux-max-size`（明文字节数，默认 8 MiB，硬上限 64 MiB）、`-flux-ttl`
+  （默认 1h，上限 24h）。只设置 dir/size/ttl 而不加 `-flux` 是配置错误，
+  启动即失败（不静默忽略）；超范围的值同样启动失败，错误信息点名部署。
+- 多组织：组织表 `flux_enabled` / `flux_dir` / `flux_max_size` / `flux_ttl`
+  （同一套校验；`flux_dir` 省略时每个组织用自己的 `<state_dir>/flux`，因此
+  密文永远不会跨租户共享目录）。`-org-config` 模式下 flux 命令行开关与其它
+  组织级 flag 一样被拒绝。
+- 未启用时 `/api/agent/v1/flux/*` 一律 404（fail-closed，不为未启用功能保留
+  探测面）；启用后 janitor 负责过期、终态清理与孤儿内容扫描（§25.6）。
+
 ## 26. Xunara Atlas 健康状态与自动摘除（v1）
 
 目标：节点可以声明"这个服务现在是否就绪"，控制面据此把未就绪或失联的服务

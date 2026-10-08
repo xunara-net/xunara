@@ -74,6 +74,14 @@ func main() {
 			"identity tokens one node may obtain per audience per minute (0 uses the default)")
 		reachEnabled = flag.Bool("reach", false,
 			"enable Xunara Reach remote command execution (agents must be re-run with -reach too)")
+		fluxEnabled = flag.Bool("flux", false,
+			"enable Xunara Flux file transfers between agents (ciphertext is stored under -state-dir)")
+		fluxDir = flag.String("flux-dir", "",
+			"directory for Flux ciphertext (default <state-dir>/flux)")
+		fluxMaxSize = flag.Int64("flux-max-size", 0,
+			"Flux plaintext size limit per transfer in bytes (default 8 MiB, hard cap 64 MiB)")
+		fluxTTL = flag.Duration("flux-ttl", 0,
+			"how long a Flux transfer may stay active (default 1h, max 24h)")
 		webhookEvents = flag.String("webhook-events", "",
 			"comma-separated audit action globs to deliver (default all events)")
 	)
@@ -175,6 +183,12 @@ func main() {
 		logger.Warn("passkey sign-in is disabled: -server-url cannot serve as a WebAuthn relying party (use -passkey-rpid/-passkey-origin, or -passkey=false to silence this)")
 	}
 
+	fluxCfg, err := fluxConfigFor(*fluxEnabled, *fluxDir, *fluxMaxSize, *fluxTTL)
+	if err != nil {
+		logger.Error("invalid flux configuration", "err", err)
+		os.Exit(1)
+	}
+
 	srv, err := control.New(control.Config{
 		ServerURL:           *serverURL,
 		ListenAddr:          *listen,
@@ -196,6 +210,7 @@ func main() {
 		ServiceHealthTTL:    *serviceHealthTTL,
 		IDTokenRateLimit:    *idTokenRateLimit,
 		ReachEnabled:        *reachEnabled,
+		Flux:                fluxCfg,
 		Webhooks:            webhooks,
 		Logger:              logger,
 	})
@@ -223,6 +238,7 @@ var orgScopedFlags = []string{
 	"allow-local-login", "cert-domain",
 	"passkey", "passkey-rpid", "passkey-origin", "passkey-display-name",
 	"services-health-ttl", "id-token-rate-limit", "reach",
+	"flux", "flux-dir", "flux-max-size", "flux-ttl",
 	"dns-webhook-url", "dns-webhook-token-env",
 	"dns-cloudflare-zone", "dns-cloudflare-token-env",
 	"webhook-url", "webhook-secret-env", "webhook-events",

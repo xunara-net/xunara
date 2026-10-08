@@ -1188,6 +1188,9 @@ authorization 分离（AGENTS §5/§10）。规格见
 - 明确不做（v1）：与官方客户端 Taildrop 互通、断点续传/分片、目录递归、
   杀毒/DLP、控制面明文可见、ACL 细粒度授权（v1 以收件人显式接受为授权；
   ACL 集成留待后续 spec）。
+- 已补（M26）：部署接线。此前 `xunarad` 没有任何开关能打开 Flux，控制面端点
+  在生产不可达；现在 `-flux`（默认关）与组织表 `flux_enabled` 显式启用，
+  规格见 §25.7。
 
 ---
 
@@ -1436,6 +1439,30 @@ M16e 的 Consul 导入同一模式：导入器在节点侧运行，控制面拿�
   认证/权限与字段）、`control/console_test.go`（页面渲染、只读、无 map 文案）。
 - 明确不做（v1）：修改策略、按区域断连/重定位、DERP 中继流量统计（那是
   Veil 的运行指标，不在控制面）、历史趋势。
+
+---
+
+## M26 — Xunara Flux 部署接线（v1，已完成）
+
+目标：Flux 控制面端点此前没有任何生产启用路径（`control.Config.Flux` 恒为
+nil，端点 404），补上单组织 flag 与多组织组织表接线；规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §25.7。
+
+- 单组织：`xunarad -flux`（默认**关**）、`-flux-dir`（默认
+  `<state-dir>/flux`）、`-flux-max-size`（默认 8 MiB，硬上限 64 MiB）、
+  `-flux-ttl`（默认 1h，上限 24h）。只给 dir/size/ttl 而不加 `-flux` 是配置
+  错误，启动即失败；超范围的值由 `control.New` 拒绝并点名部署。
+- 多组织：组织表 `flux_enabled` / `flux_dir` / `flux_max_size` / `flux_ttl`
+  （同一套校验）；`flux_dir` 省略时每个组织用自己的 `<state_dir>/flux`，
+  密文不跨租户共享目录。`-org-config` 模式下 flux 命令行开关与其它组织级
+  flag 一样被拒绝（加入 `orgScopedFlags`）。
+- 语义修正：`control.Config.Flux` 的注释此前写"Nil uses the defaults"，与
+  `newFluxServer`（nil/Disabled = 关闭）矛盾；统一为 **nil 或 Disabled 都是
+  关闭**，与 Reach 同为 opt-in——升级不会自行打开一个文件存储子系统。
+  `examples/organizations.example.json` 增补 `flux_enabled`/`flux_ttl` 示例。
+- 测试：`cmd/xunarad/flux_test.go`（关闭/设置缺开关/开启三态）、
+  `orgconfig_test.go`（组织表开启、默认关闭、settings-without-enabled 拒绝、
+  坏 `flux_ttl` 报错点名、`-org-config` 拒绝 flux flag）。
 
 ---
 

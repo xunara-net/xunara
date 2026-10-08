@@ -101,8 +101,11 @@ type Config struct {
 	// management. Nil disables the feature: the endpoints answer 404 and the
 	// sign-in page offers no passkey button.
 	Passkeys *identity.PasskeyConfig
-	// Flux configures Xunara Flux file transfers. Nil uses the defaults;
-	// FluxConfig.Disabled turns the feature off (endpoints answer 404).
+	// Flux configures Xunara Flux file transfers. Nil (or
+	// FluxConfig.Disabled) keeps the feature off and its endpoints answer
+	// 404; a non-nil value enables it, with zero fields using the defaults.
+	// Like Reach it is opt-in: storing files on behalf of agents must be
+	// asked for.
 	Flux *FluxConfig
 	// ReachEnabled turns on Xunara Reach remote command execution (spec
 	// section 29). It is opt-in: running commands on nodes is powerful enough

@@ -90,9 +90,10 @@ type fluxServer struct {
 	quotas  state.FluxQuotas
 }
 
-// newFluxServer validates cfg and prepares the content directory. A
-// configuration that cannot work stops the server: silently disabling the
-// feature would leave operators guessing why transfers fail.
+// newFluxServer validates cfg and prepares the content directory. A nil
+// configuration (or Disabled) leaves the feature off; a configuration that
+// cannot work stops the server instead of being silently disabled, which
+// would leave operators guessing why transfers fail.
 func newFluxServer(stateDir string, cfg *FluxConfig) (*fluxServer, error) {
 	if cfg == nil || cfg.Disabled {
 		return nil, nil

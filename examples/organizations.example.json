@@ -6,6 +6,8 @@
       "domains": [
         "login.acme.example.com"
       ],
+      "flux_enabled": true,
+      "flux_ttl": "1h",
       "server_url": "https://login.acme.example.com",
       "state_dir": "/var/lib/xunara/acme",
       "domain": "acme.example.com",
