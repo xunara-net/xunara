@@ -74,6 +74,7 @@ footer { text-align: center; color: #5b616e; font-size: .8rem; }
 <a href="/console/machines"{{if eq .Nav "machines"}} class="active"{{end}}>Machines</a>
 <a href="/console/exit-nodes"{{if eq .Nav "exit-nodes"}} class="active"{{end}}>Exit nodes</a>
 <a href="/console/services"{{if eq .Nav "services"}} class="active"{{end}}>Services</a>
+<a href="/console/relays"{{if eq .Nav "relays"}} class="active"{{end}}>Relays</a>
 <a href="/console/devices"{{if eq .Nav "devices"}} class="active"{{end}}>Devices</a>
 <a href="/console/users"{{if eq .Nav "users"}} class="active"{{end}}>Users</a>
 <a href="/console/passkeys"{{if eq .Nav "passkeys"}} class="active"{{end}}>Passkeys</a>
@@ -111,6 +112,7 @@ var consoleTitles = map[string]string{
 	"machines":   "Machines",
 	"exit-nodes": "Exit nodes",
 	"services":   "Services",
+	"relays":     "Relays",
 	"devices":    "Devices",
 	"users":      "Users",
 	"passkeys":   "Passkeys",

@@ -1737,6 +1737,33 @@ write 角色 + CSRF），管理面没有任何写入口。
 
 ---
 
+## M36 — Xunara Relay 管理面（Peer Relay，只读，v1，已完成）
+
+目标：把 peer relay（上游 mesh extension）的供给与授权放在一个面上——哪些节点
+愿意作为 underlay UDP relay、哪些 ACL grant 允许谁从谁那里分配 relay 端点、
+两者是否对得上。只读；relay server 与 relay 使用都是客户端本地决定。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §42（spec §20 P3
+"Mesh Extensions"）。
+
+- 协议面复用既有能力（本里程碑不改变 wire 输出，只加验证）：relay grant（`app`
+  含 `tailscale.com/cap/relay`）→ `FilterRule.CapGrant` + `relay-target`
+  companion（`grants.go` 已有）；供给 = `Hostinfo.PeerRelay`；策略开关 =
+  `nodeAttrs` 的 `disable-relay-server` / `disable-relay-client`（既有透传）。
+- `policy/relay.go`：`Engine.RelayGrants(nodes)` 把 relay grant 解析成节点对
+  （`dst: autogroup:self` 按源展开），供管理面使用。
+- HTTP `GET /api/v2/relays`（read scope）与 Console `/console/relays`
+  （nav "Relays"，任意角色可读）：relays（愿意供给 ∪ 被 grant 点名，按 nodeId
+  升序，含 announced/disabled/clientDisabled/targeted）与 grants（源 → 目标）；
+  不返回密钥、relay 端点或 VNI。
+- 不做：远程启用/禁用 relay server/client、远程选择 relay/端点分配、流量统计、
+  自动生成授权、gRPC（§42.3）。
+- 测试：`policy/relay_test.go`（CapGrant 与 companion、非 relay 行不报告、
+  selector 解析、self 展开、空关系丢弃）、`control/relays_test.go`（五种姿态、
+  禁用可见性、HTTP 401/200/member、Console 无表单、真实客户端路径下
+  grant/CapMap/PeerRelay 供给可见）。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。

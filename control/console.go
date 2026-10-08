@@ -72,6 +72,7 @@ func (s *Server) consoleRouter() http.Handler {
 
 	r.Get("/machines", s.handleConsoleMachines)
 	r.Get("/exit-nodes", s.handleConsoleExitNodes)
+	r.Get("/relays", s.handleConsoleRelays)
 	r.Get("/devices", s.handleConsoleDevices)
 	r.Get("/users", s.handleConsoleUsers)
 	r.Get("/dns", s.handleConsoleDNS)

@@ -2048,3 +2048,91 @@ Console `/console/exit-nodes`（nav "Exit nodes"，任意角色可看）：
   - 拒绝 200 且状态落库，之后列表不再包含该设备；
   - 未知 ID 404、已过期 410、已批准后拒绝 409；
   - 超过上限时 `truncated=true` 且保留最新。
+
+---
+
+## 42. Xunara Relay 管理面（Peer Relay，只读，v1）
+
+目标：把 peer relay（上游 mesh extension）的"供给"与"授权"放在一个面上——
+哪些节点愿意作为 underlay UDP relay、哪些 ACL grant 允许谁从谁那里分配 relay
+端点、以及两者是否对得上。只读；是否启用 relay server 与是否使用 relay 都是
+客户端本地决定（`ipn.Prefs`），控制面不远程开关、也不替客户端选择 relay。
+
+参考：`reference/headscale` 的 relay cap 编译与集成测试（`PeerRelay` 形如
+`{ip}:{port}:vni:{vni}`）、`tailscale.com/tailcfg` 的
+`PeerCapabilityRelay` / `PeerCapabilityRelayTarget` 与
+`nodecap.DisableRelayServer` / `DisableRelayClient`。
+
+### 42.1 数据模型与判据
+
+- **供给**：节点在 `Hostinfo.PeerRelay` 上报它愿意运行 relay server
+  （客户端 `tailscale set --relay-server-port=<port>` 的结果）。控制面只报告
+  这个事实。
+- **授权**：`grants` 行的 `app` 含 `tailscale.com/cap/relay` 时，该行是 relay
+  授权：`src` 命中的节点可以从 `dst` 命中的节点分配 relay 端点。编译结果就是
+  既有的 `tailcfg.FilterRule.CapGrant`（`grants.go`），并伴随一条反向
+  companion 规则（反向节点获得 `tailscale.com/cap/relay-target`）。本面不改变
+  任何 wire 输出。
+- **策略开关**：`nodeAttrs` 的 `disable-relay-server` / `disable-relay-client`
+  按上游语义透传到 `NodeCapMap`（self 侧生效），本面把它显示为
+  `disabled` / `clientDisabled`，因为这是 grant 无法生效的原因。
+- 三个事实互相独立：愿意供给 ≠ 被 grant 点名 ≠ 允许供给。管理面把它们并排
+  显示，让"grant 指向一个不供给或已被禁用的节点"这类配置错误可见（fail
+  visible），而不是替管理员纠正。
+
+### 42.2 HTTP 与 Console
+
+`GET /api/v2/relays`（read scope）：
+
+```text
+{
+  "relays": [
+    { nodeId, stableId, hostname, owner, online,
+      announced, disabled, clientDisabled, targeted }
+  ],
+  "grants": [
+    { sources: [ {nodeId, stableId, hostname, owner, online, announced,
+                  disabled, clientDisabled, targeted} ],
+      targets: [ … ] }
+  ]
+}
+```
+
+- `relays` = 上报了 `PeerRelay` 的节点 ∪ 被任一 relay grant 点名的节点，按
+  nodeId 升序；未被点名且未上报的节点不出现。
+- `grants` = 文档中带 relay cap 的 `grants` 行，按文档顺序，两侧都解析成节点；
+  `dst: ["autogroup:self"]` 按源节点展开（每个源只能用自己的设备）。解析不到
+  任何源或目标的行使整个关系为空，不列出。
+- 不返回节点密钥、relay 端点、VNI 或任何流量信息；控制面没有数据面遥测。
+- gRPC 不做（只读管理面走 HTTP/Console，与 §31/§33/§35/§39/§40/§41 同构）。
+
+Console `/console/relays`（nav "Relays"，任意角色可看）：
+
+- Relay candidates 表：节点/所有者/在线/是否上报供给/`disable-relay-server`/
+  `disable-relay-client`/是否被 grant 点名；
+- Relay grants 表：源 → 目标，目标旁标注"未上报供给"或"已被禁用"；
+- 无表单、无写入口；页面在无供给或无 grant 时说明如何启用与如何书写授权。
+
+### 42.3 明确不做（v1）
+
+- 远程启用/禁用 relay server 或 relay client（客户端偏好与 nodeAttrs 决定）；
+- 远程选择 relay、分配/释放 relay 端点、查看 VNI 或 relay 会话（数据面行为，
+  控制面不参与）；
+- relay 流量统计、带宽、按流日志（控制面没有数据面遥测，见 §39.4/§40.3）；
+- 自动为没有 grant 的节点生成 relay 授权（策略必须显式书写）。
+
+### 42.4 测试
+
+- `policy/relay_test.go`：
+  - relay grant 编译为 `CapGrant`（`tailscale.com/cap/relay`）并为目标节点生成
+    `relay-target` companion 规则；客户端只匹配以自己为源的规则；
+  - `RelayGrants` 只报告 relay 行（其他 app cap 不算）、selector 解析为节点、
+    空关系被丢弃；
+  - `dst: autogroup:self` 按源用户展开，tagged 节点不作为源也不作为目标。
+- `control/relays_test.go`：
+  - 视图区分"启用/被禁用/仅愿意/grant 源/无关"五种姿态；
+  - `disable-relay-client` 在源侧可见、`disable-relay-server` 在目标侧可见；
+  - HTTP：匿名 401、read scope 200、member 可读；
+  - Console：两个表、跨角色可读、无表单；
+  - 兼容性：真实客户端路径下 relay grant 进入 `PacketFilters.base`、
+    `disable-relay-*` 进入 self 的 `CapMap`、peer 的 `PeerRelay` 供给可见。
