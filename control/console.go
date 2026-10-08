@@ -15,7 +15,6 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/xunara/xunara/identity"
-	"github.com/xunara/xunara/policy"
 	"github.com/xunara/xunara/state"
 )
 
@@ -1145,28 +1144,14 @@ func (s *Server) handleConsoleDeleteWebhook(w http.ResponseWriter, r *http.Reque
 	s.renderConsole(w, consoleWebhooksTemplate, data)
 }
 
-// handleConsolePolicy implements GET /console/policy.
+// handleConsolePolicy implements GET /console/policy: the read-only policy view
+// that GET /api/v2/policy renders (spec section 34.2).
 func (s *Server) handleConsolePolicy(w http.ResponseWriter, r *http.Request) {
 	_, data, ok := s.consoleSession(w, r, "policy")
 	if !ok {
 		return
 	}
-
-	engine := s.policy.Load()
-	if engine == nil {
-		data["Configured"] = false
-		s.renderConsole(w, consolePolicyTemplate, data)
-		return
-	}
-	data["Configured"] = true
-	data["Path"] = s.cfg.PolicyPath
-	data["Rules"] = engine.RuleCount()
-	data["Warnings"] = engine.Warnings()
-	if doc, err := policy.Load(s.cfg.PolicyPath); err == nil {
-		data["Unsupported"] = doc.Unsupported
-	} else {
-		data["LoadError"] = err.Error()
-	}
+	data["View"] = s.policyView()
 	s.renderConsole(w, consolePolicyTemplate, data)
 }
 

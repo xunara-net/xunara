@@ -1505,3 +1505,69 @@ GET /api/v2/flux/transfers/{id}                         # 详情
 
 管理面取消/删除、内容下载/导出、按文件名全文搜索、跨组织视图、内容扫描
 （DLP 不在 v1，§25）。
+
+## 34. Xunara Warden 管理面（只读，v1）
+
+目标：管理员能回答"这份策略到底写了什么、哪些规则/组/hosts 定义在案、自带
+的 tests 现在是否通过"。策略文档仍然只从磁盘（`-policy`）加载，watcher 在
+文件变化时整体重载：管理面没有任何写入口，也不提供在线编辑 ACL 的通道。
+
+### 34.1 HTTP（`/api/v2`，read scope）
+
+```text
+GET /api/v2/policy
+```
+
+```json
+{
+  "configured": true,
+  "path": "/etc/xunara/policy.hujson",
+  "ruleCount": 3,
+  "warnings": ["acls[1]: src \"user:nobody@example.com\" matches no node"],
+  "unsupported": ["autoApprovers"],
+  "loadError": "",
+  "acls":     [{"action": "accept", "src": ["group:admins"], "dst": ["tag:server:22"], "proto": "tcp"}],
+  "grants":   [{"src": ["group:dev"], "dst": ["tag:db"], "ip": ["tcp:5432"], "app": {}}],
+  "groups":   {"group:admins": ["alice@example.com"]},
+  "hosts":    {"db": "100.64.0.1"},
+  "tagOwners": {"tag:server": ["group:admins"]},
+  "ssh":      [{"action": "check", "src": ["autogroup:member"], "dst": ["tag:server"], "users": ["root"], "acceptEnv": [], "checkPeriod": "12h"}],
+  "nodeAttrs": [{"target": ["tag:server"], "attr": ["https"]}],
+  "tests": {
+    "total": 1,
+    "ran": true,
+    "results": [{"index": 0, "src": "alice@example.com", "proto": "", "pass": true, "failures": []}]
+  }
+}
+```
+
+- `configured=false` 表示部署没有配置策略文档（默认放行，与官方"无策略
+  tailnet"一致）；此时其余字段为空。`path` 是本地文档路径（与 `/api/v1/policy`
+  一致）。
+- 各 section 按文档原样呈现，选择器字符串不做改写；`checkPeriod` 渲染为
+  `"always"` 或 Go duration 字符串（如 `"12h0m0s"`），未写时省略。`ruleCount`
+  是编译后的规则总数（ACLs + grants）。
+- `warnings` 是编译时的不致命问题（例如某选择器当前不匹配任何节点）；
+  `unsupported` 是本 build 认识但未执行的顶层字段——它们被**忽略**，
+  因为未实现的字段只可能收紧语义、不会放宽。
+- `loadError` 非空表示磁盘上的文件现在解析失败：watcher 保留了上一份可用
+  策略，`configured` 与各 section 反映的是**生效中**的那份，管理员应据此
+  判断是否需要修复或重启。
+- `tests` 对当前节点快照运行文档自带的断言（与 `xunara policy check` 相同
+  语义）。`ran=false` 表示没有运行：没有节点、文档没有 tests、或运行前的
+  文档校验失败（原因在 `reason`）。单条断言不满足是结果里的
+  `pass:false` + `failures`，不是 HTTP 错误——管理面永远不因策略内容返回
+  5xx。
+- 认证/角色与其它 v2 read 端点一致；响应 `Cache-Control: no-store`。
+- gRPC 对应 `PlatformService.GetPolicyStatus`（语义、认证、错误映射与 HTTP
+  一致：未认证 `UNAUTHENTICATED`，缺 scope `PERMISSION_DENIED`）。
+- 不做（v1）：修改/热编辑策略、按选择器解析当前节点（"谁能访问谁"）、对
+  任意流的按需评估、ACL 编辑器/语法高亮、`grants` 的 `via`、ACL
+  `srcPosture` 条件（仍未实现，§M13/M14）。
+
+### 34.2 Console
+
+`/console/policy`：文档路径与规则计数；ACL、grants、组、hosts、tagOwners、
+SSH、nodeAttrs 的表；自测结果（每条 `index/src/proto` 的通过/失败与失败
+原因）；`warnings`、`unsupported` 与磁盘解析失败（`loadError`）显式标注。
+只读，页面不提供任何按钮；未配置策略时说明"默认放行"。

@@ -65,6 +65,13 @@ service PlatformService {
   // public netmap information; no secret is returned.
   rpc GetDERPStatus(GetDERPStatusRequest) returns (DERPStatus);
 
+  // GetPolicyStatus reports the ACL document this organization is enforcing
+  // (Xunara Warden) and the outcome of the document's own tests against the
+  // current machines (GET /api/v2/policy). The document is loaded from disk
+  // and reloaded by the watcher: this surface is read-only, and a document
+  // whose tests fail is data, not an RPC error.
+  rpc GetPolicyStatus(GetPolicyStatusRequest) returns (PolicyStatus);
+
   // GetMachineDeviceAttrs returns the device posture attributes a machine
   // reported about itself (PATCH /machine/set-device-attr). Values are the
   // JSON scalars the node sent. Another organization's machine is NOT_FOUND.
@@ -230,6 +237,93 @@ message DERPRegion {
   repeated string hosts = 4;
   // NodeCount is how many machines are homed here.
   uint32 node_count = 5;
+}
+
+message GetPolicyStatusRequest {}
+
+// PolicyStatus mirrors GET /api/v2/policy. Sections other than the counters
+// are empty when configured is false: the deployment has no policy document,
+// and every machine may reach every other machine.
+message PolicyStatus {
+  bool configured = 1;
+  // path is the local document path.
+  string path = 2;
+  // rule_count is the compiled rule total (ACLs plus grants).
+  uint32 rule_count = 3;
+  // warnings are non-fatal compile problems; unsupported lists top-level
+  // fields this build understands but ignores (ignoring can only tighten the
+  // policy, never widen it).
+  repeated string warnings = 4;
+  repeated string unsupported = 5;
+  // load_error is set when the file on disk no longer parses; the sections
+  // still describe the document in force.
+  string load_error = 6;
+  repeated PolicyACLRule acls = 7;
+  repeated PolicyGrant grants = 8;
+  // groups, hosts and tag_owners mirror the document's maps; StringList is
+  // the repeated-value type proto3 maps cannot express directly.
+  map<string, StringList> groups = 9;
+  map<string, string> hosts = 10;
+  map<string, StringList> tag_owners = 11;
+  repeated PolicySSHRule ssh = 12;
+  repeated PolicyNodeAttr node_attrs = 13;
+  PolicyTestSummary tests = 14;
+}
+
+// PolicyACLRule is one acls row as written in the document.
+message PolicyACLRule {
+  string action = 1;
+  string proto = 2;
+  repeated string src = 3;
+  repeated string dst = 4;
+  // users and ports are the pre-v2 names of src and dst.
+  repeated string users = 5;
+  repeated string ports = 6;
+}
+
+// PolicyGrant is one grants (ACL v2) row as written.
+message PolicyGrant {
+  repeated string src = 1;
+  repeated string dst = 2;
+  repeated string ip = 3;
+  // app maps a peer capability to its JSON values, each encoded as JSON text.
+  map<string, StringList> app = 4;
+  repeated string via = 5;
+}
+
+// PolicySSHRule is one ssh row.
+message PolicySSHRule {
+  string action = 1;
+  repeated string src = 2;
+  repeated string dst = 3;
+  repeated string users = 4;
+  repeated string accept_env = 5;
+  // check_period is "always", a Go duration string such as "12h0m0s", or
+  // empty when the row did not set one (the 12h default).
+  string check_period = 6;
+}
+
+// PolicyNodeAttr is one nodeAttrs row.
+message PolicyNodeAttr {
+  repeated string target = 1;
+  repeated string attr = 2;
+}
+
+// PolicyTestSummary reports the document's own assertions against the current
+// machines. ran is false when nothing ran; reason says why.
+message PolicyTestSummary {
+  uint32 total = 1;
+  bool ran = 2;
+  string reason = 3;
+  repeated PolicyTestResult results = 4;
+}
+
+message PolicyTestResult {
+  uint32 index = 1;
+  string src = 2;
+  string proto = 3;
+  bool pass = 4;
+  repeated string failures = 5;
 }
 
 message Machine {

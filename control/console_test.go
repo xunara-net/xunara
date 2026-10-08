@@ -544,6 +544,31 @@ func TestConsolePolicyPage(t *testing.T) {
 	}
 }
 
+// TestConsolePolicyWardenSections covers the read-only Warden tables on the
+// policy page: traffic rules, grants, groups, hosts, tag owners, SSH rules,
+// node attributes and the document's test results.
+func TestConsolePolicyWardenSections(t *testing.T) {
+	s := newServerWithConfig(t, Config{PolicyPath: policyFile(t, wardenPolicy)})
+	seedAPIMachine(t, s, "warden-node", []string{"tag:server"})
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/policy")
+
+	page := bodyString(t, getRequest(t, client, hs.URL+"/console/policy", cookie))
+	for _, want := range []string{
+		"Traffic rules", "tag:server:22", "Grants", "example.com/cap/x",
+		"group:ops", "Hosts", "Tag owners", "SSH rules", "12h0m0s",
+		"Node attributes", "https", "Policy tests", "pass", "autoApprovers",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("policy page lacks %q:\n%s", want, page)
+		}
+	}
+	if strings.Contains(page, `action="/console/policy`) {
+		t.Errorf("the policy page offers a write control:\n%s", page)
+	}
+}
+
 // TestConsoleAuditNewestFirst checks the audit page shows recent events first.
 func TestConsoleAuditNewestFirst(t *testing.T) {
 	s := newTestServer(t)

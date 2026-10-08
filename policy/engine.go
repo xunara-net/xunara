@@ -133,6 +133,11 @@ func NewEngine(doc *Document, opts Options) (*Engine, error) {
 // as selectors that currently match no node.
 func (e *Engine) Warnings() []string { return slices.Clone(e.warnings) }
 
+// Document returns a copy of the document this engine compiled. The read-only
+// management surface renders it; the copy keeps a caller from mutating the
+// engine the tailnet is enforcing.
+func (e *Engine) Document() *Document { return e.doc.Clone() }
+
 // RuleCount reports how many traffic rows the document declares: ACLs plus
 // grants.
 func (e *Engine) RuleCount() int { return len(e.rules) + len(e.grants) }

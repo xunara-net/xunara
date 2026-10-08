@@ -235,3 +235,93 @@ func Load(path string) (*Document, error) {
 	}
 	return Parse(raw)
 }
+
+// Clone returns a deep copy of the document. The compiler keeps its own copy
+// for the lifetime of an engine, so callers that want to read or render the
+// policy in force (the management surface) can never mutate it.
+func (d *Document) Clone() *Document {
+	if d == nil {
+		return nil
+	}
+	c := &Document{
+		ACLs:        make([]ACLRow, len(d.ACLs)),
+		Grants:      make([]GrantRow, len(d.Grants)),
+		Groups:      cloneStringSlices(d.Groups),
+		Hosts:       cloneStringMap(d.Hosts),
+		TagOwners:   cloneStringSlices(d.TagOwners),
+		SSH:         make([]SSHRow, len(d.SSH)),
+		NodeAttrs:   make([]NodeAttrRow, len(d.NodeAttrs)),
+		Tests:       make([]Test, len(d.Tests)),
+		Unsupported: slices.Clone(d.Unsupported),
+	}
+	for i, row := range d.ACLs {
+		row.Src = slices.Clone(row.Src)
+		row.Dst = slices.Clone(row.Dst)
+		row.Users = slices.Clone(row.Users)
+		row.Ports = slices.Clone(row.Ports)
+		c.ACLs[i] = row
+	}
+	for i, row := range d.Grants {
+		row.Src = slices.Clone(row.Src)
+		row.Dst = slices.Clone(row.Dst)
+		row.IP = slices.Clone(row.IP)
+		row.Via = slices.Clone(row.Via)
+		if row.App != nil {
+			app := make(map[string][]json.RawMessage, len(row.App))
+			for name, values := range row.App {
+				cloned := make([]json.RawMessage, len(values))
+				for j, value := range values {
+					cloned[j] = slices.Clone(value)
+				}
+				app[name] = cloned
+			}
+			row.App = app
+		}
+		c.Grants[i] = row
+	}
+	for i, row := range d.SSH {
+		row.Src = slices.Clone(row.Src)
+		row.Dst = slices.Clone(row.Dst)
+		row.Users = slices.Clone(row.Users)
+		row.AcceptEnv = slices.Clone(row.AcceptEnv)
+		if row.CheckPeriod != nil {
+			period := *row.CheckPeriod
+			row.CheckPeriod = &period
+		}
+		c.SSH[i] = row
+	}
+	for i, row := range d.NodeAttrs {
+		row.Target = slices.Clone(row.Target)
+		row.Attr = slices.Clone(row.Attr)
+		c.NodeAttrs[i] = row
+	}
+	for i, test := range d.Tests {
+		test.Accept = slices.Clone(test.Accept)
+		test.Deny = slices.Clone(test.Deny)
+		test.Allow = slices.Clone(test.Allow)
+		c.Tests[i] = test
+	}
+	return c
+}
+
+func cloneStringSlices(m map[string][]string) map[string][]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string][]string, len(m))
+	for key, values := range m {
+		out[key] = slices.Clone(values)
+	}
+	return out
+}
+
+func cloneStringMap(m map[string]string) map[string]string {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for key, value := range m {
+		out[key] = value
+	}
+	return out
+}

@@ -51,6 +51,7 @@ func (s *Server) apiV2Router() http.Handler {
 	r.Get("/organization", s.handleAPIV2Organization)
 	r.Get("/tka", s.handleAPIV2TKA)
 	r.Get("/derp", s.handleAPIV2DERP)
+	r.Get("/policy", s.handleAPIV2Policy)
 	r.Get("/id-token", s.handleAPIV2IDToken)
 
 	r.Get("/machines", s.handleAPIV2Machines)

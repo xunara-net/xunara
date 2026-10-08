@@ -959,6 +959,652 @@ func (x *DERPRegion) GetNodeCount() uint32 {
 	return 0
 }
 
+type GetPolicyStatusRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetPolicyStatusRequest) Reset() {
+	*x = GetPolicyStatusRequest{}
+	mi := &file_xunara_v2_platform_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetPolicyStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetPolicyStatusRequest) ProtoMessage() {}
+
+func (x *GetPolicyStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_xunara_v2_platform_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetPolicyStatusRequest.ProtoReflect.Descriptor instead.
+func (*GetPolicyStatusRequest) Descriptor() ([]byte, []int) {
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{13}
+}
+
+// PolicyStatus mirrors GET /api/v2/policy. Sections other than the counters
+// are empty when configured is false: the deployment has no policy document,
+// and every machine may reach every other machine.
+type PolicyStatus struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Configured bool                   `protobuf:"varint,1,opt,name=configured,proto3" json:"configured,omitempty"`
+	// path is the local document path.
+	Path string `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
+	// rule_count is the compiled rule total (ACLs plus grants).
+	RuleCount uint32 `protobuf:"varint,3,opt,name=rule_count,json=ruleCount,proto3" json:"rule_count,omitempty"`
+	// warnings are non-fatal compile problems; unsupported lists top-level
+	// fields this build understands but ignores (ignoring can only tighten the
+	// policy, never widen it).
+	Warnings    []string `protobuf:"bytes,4,rep,name=warnings,proto3" json:"warnings,omitempty"`
+	Unsupported []string `protobuf:"bytes,5,rep,name=unsupported,proto3" json:"unsupported,omitempty"`
+	// load_error is set when the file on disk no longer parses; the sections
+	// still describe the document in force.
+	LoadError string           `protobuf:"bytes,6,opt,name=load_error,json=loadError,proto3" json:"load_error,omitempty"`
+	Acls      []*PolicyACLRule `protobuf:"bytes,7,rep,name=acls,proto3" json:"acls,omitempty"`
+	Grants    []*PolicyGrant   `protobuf:"bytes,8,rep,name=grants,proto3" json:"grants,omitempty"`
+	// groups, hosts and tag_owners mirror the document's maps; StringList is
+	// the repeated-value type proto3 maps cannot express directly.
+	Groups        map[string]*StringList `protobuf:"bytes,9,rep,name=groups,proto3" json:"groups,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Hosts         map[string]string      `protobuf:"bytes,10,rep,name=hosts,proto3" json:"hosts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	TagOwners     map[string]*StringList `protobuf:"bytes,11,rep,name=tag_owners,json=tagOwners,proto3" json:"tag_owners,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Ssh           []*PolicySSHRule       `protobuf:"bytes,12,rep,name=ssh,proto3" json:"ssh,omitempty"`
+	NodeAttrs     []*PolicyNodeAttr      `protobuf:"bytes,13,rep,name=node_attrs,json=nodeAttrs,proto3" json:"node_attrs,omitempty"`
+	Tests         *PolicyTestSummary     `protobuf:"bytes,14,opt,name=tests,proto3" json:"tests,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PolicyStatus) Reset() {
+	*x = PolicyStatus{}
+	mi := &file_xunara_v2_platform_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PolicyStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PolicyStatus) ProtoMessage() {}
+
+func (x *PolicyStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_xunara_v2_platform_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PolicyStatus.ProtoReflect.Descriptor instead.
+func (*PolicyStatus) Descriptor() ([]byte, []int) {
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *PolicyStatus) GetConfigured() bool {
+	if x != nil {
+		return x.Configured
+	}
+	return false
+}
+
+func (x *PolicyStatus) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *PolicyStatus) GetRuleCount() uint32 {
+	if x != nil {
+		return x.RuleCount
+	}
+	return 0
+}
+
+func (x *PolicyStatus) GetWarnings() []string {
+	if x != nil {
+		return x.Warnings
+	}
+	return nil
+}
+
+func (x *PolicyStatus) GetUnsupported() []string {
+	if x != nil {
+		return x.Unsupported
+	}
+	return nil
+}
+
+func (x *PolicyStatus) GetLoadError() string {
+	if x != nil {
+		return x.LoadError
+	}
+	return ""
+}
+
+func (x *PolicyStatus) GetAcls() []*PolicyACLRule {
+	if x != nil {
+		return x.Acls
+	}
+	return nil
+}
+
+func (x *PolicyStatus) GetGrants() []*PolicyGrant {
+	if x != nil {
+		return x.Grants
+	}
+	return nil
+}
+
+func (x *PolicyStatus) GetGroups() map[string]*StringList {
+	if x != nil {
+		return x.Groups
+	}
+	return nil
+}
+
+func (x *PolicyStatus) GetHosts() map[string]string {
+	if x != nil {
+		return x.Hosts
+	}
+	return nil
+}
+
+func (x *PolicyStatus) GetTagOwners() map[string]*StringList {
+	if x != nil {
+		return x.TagOwners
+	}
+	return nil
+}
+
+func (x *PolicyStatus) GetSsh() []*PolicySSHRule {
+	if x != nil {
+		return x.Ssh
+	}
+	return nil
+}
+
+func (x *PolicyStatus) GetNodeAttrs() []*PolicyNodeAttr {
+	if x != nil {
+		return x.NodeAttrs
+	}
+	return nil
+}
+
+func (x *PolicyStatus) GetTests() *PolicyTestSummary {
+	if x != nil {
+		return x.Tests
+	}
+	return nil
+}
+
+// PolicyACLRule is one acls row as written in the document.
+type PolicyACLRule struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Action string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"`
+	Proto  string                 `protobuf:"bytes,2,opt,name=proto,proto3" json:"proto,omitempty"`
+	Src    []string               `protobuf:"bytes,3,rep,name=src,proto3" json:"src,omitempty"`
+	Dst    []string               `protobuf:"bytes,4,rep,name=dst,proto3" json:"dst,omitempty"`
+	// users and ports are the pre-v2 names of src and dst.
+	Users         []string `protobuf:"bytes,5,rep,name=users,proto3" json:"users,omitempty"`
+	Ports         []string `protobuf:"bytes,6,rep,name=ports,proto3" json:"ports,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PolicyACLRule) Reset() {
+	*x = PolicyACLRule{}
+	mi := &file_xunara_v2_platform_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PolicyACLRule) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PolicyACLRule) ProtoMessage() {}
+
+func (x *PolicyACLRule) ProtoReflect() protoreflect.Message {
+	mi := &file_xunara_v2_platform_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PolicyACLRule.ProtoReflect.Descriptor instead.
+func (*PolicyACLRule) Descriptor() ([]byte, []int) {
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *PolicyACLRule) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *PolicyACLRule) GetProto() string {
+	if x != nil {
+		return x.Proto
+	}
+	return ""
+}
+
+func (x *PolicyACLRule) GetSrc() []string {
+	if x != nil {
+		return x.Src
+	}
+	return nil
+}
+
+func (x *PolicyACLRule) GetDst() []string {
+	if x != nil {
+		return x.Dst
+	}
+	return nil
+}
+
+func (x *PolicyACLRule) GetUsers() []string {
+	if x != nil {
+		return x.Users
+	}
+	return nil
+}
+
+func (x *PolicyACLRule) GetPorts() []string {
+	if x != nil {
+		return x.Ports
+	}
+	return nil
+}
+
+// PolicyGrant is one grants (ACL v2) row as written.
+type PolicyGrant struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Src   []string               `protobuf:"bytes,1,rep,name=src,proto3" json:"src,omitempty"`
+	Dst   []string               `protobuf:"bytes,2,rep,name=dst,proto3" json:"dst,omitempty"`
+	Ip    []string               `protobuf:"bytes,3,rep,name=ip,proto3" json:"ip,omitempty"`
+	// app maps a peer capability to its JSON values, each encoded as JSON text.
+	App           map[string]*StringList `protobuf:"bytes,4,rep,name=app,proto3" json:"app,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Via           []string               `protobuf:"bytes,5,rep,name=via,proto3" json:"via,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PolicyGrant) Reset() {
+	*x = PolicyGrant{}
+	mi := &file_xunara_v2_platform_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PolicyGrant) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PolicyGrant) ProtoMessage() {}
+
+func (x *PolicyGrant) ProtoReflect() protoreflect.Message {
+	mi := &file_xunara_v2_platform_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PolicyGrant.ProtoReflect.Descriptor instead.
+func (*PolicyGrant) Descriptor() ([]byte, []int) {
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *PolicyGrant) GetSrc() []string {
+	if x != nil {
+		return x.Src
+	}
+	return nil
+}
+
+func (x *PolicyGrant) GetDst() []string {
+	if x != nil {
+		return x.Dst
+	}
+	return nil
+}
+
+func (x *PolicyGrant) GetIp() []string {
+	if x != nil {
+		return x.Ip
+	}
+	return nil
+}
+
+func (x *PolicyGrant) GetApp() map[string]*StringList {
+	if x != nil {
+		return x.App
+	}
+	return nil
+}
+
+func (x *PolicyGrant) GetVia() []string {
+	if x != nil {
+		return x.Via
+	}
+	return nil
+}
+
+// PolicySSHRule is one ssh row.
+type PolicySSHRule struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Action    string                 `protobuf:"bytes,1,opt,name=action,proto3" json:"action,omitempty"`
+	Src       []string               `protobuf:"bytes,2,rep,name=src,proto3" json:"src,omitempty"`
+	Dst       []string               `protobuf:"bytes,3,rep,name=dst,proto3" json:"dst,omitempty"`
+	Users     []string               `protobuf:"bytes,4,rep,name=users,proto3" json:"users,omitempty"`
+	AcceptEnv []string               `protobuf:"bytes,5,rep,name=accept_env,json=acceptEnv,proto3" json:"accept_env,omitempty"`
+	// check_period is "always", a Go duration string such as "12h0m0s", or
+	// empty when the row did not set one (the 12h default).
+	CheckPeriod   string `protobuf:"bytes,6,opt,name=check_period,json=checkPeriod,proto3" json:"check_period,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PolicySSHRule) Reset() {
+	*x = PolicySSHRule{}
+	mi := &file_xunara_v2_platform_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PolicySSHRule) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PolicySSHRule) ProtoMessage() {}
+
+func (x *PolicySSHRule) ProtoReflect() protoreflect.Message {
+	mi := &file_xunara_v2_platform_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PolicySSHRule.ProtoReflect.Descriptor instead.
+func (*PolicySSHRule) Descriptor() ([]byte, []int) {
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *PolicySSHRule) GetAction() string {
+	if x != nil {
+		return x.Action
+	}
+	return ""
+}
+
+func (x *PolicySSHRule) GetSrc() []string {
+	if x != nil {
+		return x.Src
+	}
+	return nil
+}
+
+func (x *PolicySSHRule) GetDst() []string {
+	if x != nil {
+		return x.Dst
+	}
+	return nil
+}
+
+func (x *PolicySSHRule) GetUsers() []string {
+	if x != nil {
+		return x.Users
+	}
+	return nil
+}
+
+func (x *PolicySSHRule) GetAcceptEnv() []string {
+	if x != nil {
+		return x.AcceptEnv
+	}
+	return nil
+}
+
+func (x *PolicySSHRule) GetCheckPeriod() string {
+	if x != nil {
+		return x.CheckPeriod
+	}
+	return ""
+}
+
+// PolicyNodeAttr is one nodeAttrs row.
+type PolicyNodeAttr struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Target        []string               `protobuf:"bytes,1,rep,name=target,proto3" json:"target,omitempty"`
+	Attr          []string               `protobuf:"bytes,2,rep,name=attr,proto3" json:"attr,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PolicyNodeAttr) Reset() {
+	*x = PolicyNodeAttr{}
+	mi := &file_xunara_v2_platform_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PolicyNodeAttr) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PolicyNodeAttr) ProtoMessage() {}
+
+func (x *PolicyNodeAttr) ProtoReflect() protoreflect.Message {
+	mi := &file_xunara_v2_platform_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PolicyNodeAttr.ProtoReflect.Descriptor instead.
+func (*PolicyNodeAttr) Descriptor() ([]byte, []int) {
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *PolicyNodeAttr) GetTarget() []string {
+	if x != nil {
+		return x.Target
+	}
+	return nil
+}
+
+func (x *PolicyNodeAttr) GetAttr() []string {
+	if x != nil {
+		return x.Attr
+	}
+	return nil
+}
+
+// PolicyTestSummary reports the document's own assertions against the current
+// machines. ran is false when nothing ran; reason says why.
+type PolicyTestSummary struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Total         uint32                 `protobuf:"varint,1,opt,name=total,proto3" json:"total,omitempty"`
+	Ran           bool                   `protobuf:"varint,2,opt,name=ran,proto3" json:"ran,omitempty"`
+	Reason        string                 `protobuf:"bytes,3,opt,name=reason,proto3" json:"reason,omitempty"`
+	Results       []*PolicyTestResult    `protobuf:"bytes,4,rep,name=results,proto3" json:"results,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PolicyTestSummary) Reset() {
+	*x = PolicyTestSummary{}
+	mi := &file_xunara_v2_platform_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PolicyTestSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PolicyTestSummary) ProtoMessage() {}
+
+func (x *PolicyTestSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_xunara_v2_platform_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PolicyTestSummary.ProtoReflect.Descriptor instead.
+func (*PolicyTestSummary) Descriptor() ([]byte, []int) {
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *PolicyTestSummary) GetTotal() uint32 {
+	if x != nil {
+		return x.Total
+	}
+	return 0
+}
+
+func (x *PolicyTestSummary) GetRan() bool {
+	if x != nil {
+		return x.Ran
+	}
+	return false
+}
+
+func (x *PolicyTestSummary) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *PolicyTestSummary) GetResults() []*PolicyTestResult {
+	if x != nil {
+		return x.Results
+	}
+	return nil
+}
+
+type PolicyTestResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Index         uint32                 `protobuf:"varint,1,opt,name=index,proto3" json:"index,omitempty"`
+	Src           string                 `protobuf:"bytes,2,opt,name=src,proto3" json:"src,omitempty"`
+	Proto         string                 `protobuf:"bytes,3,opt,name=proto,proto3" json:"proto,omitempty"`
+	Pass          bool                   `protobuf:"varint,4,opt,name=pass,proto3" json:"pass,omitempty"`
+	Failures      []string               `protobuf:"bytes,5,rep,name=failures,proto3" json:"failures,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PolicyTestResult) Reset() {
+	*x = PolicyTestResult{}
+	mi := &file_xunara_v2_platform_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PolicyTestResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PolicyTestResult) ProtoMessage() {}
+
+func (x *PolicyTestResult) ProtoReflect() protoreflect.Message {
+	mi := &file_xunara_v2_platform_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PolicyTestResult.ProtoReflect.Descriptor instead.
+func (*PolicyTestResult) Descriptor() ([]byte, []int) {
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *PolicyTestResult) GetIndex() uint32 {
+	if x != nil {
+		return x.Index
+	}
+	return 0
+}
+
+func (x *PolicyTestResult) GetSrc() string {
+	if x != nil {
+		return x.Src
+	}
+	return ""
+}
+
+func (x *PolicyTestResult) GetProto() string {
+	if x != nil {
+		return x.Proto
+	}
+	return ""
+}
+
+func (x *PolicyTestResult) GetPass() bool {
+	if x != nil {
+		return x.Pass
+	}
+	return false
+}
+
+func (x *PolicyTestResult) GetFailures() []string {
+	if x != nil {
+		return x.Failures
+	}
+	return nil
+}
+
 type Machine struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Id              uint64                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -990,7 +1636,7 @@ type Machine struct {
 
 func (x *Machine) Reset() {
 	*x = Machine{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[13]
+	mi := &file_xunara_v2_platform_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1002,7 +1648,7 @@ func (x *Machine) String() string {
 func (*Machine) ProtoMessage() {}
 
 func (x *Machine) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[13]
+	mi := &file_xunara_v2_platform_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1015,7 +1661,7 @@ func (x *Machine) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Machine.ProtoReflect.Descriptor instead.
 func (*Machine) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{13}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *Machine) GetId() uint64 {
@@ -1160,7 +1806,7 @@ type GetMachineDeviceAttrsRequest struct {
 
 func (x *GetMachineDeviceAttrsRequest) Reset() {
 	*x = GetMachineDeviceAttrsRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[14]
+	mi := &file_xunara_v2_platform_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1172,7 +1818,7 @@ func (x *GetMachineDeviceAttrsRequest) String() string {
 func (*GetMachineDeviceAttrsRequest) ProtoMessage() {}
 
 func (x *GetMachineDeviceAttrsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[14]
+	mi := &file_xunara_v2_platform_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1185,7 +1831,7 @@ func (x *GetMachineDeviceAttrsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMachineDeviceAttrsRequest.ProtoReflect.Descriptor instead.
 func (*GetMachineDeviceAttrsRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{14}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *GetMachineDeviceAttrsRequest) GetMachineId() uint64 {
@@ -1208,7 +1854,7 @@ type MachineDeviceAttrs struct {
 
 func (x *MachineDeviceAttrs) Reset() {
 	*x = MachineDeviceAttrs{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[15]
+	mi := &file_xunara_v2_platform_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1220,7 +1866,7 @@ func (x *MachineDeviceAttrs) String() string {
 func (*MachineDeviceAttrs) ProtoMessage() {}
 
 func (x *MachineDeviceAttrs) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[15]
+	mi := &file_xunara_v2_platform_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1233,7 +1879,7 @@ func (x *MachineDeviceAttrs) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MachineDeviceAttrs.ProtoReflect.Descriptor instead.
 func (*MachineDeviceAttrs) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{15}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *MachineDeviceAttrs) GetMachineId() uint64 {
@@ -1281,7 +1927,7 @@ type ReachSession struct {
 
 func (x *ReachSession) Reset() {
 	*x = ReachSession{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[16]
+	mi := &file_xunara_v2_platform_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1293,7 +1939,7 @@ func (x *ReachSession) String() string {
 func (*ReachSession) ProtoMessage() {}
 
 func (x *ReachSession) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[16]
+	mi := &file_xunara_v2_platform_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1306,7 +1952,7 @@ func (x *ReachSession) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReachSession.ProtoReflect.Descriptor instead.
 func (*ReachSession) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{16}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ReachSession) GetId() string {
@@ -1405,7 +2051,7 @@ type ReachPeer struct {
 
 func (x *ReachPeer) Reset() {
 	*x = ReachPeer{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[17]
+	mi := &file_xunara_v2_platform_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1417,7 +2063,7 @@ func (x *ReachPeer) String() string {
 func (*ReachPeer) ProtoMessage() {}
 
 func (x *ReachPeer) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[17]
+	mi := &file_xunara_v2_platform_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1430,7 +2076,7 @@ func (x *ReachPeer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReachPeer.ProtoReflect.Descriptor instead.
 func (*ReachPeer) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{17}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *ReachPeer) GetNodeId() uint64 {
@@ -1465,7 +2111,7 @@ type ReachOutputBytes struct {
 
 func (x *ReachOutputBytes) Reset() {
 	*x = ReachOutputBytes{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[18]
+	mi := &file_xunara_v2_platform_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1477,7 +2123,7 @@ func (x *ReachOutputBytes) String() string {
 func (*ReachOutputBytes) ProtoMessage() {}
 
 func (x *ReachOutputBytes) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[18]
+	mi := &file_xunara_v2_platform_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1490,7 +2136,7 @@ func (x *ReachOutputBytes) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReachOutputBytes.ProtoReflect.Descriptor instead.
 func (*ReachOutputBytes) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{18}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ReachOutputBytes) GetStdout() int64 {
@@ -1524,7 +2170,7 @@ type ListReachSessionsRequest struct {
 
 func (x *ListReachSessionsRequest) Reset() {
 	*x = ListReachSessionsRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[19]
+	mi := &file_xunara_v2_platform_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1536,7 +2182,7 @@ func (x *ListReachSessionsRequest) String() string {
 func (*ListReachSessionsRequest) ProtoMessage() {}
 
 func (x *ListReachSessionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[19]
+	mi := &file_xunara_v2_platform_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1549,7 +2195,7 @@ func (x *ListReachSessionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListReachSessionsRequest.ProtoReflect.Descriptor instead.
 func (*ListReachSessionsRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{19}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *ListReachSessionsRequest) GetPageSize() uint32 {
@@ -1590,7 +2236,7 @@ type ListReachSessionsResponse struct {
 
 func (x *ListReachSessionsResponse) Reset() {
 	*x = ListReachSessionsResponse{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[20]
+	mi := &file_xunara_v2_platform_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1602,7 +2248,7 @@ func (x *ListReachSessionsResponse) String() string {
 func (*ListReachSessionsResponse) ProtoMessage() {}
 
 func (x *ListReachSessionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[20]
+	mi := &file_xunara_v2_platform_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1615,7 +2261,7 @@ func (x *ListReachSessionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListReachSessionsResponse.ProtoReflect.Descriptor instead.
 func (*ListReachSessionsResponse) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{20}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *ListReachSessionsResponse) GetSessions() []*ReachSession {
@@ -1643,7 +2289,7 @@ type FluxPeer struct {
 
 func (x *FluxPeer) Reset() {
 	*x = FluxPeer{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[21]
+	mi := &file_xunara_v2_platform_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1655,7 +2301,7 @@ func (x *FluxPeer) String() string {
 func (*FluxPeer) ProtoMessage() {}
 
 func (x *FluxPeer) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[21]
+	mi := &file_xunara_v2_platform_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1668,7 +2314,7 @@ func (x *FluxPeer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FluxPeer.ProtoReflect.Descriptor instead.
 func (*FluxPeer) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{21}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *FluxPeer) GetNodeId() uint64 {
@@ -1717,7 +2363,7 @@ type FluxTransfer struct {
 
 func (x *FluxTransfer) Reset() {
 	*x = FluxTransfer{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[22]
+	mi := &file_xunara_v2_platform_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1729,7 +2375,7 @@ func (x *FluxTransfer) String() string {
 func (*FluxTransfer) ProtoMessage() {}
 
 func (x *FluxTransfer) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[22]
+	mi := &file_xunara_v2_platform_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1742,7 +2388,7 @@ func (x *FluxTransfer) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FluxTransfer.ProtoReflect.Descriptor instead.
 func (*FluxTransfer) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{22}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *FluxTransfer) GetId() string {
@@ -1837,7 +2483,7 @@ type ListFluxTransfersRequest struct {
 
 func (x *ListFluxTransfersRequest) Reset() {
 	*x = ListFluxTransfersRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[23]
+	mi := &file_xunara_v2_platform_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1849,7 +2495,7 @@ func (x *ListFluxTransfersRequest) String() string {
 func (*ListFluxTransfersRequest) ProtoMessage() {}
 
 func (x *ListFluxTransfersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[23]
+	mi := &file_xunara_v2_platform_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1862,7 +2508,7 @@ func (x *ListFluxTransfersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFluxTransfersRequest.ProtoReflect.Descriptor instead.
 func (*ListFluxTransfersRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{23}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *ListFluxTransfersRequest) GetState() string {
@@ -1903,7 +2549,7 @@ type ListFluxTransfersResponse struct {
 
 func (x *ListFluxTransfersResponse) Reset() {
 	*x = ListFluxTransfersResponse{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[24]
+	mi := &file_xunara_v2_platform_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1915,7 +2561,7 @@ func (x *ListFluxTransfersResponse) String() string {
 func (*ListFluxTransfersResponse) ProtoMessage() {}
 
 func (x *ListFluxTransfersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[24]
+	mi := &file_xunara_v2_platform_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1928,7 +2574,7 @@ func (x *ListFluxTransfersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListFluxTransfersResponse.ProtoReflect.Descriptor instead.
 func (*ListFluxTransfersResponse) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{24}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ListFluxTransfersResponse) GetTransfers() []*FluxTransfer {
@@ -1954,7 +2600,7 @@ type GetFluxTransferRequest struct {
 
 func (x *GetFluxTransferRequest) Reset() {
 	*x = GetFluxTransferRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[25]
+	mi := &file_xunara_v2_platform_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1966,7 +2612,7 @@ func (x *GetFluxTransferRequest) String() string {
 func (*GetFluxTransferRequest) ProtoMessage() {}
 
 func (x *GetFluxTransferRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[25]
+	mi := &file_xunara_v2_platform_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1979,7 +2625,7 @@ func (x *GetFluxTransferRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetFluxTransferRequest.ProtoReflect.Descriptor instead.
 func (*GetFluxTransferRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{25}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *GetFluxTransferRequest) GetId() string {
@@ -1998,7 +2644,7 @@ type GetReachSessionRequest struct {
 
 func (x *GetReachSessionRequest) Reset() {
 	*x = GetReachSessionRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[26]
+	mi := &file_xunara_v2_platform_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2010,7 +2656,7 @@ func (x *GetReachSessionRequest) String() string {
 func (*GetReachSessionRequest) ProtoMessage() {}
 
 func (x *GetReachSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[26]
+	mi := &file_xunara_v2_platform_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2023,7 +2669,7 @@ func (x *GetReachSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetReachSessionRequest.ProtoReflect.Descriptor instead.
 func (*GetReachSessionRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{26}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *GetReachSessionRequest) GetId() string {
@@ -2051,7 +2697,7 @@ type ListMachinesRequest struct {
 
 func (x *ListMachinesRequest) Reset() {
 	*x = ListMachinesRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[27]
+	mi := &file_xunara_v2_platform_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2063,7 +2709,7 @@ func (x *ListMachinesRequest) String() string {
 func (*ListMachinesRequest) ProtoMessage() {}
 
 func (x *ListMachinesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[27]
+	mi := &file_xunara_v2_platform_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2076,7 +2722,7 @@ func (x *ListMachinesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMachinesRequest.ProtoReflect.Descriptor instead.
 func (*ListMachinesRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{27}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ListMachinesRequest) GetPageSize() uint32 {
@@ -2124,7 +2770,7 @@ type ListMachinesResponse struct {
 
 func (x *ListMachinesResponse) Reset() {
 	*x = ListMachinesResponse{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[28]
+	mi := &file_xunara_v2_platform_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2136,7 +2782,7 @@ func (x *ListMachinesResponse) String() string {
 func (*ListMachinesResponse) ProtoMessage() {}
 
 func (x *ListMachinesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[28]
+	mi := &file_xunara_v2_platform_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2149,7 +2795,7 @@ func (x *ListMachinesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMachinesResponse.ProtoReflect.Descriptor instead.
 func (*ListMachinesResponse) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{28}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ListMachinesResponse) GetMachines() []*Machine {
@@ -2183,7 +2829,7 @@ type ListServicesRequest struct {
 
 func (x *ListServicesRequest) Reset() {
 	*x = ListServicesRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[29]
+	mi := &file_xunara_v2_platform_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2195,7 +2841,7 @@ func (x *ListServicesRequest) String() string {
 func (*ListServicesRequest) ProtoMessage() {}
 
 func (x *ListServicesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[29]
+	mi := &file_xunara_v2_platform_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2208,7 +2854,7 @@ func (x *ListServicesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListServicesRequest.ProtoReflect.Descriptor instead.
 func (*ListServicesRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{29}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ListServicesRequest) GetPageSize() uint32 {
@@ -2249,7 +2895,7 @@ type ListServicesResponse struct {
 
 func (x *ListServicesResponse) Reset() {
 	*x = ListServicesResponse{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[30]
+	mi := &file_xunara_v2_platform_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2261,7 +2907,7 @@ func (x *ListServicesResponse) String() string {
 func (*ListServicesResponse) ProtoMessage() {}
 
 func (x *ListServicesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[30]
+	mi := &file_xunara_v2_platform_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2274,7 +2920,7 @@ func (x *ListServicesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListServicesResponse.ProtoReflect.Descriptor instead.
 func (*ListServicesResponse) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{30}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ListServicesResponse) GetServices() []*Service {
@@ -2320,7 +2966,7 @@ type Service struct {
 
 func (x *Service) Reset() {
 	*x = Service{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[31]
+	mi := &file_xunara_v2_platform_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2332,7 +2978,7 @@ func (x *Service) String() string {
 func (*Service) ProtoMessage() {}
 
 func (x *Service) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[31]
+	mi := &file_xunara_v2_platform_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2345,7 +2991,7 @@ func (x *Service) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Service.ProtoReflect.Descriptor instead.
 func (*Service) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{31}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *Service) GetName() string {
@@ -2446,7 +3092,7 @@ type AuditEvent struct {
 
 func (x *AuditEvent) Reset() {
 	*x = AuditEvent{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[32]
+	mi := &file_xunara_v2_platform_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2458,7 +3104,7 @@ func (x *AuditEvent) String() string {
 func (*AuditEvent) ProtoMessage() {}
 
 func (x *AuditEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[32]
+	mi := &file_xunara_v2_platform_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2471,7 +3117,7 @@ func (x *AuditEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditEvent.ProtoReflect.Descriptor instead.
 func (*AuditEvent) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{32}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *AuditEvent) GetId() uint64 {
@@ -2533,7 +3179,7 @@ type ListAuditRequest struct {
 
 func (x *ListAuditRequest) Reset() {
 	*x = ListAuditRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[33]
+	mi := &file_xunara_v2_platform_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2545,7 +3191,7 @@ func (x *ListAuditRequest) String() string {
 func (*ListAuditRequest) ProtoMessage() {}
 
 func (x *ListAuditRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[33]
+	mi := &file_xunara_v2_platform_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2558,7 +3204,7 @@ func (x *ListAuditRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAuditRequest.ProtoReflect.Descriptor instead.
 func (*ListAuditRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{33}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *ListAuditRequest) GetPageSize() uint32 {
@@ -2606,7 +3252,7 @@ type ListAuditResponse struct {
 
 func (x *ListAuditResponse) Reset() {
 	*x = ListAuditResponse{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[34]
+	mi := &file_xunara_v2_platform_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2618,7 +3264,7 @@ func (x *ListAuditResponse) String() string {
 func (*ListAuditResponse) ProtoMessage() {}
 
 func (x *ListAuditResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[34]
+	mi := &file_xunara_v2_platform_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2631,7 +3277,7 @@ func (x *ListAuditResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListAuditResponse.ProtoReflect.Descriptor instead.
 func (*ListAuditResponse) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{34}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ListAuditResponse) GetEvents() []*AuditEvent {
@@ -2665,7 +3311,7 @@ type Webhook struct {
 
 func (x *Webhook) Reset() {
 	*x = Webhook{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[35]
+	mi := &file_xunara_v2_platform_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2677,7 +3323,7 @@ func (x *Webhook) String() string {
 func (*Webhook) ProtoMessage() {}
 
 func (x *Webhook) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[35]
+	mi := &file_xunara_v2_platform_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2690,7 +3336,7 @@ func (x *Webhook) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Webhook.ProtoReflect.Descriptor instead.
 func (*Webhook) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{35}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *Webhook) GetId() string {
@@ -2750,7 +3396,7 @@ type ListWebhooksRequest struct {
 
 func (x *ListWebhooksRequest) Reset() {
 	*x = ListWebhooksRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[36]
+	mi := &file_xunara_v2_platform_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2762,7 +3408,7 @@ func (x *ListWebhooksRequest) String() string {
 func (*ListWebhooksRequest) ProtoMessage() {}
 
 func (x *ListWebhooksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[36]
+	mi := &file_xunara_v2_platform_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2775,7 +3421,7 @@ func (x *ListWebhooksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWebhooksRequest.ProtoReflect.Descriptor instead.
 func (*ListWebhooksRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{36}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{44}
 }
 
 type ListWebhooksResponse struct {
@@ -2787,7 +3433,7 @@ type ListWebhooksResponse struct {
 
 func (x *ListWebhooksResponse) Reset() {
 	*x = ListWebhooksResponse{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[37]
+	mi := &file_xunara_v2_platform_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2799,7 +3445,7 @@ func (x *ListWebhooksResponse) String() string {
 func (*ListWebhooksResponse) ProtoMessage() {}
 
 func (x *ListWebhooksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[37]
+	mi := &file_xunara_v2_platform_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2812,7 +3458,7 @@ func (x *ListWebhooksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWebhooksResponse.ProtoReflect.Descriptor instead.
 func (*ListWebhooksResponse) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{37}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *ListWebhooksResponse) GetWebhooks() []*Webhook {
@@ -2831,7 +3477,7 @@ type RevokeAgentTokenRequest struct {
 
 func (x *RevokeAgentTokenRequest) Reset() {
 	*x = RevokeAgentTokenRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[38]
+	mi := &file_xunara_v2_platform_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2843,7 +3489,7 @@ func (x *RevokeAgentTokenRequest) String() string {
 func (*RevokeAgentTokenRequest) ProtoMessage() {}
 
 func (x *RevokeAgentTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[38]
+	mi := &file_xunara_v2_platform_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2856,7 +3502,7 @@ func (x *RevokeAgentTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeAgentTokenRequest.ProtoReflect.Descriptor instead.
 func (*RevokeAgentTokenRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{38}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *RevokeAgentTokenRequest) GetId() string {
@@ -2876,7 +3522,7 @@ type RevokeAgentTokenResponse struct {
 
 func (x *RevokeAgentTokenResponse) Reset() {
 	*x = RevokeAgentTokenResponse{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[39]
+	mi := &file_xunara_v2_platform_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2888,7 +3534,7 @@ func (x *RevokeAgentTokenResponse) String() string {
 func (*RevokeAgentTokenResponse) ProtoMessage() {}
 
 func (x *RevokeAgentTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[39]
+	mi := &file_xunara_v2_platform_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2901,7 +3547,7 @@ func (x *RevokeAgentTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeAgentTokenResponse.ProtoReflect.Descriptor instead.
 func (*RevokeAgentTokenResponse) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{39}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *RevokeAgentTokenResponse) GetId() string {
@@ -2933,7 +3579,7 @@ type Organization struct {
 
 func (x *Organization) Reset() {
 	*x = Organization{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[40]
+	mi := &file_xunara_v2_platform_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2945,7 +3591,7 @@ func (x *Organization) String() string {
 func (*Organization) ProtoMessage() {}
 
 func (x *Organization) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[40]
+	mi := &file_xunara_v2_platform_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2958,7 +3604,7 @@ func (x *Organization) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Organization.ProtoReflect.Descriptor instead.
 func (*Organization) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{40}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *Organization) GetId() string {
@@ -3009,7 +3655,7 @@ type OrganizationStats struct {
 
 func (x *OrganizationStats) Reset() {
 	*x = OrganizationStats{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[41]
+	mi := &file_xunara_v2_platform_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3021,7 +3667,7 @@ func (x *OrganizationStats) String() string {
 func (*OrganizationStats) ProtoMessage() {}
 
 func (x *OrganizationStats) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[41]
+	mi := &file_xunara_v2_platform_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3034,7 +3680,7 @@ func (x *OrganizationStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OrganizationStats.ProtoReflect.Descriptor instead.
 func (*OrganizationStats) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{41}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *OrganizationStats) GetNodes() uint64 {
@@ -3080,7 +3726,7 @@ type ListOrganizationsRequest struct {
 
 func (x *ListOrganizationsRequest) Reset() {
 	*x = ListOrganizationsRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[42]
+	mi := &file_xunara_v2_platform_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3092,7 +3738,7 @@ func (x *ListOrganizationsRequest) String() string {
 func (*ListOrganizationsRequest) ProtoMessage() {}
 
 func (x *ListOrganizationsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[42]
+	mi := &file_xunara_v2_platform_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3105,7 +3751,7 @@ func (x *ListOrganizationsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListOrganizationsRequest.ProtoReflect.Descriptor instead.
 func (*ListOrganizationsRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{42}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{50}
 }
 
 type ListOrganizationsResponse struct {
@@ -3117,7 +3763,7 @@ type ListOrganizationsResponse struct {
 
 func (x *ListOrganizationsResponse) Reset() {
 	*x = ListOrganizationsResponse{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[43]
+	mi := &file_xunara_v2_platform_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3129,7 +3775,7 @@ func (x *ListOrganizationsResponse) String() string {
 func (*ListOrganizationsResponse) ProtoMessage() {}
 
 func (x *ListOrganizationsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[43]
+	mi := &file_xunara_v2_platform_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3142,7 +3788,7 @@ func (x *ListOrganizationsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListOrganizationsResponse.ProtoReflect.Descriptor instead.
 func (*ListOrganizationsResponse) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{43}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *ListOrganizationsResponse) GetOrganizations() []*Organization {
@@ -3161,7 +3807,7 @@ type GetOrganizationRequest struct {
 
 func (x *GetOrganizationRequest) Reset() {
 	*x = GetOrganizationRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[44]
+	mi := &file_xunara_v2_platform_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3173,7 +3819,7 @@ func (x *GetOrganizationRequest) String() string {
 func (*GetOrganizationRequest) ProtoMessage() {}
 
 func (x *GetOrganizationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[44]
+	mi := &file_xunara_v2_platform_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3186,7 +3832,7 @@ func (x *GetOrganizationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetOrganizationRequest.ProtoReflect.Descriptor instead.
 func (*GetOrganizationRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{44}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *GetOrganizationRequest) GetId() string {
@@ -3212,7 +3858,7 @@ type CreateOrganizationRequest struct {
 
 func (x *CreateOrganizationRequest) Reset() {
 	*x = CreateOrganizationRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[45]
+	mi := &file_xunara_v2_platform_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3224,7 +3870,7 @@ func (x *CreateOrganizationRequest) String() string {
 func (*CreateOrganizationRequest) ProtoMessage() {}
 
 func (x *CreateOrganizationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[45]
+	mi := &file_xunara_v2_platform_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3237,7 +3883,7 @@ func (x *CreateOrganizationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateOrganizationRequest.ProtoReflect.Descriptor instead.
 func (*CreateOrganizationRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{45}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *CreateOrganizationRequest) GetId() string {
@@ -3286,7 +3932,7 @@ type StringList struct {
 
 func (x *StringList) Reset() {
 	*x = StringList{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[46]
+	mi := &file_xunara_v2_platform_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3298,7 +3944,7 @@ func (x *StringList) String() string {
 func (*StringList) ProtoMessage() {}
 
 func (x *StringList) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[46]
+	mi := &file_xunara_v2_platform_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3311,7 +3957,7 @@ func (x *StringList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StringList.ProtoReflect.Descriptor instead.
 func (*StringList) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{46}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *StringList) GetValues() []string {
@@ -3336,7 +3982,7 @@ type UpdateOrganizationRequest struct {
 
 func (x *UpdateOrganizationRequest) Reset() {
 	*x = UpdateOrganizationRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[47]
+	mi := &file_xunara_v2_platform_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3348,7 +3994,7 @@ func (x *UpdateOrganizationRequest) String() string {
 func (*UpdateOrganizationRequest) ProtoMessage() {}
 
 func (x *UpdateOrganizationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[47]
+	mi := &file_xunara_v2_platform_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3361,7 +4007,7 @@ func (x *UpdateOrganizationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateOrganizationRequest.ProtoReflect.Descriptor instead.
 func (*UpdateOrganizationRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{47}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *UpdateOrganizationRequest) GetId() string {
@@ -3394,7 +4040,7 @@ type DeleteOrganizationRequest struct {
 
 func (x *DeleteOrganizationRequest) Reset() {
 	*x = DeleteOrganizationRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[48]
+	mi := &file_xunara_v2_platform_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3406,7 +4052,7 @@ func (x *DeleteOrganizationRequest) String() string {
 func (*DeleteOrganizationRequest) ProtoMessage() {}
 
 func (x *DeleteOrganizationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[48]
+	mi := &file_xunara_v2_platform_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3419,7 +4065,7 @@ func (x *DeleteOrganizationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteOrganizationRequest.ProtoReflect.Descriptor instead.
 func (*DeleteOrganizationRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{48}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *DeleteOrganizationRequest) GetId() string {
@@ -3442,7 +4088,7 @@ type DeleteOrganizationResponse struct {
 
 func (x *DeleteOrganizationResponse) Reset() {
 	*x = DeleteOrganizationResponse{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[49]
+	mi := &file_xunara_v2_platform_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3454,7 +4100,7 @@ func (x *DeleteOrganizationResponse) String() string {
 func (*DeleteOrganizationResponse) ProtoMessage() {}
 
 func (x *DeleteOrganizationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[49]
+	mi := &file_xunara_v2_platform_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3467,7 +4113,7 @@ func (x *DeleteOrganizationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteOrganizationResponse.ProtoReflect.Descriptor instead.
 func (*DeleteOrganizationResponse) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{49}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *DeleteOrganizationResponse) GetId() string {
@@ -3506,7 +4152,7 @@ type PlatformAuditEvent struct {
 
 func (x *PlatformAuditEvent) Reset() {
 	*x = PlatformAuditEvent{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[50]
+	mi := &file_xunara_v2_platform_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3518,7 +4164,7 @@ func (x *PlatformAuditEvent) String() string {
 func (*PlatformAuditEvent) ProtoMessage() {}
 
 func (x *PlatformAuditEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[50]
+	mi := &file_xunara_v2_platform_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3531,7 +4177,7 @@ func (x *PlatformAuditEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlatformAuditEvent.ProtoReflect.Descriptor instead.
 func (*PlatformAuditEvent) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{50}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *PlatformAuditEvent) GetOrg() string {
@@ -3602,7 +4248,7 @@ type ListPlatformAuditRequest struct {
 
 func (x *ListPlatformAuditRequest) Reset() {
 	*x = ListPlatformAuditRequest{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[51]
+	mi := &file_xunara_v2_platform_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3614,7 +4260,7 @@ func (x *ListPlatformAuditRequest) String() string {
 func (*ListPlatformAuditRequest) ProtoMessage() {}
 
 func (x *ListPlatformAuditRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[51]
+	mi := &file_xunara_v2_platform_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3627,7 +4273,7 @@ func (x *ListPlatformAuditRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPlatformAuditRequest.ProtoReflect.Descriptor instead.
 func (*ListPlatformAuditRequest) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{51}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *ListPlatformAuditRequest) GetOrgs() []string {
@@ -3670,7 +4316,7 @@ type ListPlatformAuditResponse struct {
 
 func (x *ListPlatformAuditResponse) Reset() {
 	*x = ListPlatformAuditResponse{}
-	mi := &file_xunara_v2_platform_proto_msgTypes[52]
+	mi := &file_xunara_v2_platform_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3682,7 +4328,7 @@ func (x *ListPlatformAuditResponse) String() string {
 func (*ListPlatformAuditResponse) ProtoMessage() {}
 
 func (x *ListPlatformAuditResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_xunara_v2_platform_proto_msgTypes[52]
+	mi := &file_xunara_v2_platform_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3695,7 +4341,7 @@ func (x *ListPlatformAuditResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPlatformAuditResponse.ProtoReflect.Descriptor instead.
 func (*ListPlatformAuditResponse) Descriptor() ([]byte, []int) {
-	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{52}
+	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *ListPlatformAuditResponse) GetEvents() []*PlatformAuditEvent {
@@ -3795,7 +4441,78 @@ const file_xunara_v2_platform_proto_rawDesc = "" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12\x14\n" +
 	"\x05hosts\x18\x04 \x03(\tR\x05hosts\x12\x1d\n" +
 	"\n" +
-	"node_count\x18\x05 \x01(\rR\tnodeCount\"\xe8\x04\n" +
+	"node_count\x18\x05 \x01(\rR\tnodeCount\"\x18\n" +
+	"\x16GetPolicyStatusRequest\"\xd5\x06\n" +
+	"\fPolicyStatus\x12\x1e\n" +
+	"\n" +
+	"configured\x18\x01 \x01(\bR\n" +
+	"configured\x12\x12\n" +
+	"\x04path\x18\x02 \x01(\tR\x04path\x12\x1d\n" +
+	"\n" +
+	"rule_count\x18\x03 \x01(\rR\truleCount\x12\x1a\n" +
+	"\bwarnings\x18\x04 \x03(\tR\bwarnings\x12 \n" +
+	"\vunsupported\x18\x05 \x03(\tR\vunsupported\x12\x1d\n" +
+	"\n" +
+	"load_error\x18\x06 \x01(\tR\tloadError\x12,\n" +
+	"\x04acls\x18\a \x03(\v2\x18.xunara.v2.PolicyACLRuleR\x04acls\x12.\n" +
+	"\x06grants\x18\b \x03(\v2\x16.xunara.v2.PolicyGrantR\x06grants\x12;\n" +
+	"\x06groups\x18\t \x03(\v2#.xunara.v2.PolicyStatus.GroupsEntryR\x06groups\x128\n" +
+	"\x05hosts\x18\n" +
+	" \x03(\v2\".xunara.v2.PolicyStatus.HostsEntryR\x05hosts\x12E\n" +
+	"\n" +
+	"tag_owners\x18\v \x03(\v2&.xunara.v2.PolicyStatus.TagOwnersEntryR\ttagOwners\x12*\n" +
+	"\x03ssh\x18\f \x03(\v2\x18.xunara.v2.PolicySSHRuleR\x03ssh\x128\n" +
+	"\n" +
+	"node_attrs\x18\r \x03(\v2\x19.xunara.v2.PolicyNodeAttrR\tnodeAttrs\x122\n" +
+	"\x05tests\x18\x0e \x01(\v2\x1c.xunara.v2.PolicyTestSummaryR\x05tests\x1aP\n" +
+	"\vGroupsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12+\n" +
+	"\x05value\x18\x02 \x01(\v2\x15.xunara.v2.StringListR\x05value:\x028\x01\x1a8\n" +
+	"\n" +
+	"HostsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aS\n" +
+	"\x0eTagOwnersEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12+\n" +
+	"\x05value\x18\x02 \x01(\v2\x15.xunara.v2.StringListR\x05value:\x028\x01\"\x8d\x01\n" +
+	"\rPolicyACLRule\x12\x16\n" +
+	"\x06action\x18\x01 \x01(\tR\x06action\x12\x14\n" +
+	"\x05proto\x18\x02 \x01(\tR\x05proto\x12\x10\n" +
+	"\x03src\x18\x03 \x03(\tR\x03src\x12\x10\n" +
+	"\x03dst\x18\x04 \x03(\tR\x03dst\x12\x14\n" +
+	"\x05users\x18\x05 \x03(\tR\x05users\x12\x14\n" +
+	"\x05ports\x18\x06 \x03(\tR\x05ports\"\xd5\x01\n" +
+	"\vPolicyGrant\x12\x10\n" +
+	"\x03src\x18\x01 \x03(\tR\x03src\x12\x10\n" +
+	"\x03dst\x18\x02 \x03(\tR\x03dst\x12\x0e\n" +
+	"\x02ip\x18\x03 \x03(\tR\x02ip\x121\n" +
+	"\x03app\x18\x04 \x03(\v2\x1f.xunara.v2.PolicyGrant.AppEntryR\x03app\x12\x10\n" +
+	"\x03via\x18\x05 \x03(\tR\x03via\x1aM\n" +
+	"\bAppEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12+\n" +
+	"\x05value\x18\x02 \x01(\v2\x15.xunara.v2.StringListR\x05value:\x028\x01\"\xa3\x01\n" +
+	"\rPolicySSHRule\x12\x16\n" +
+	"\x06action\x18\x01 \x01(\tR\x06action\x12\x10\n" +
+	"\x03src\x18\x02 \x03(\tR\x03src\x12\x10\n" +
+	"\x03dst\x18\x03 \x03(\tR\x03dst\x12\x14\n" +
+	"\x05users\x18\x04 \x03(\tR\x05users\x12\x1d\n" +
+	"\n" +
+	"accept_env\x18\x05 \x03(\tR\tacceptEnv\x12!\n" +
+	"\fcheck_period\x18\x06 \x01(\tR\vcheckPeriod\"<\n" +
+	"\x0ePolicyNodeAttr\x12\x16\n" +
+	"\x06target\x18\x01 \x03(\tR\x06target\x12\x12\n" +
+	"\x04attr\x18\x02 \x03(\tR\x04attr\"\x8a\x01\n" +
+	"\x11PolicyTestSummary\x12\x14\n" +
+	"\x05total\x18\x01 \x01(\rR\x05total\x12\x10\n" +
+	"\x03ran\x18\x02 \x01(\bR\x03ran\x12\x16\n" +
+	"\x06reason\x18\x03 \x01(\tR\x06reason\x125\n" +
+	"\aresults\x18\x04 \x03(\v2\x1b.xunara.v2.PolicyTestResultR\aresults\"\x80\x01\n" +
+	"\x10PolicyTestResult\x12\x14\n" +
+	"\x05index\x18\x01 \x01(\rR\x05index\x12\x10\n" +
+	"\x03src\x18\x02 \x01(\tR\x03src\x12\x14\n" +
+	"\x05proto\x18\x03 \x01(\tR\x05proto\x12\x12\n" +
+	"\x04pass\x18\x04 \x01(\bR\x04pass\x12\x1a\n" +
+	"\bfailures\x18\x05 \x03(\tR\bfailures\"\xe8\x04\n" +
 	"\aMachine\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\x04R\x02id\x12\x1b\n" +
 	"\tstable_id\x18\x02 \x01(\tR\bstableId\x12\x1a\n" +
@@ -4027,13 +4744,15 @@ const file_xunara_v2_platform_proto_rawDesc = "" +
 	"\bhas_more\x18\x03 \x01(\bR\ahasMore\x1a:\n" +
 	"\fCursorsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x012\xf9\t\n" +
+	"\x05value\x18\x02 \x01(\x04R\x05value:\x028\x012\xc8\n" +
+	"\n" +
 	"\x0fPlatformService\x125\n" +
 	"\aGetMeta\x12\x19.xunara.v2.GetMetaRequest\x1a\x0f.xunara.v2.Meta\x12e\n" +
 	"\x17GetOrganizationIdentity\x12).xunara.v2.GetOrganizationIdentityRequest\x1a\x1f.xunara.v2.OrganizationIdentity\x12P\n" +
 	"\x0eGetTailnetLock\x12 .xunara.v2.GetTailnetLockRequest\x1a\x1c.xunara.v2.TailnetLockStatus\x12V\n" +
 	"\x10GetIDTokenIssuer\x12\".xunara.v2.GetIDTokenIssuerRequest\x1a\x1e.xunara.v2.IDTokenIssuerStatus\x12G\n" +
-	"\rGetDERPStatus\x12\x1f.xunara.v2.GetDERPStatusRequest\x1a\x15.xunara.v2.DERPStatus\x12_\n" +
+	"\rGetDERPStatus\x12\x1f.xunara.v2.GetDERPStatusRequest\x1a\x15.xunara.v2.DERPStatus\x12M\n" +
+	"\x0fGetPolicyStatus\x12!.xunara.v2.GetPolicyStatusRequest\x1a\x17.xunara.v2.PolicyStatus\x12_\n" +
 	"\x15GetMachineDeviceAttrs\x12'.xunara.v2.GetMachineDeviceAttrsRequest\x1a\x1d.xunara.v2.MachineDeviceAttrs\x12O\n" +
 	"\fListMachines\x12\x1e.xunara.v2.ListMachinesRequest\x1a\x1f.xunara.v2.ListMachinesResponse\x12O\n" +
 	"\fListServices\x12\x1e.xunara.v2.ListServicesRequest\x1a\x1f.xunara.v2.ListServicesResponse\x12^\n" +
@@ -4064,7 +4783,7 @@ func file_xunara_v2_platform_proto_rawDescGZIP() []byte {
 	return file_xunara_v2_platform_proto_rawDescData
 }
 
-var file_xunara_v2_platform_proto_msgTypes = make([]protoimpl.MessageInfo, 56)
+var file_xunara_v2_platform_proto_msgTypes = make([]protoimpl.MessageInfo, 68)
 var file_xunara_v2_platform_proto_goTypes = []any{
 	(*GetMetaRequest)(nil),                 // 0: xunara.v2.GetMetaRequest
 	(*Meta)(nil),                           // 1: xunara.v2.Meta
@@ -4079,139 +4798,166 @@ var file_xunara_v2_platform_proto_goTypes = []any{
 	(*GetDERPStatusRequest)(nil),           // 10: xunara.v2.GetDERPStatusRequest
 	(*DERPStatus)(nil),                     // 11: xunara.v2.DERPStatus
 	(*DERPRegion)(nil),                     // 12: xunara.v2.DERPRegion
-	(*Machine)(nil),                        // 13: xunara.v2.Machine
-	(*GetMachineDeviceAttrsRequest)(nil),   // 14: xunara.v2.GetMachineDeviceAttrsRequest
-	(*MachineDeviceAttrs)(nil),             // 15: xunara.v2.MachineDeviceAttrs
-	(*ReachSession)(nil),                   // 16: xunara.v2.ReachSession
-	(*ReachPeer)(nil),                      // 17: xunara.v2.ReachPeer
-	(*ReachOutputBytes)(nil),               // 18: xunara.v2.ReachOutputBytes
-	(*ListReachSessionsRequest)(nil),       // 19: xunara.v2.ListReachSessionsRequest
-	(*ListReachSessionsResponse)(nil),      // 20: xunara.v2.ListReachSessionsResponse
-	(*FluxPeer)(nil),                       // 21: xunara.v2.FluxPeer
-	(*FluxTransfer)(nil),                   // 22: xunara.v2.FluxTransfer
-	(*ListFluxTransfersRequest)(nil),       // 23: xunara.v2.ListFluxTransfersRequest
-	(*ListFluxTransfersResponse)(nil),      // 24: xunara.v2.ListFluxTransfersResponse
-	(*GetFluxTransferRequest)(nil),         // 25: xunara.v2.GetFluxTransferRequest
-	(*GetReachSessionRequest)(nil),         // 26: xunara.v2.GetReachSessionRequest
-	(*ListMachinesRequest)(nil),            // 27: xunara.v2.ListMachinesRequest
-	(*ListMachinesResponse)(nil),           // 28: xunara.v2.ListMachinesResponse
-	(*ListServicesRequest)(nil),            // 29: xunara.v2.ListServicesRequest
-	(*ListServicesResponse)(nil),           // 30: xunara.v2.ListServicesResponse
-	(*Service)(nil),                        // 31: xunara.v2.Service
-	(*AuditEvent)(nil),                     // 32: xunara.v2.AuditEvent
-	(*ListAuditRequest)(nil),               // 33: xunara.v2.ListAuditRequest
-	(*ListAuditResponse)(nil),              // 34: xunara.v2.ListAuditResponse
-	(*Webhook)(nil),                        // 35: xunara.v2.Webhook
-	(*ListWebhooksRequest)(nil),            // 36: xunara.v2.ListWebhooksRequest
-	(*ListWebhooksResponse)(nil),           // 37: xunara.v2.ListWebhooksResponse
-	(*RevokeAgentTokenRequest)(nil),        // 38: xunara.v2.RevokeAgentTokenRequest
-	(*RevokeAgentTokenResponse)(nil),       // 39: xunara.v2.RevokeAgentTokenResponse
-	(*Organization)(nil),                   // 40: xunara.v2.Organization
-	(*OrganizationStats)(nil),              // 41: xunara.v2.OrganizationStats
-	(*ListOrganizationsRequest)(nil),       // 42: xunara.v2.ListOrganizationsRequest
-	(*ListOrganizationsResponse)(nil),      // 43: xunara.v2.ListOrganizationsResponse
-	(*GetOrganizationRequest)(nil),         // 44: xunara.v2.GetOrganizationRequest
-	(*CreateOrganizationRequest)(nil),      // 45: xunara.v2.CreateOrganizationRequest
-	(*StringList)(nil),                     // 46: xunara.v2.StringList
-	(*UpdateOrganizationRequest)(nil),      // 47: xunara.v2.UpdateOrganizationRequest
-	(*DeleteOrganizationRequest)(nil),      // 48: xunara.v2.DeleteOrganizationRequest
-	(*DeleteOrganizationResponse)(nil),     // 49: xunara.v2.DeleteOrganizationResponse
-	(*PlatformAuditEvent)(nil),             // 50: xunara.v2.PlatformAuditEvent
-	(*ListPlatformAuditRequest)(nil),       // 51: xunara.v2.ListPlatformAuditRequest
-	(*ListPlatformAuditResponse)(nil),      // 52: xunara.v2.ListPlatformAuditResponse
-	nil,                                    // 53: xunara.v2.MachineDeviceAttrs.AttrsEntry
-	nil,                                    // 54: xunara.v2.Service.MetadataEntry
-	nil,                                    // 55: xunara.v2.ListPlatformAuditResponse.CursorsEntry
-	(*timestamppb.Timestamp)(nil),          // 56: google.protobuf.Timestamp
-	(*structpb.Value)(nil),                 // 57: google.protobuf.Value
+	(*GetPolicyStatusRequest)(nil),         // 13: xunara.v2.GetPolicyStatusRequest
+	(*PolicyStatus)(nil),                   // 14: xunara.v2.PolicyStatus
+	(*PolicyACLRule)(nil),                  // 15: xunara.v2.PolicyACLRule
+	(*PolicyGrant)(nil),                    // 16: xunara.v2.PolicyGrant
+	(*PolicySSHRule)(nil),                  // 17: xunara.v2.PolicySSHRule
+	(*PolicyNodeAttr)(nil),                 // 18: xunara.v2.PolicyNodeAttr
+	(*PolicyTestSummary)(nil),              // 19: xunara.v2.PolicyTestSummary
+	(*PolicyTestResult)(nil),               // 20: xunara.v2.PolicyTestResult
+	(*Machine)(nil),                        // 21: xunara.v2.Machine
+	(*GetMachineDeviceAttrsRequest)(nil),   // 22: xunara.v2.GetMachineDeviceAttrsRequest
+	(*MachineDeviceAttrs)(nil),             // 23: xunara.v2.MachineDeviceAttrs
+	(*ReachSession)(nil),                   // 24: xunara.v2.ReachSession
+	(*ReachPeer)(nil),                      // 25: xunara.v2.ReachPeer
+	(*ReachOutputBytes)(nil),               // 26: xunara.v2.ReachOutputBytes
+	(*ListReachSessionsRequest)(nil),       // 27: xunara.v2.ListReachSessionsRequest
+	(*ListReachSessionsResponse)(nil),      // 28: xunara.v2.ListReachSessionsResponse
+	(*FluxPeer)(nil),                       // 29: xunara.v2.FluxPeer
+	(*FluxTransfer)(nil),                   // 30: xunara.v2.FluxTransfer
+	(*ListFluxTransfersRequest)(nil),       // 31: xunara.v2.ListFluxTransfersRequest
+	(*ListFluxTransfersResponse)(nil),      // 32: xunara.v2.ListFluxTransfersResponse
+	(*GetFluxTransferRequest)(nil),         // 33: xunara.v2.GetFluxTransferRequest
+	(*GetReachSessionRequest)(nil),         // 34: xunara.v2.GetReachSessionRequest
+	(*ListMachinesRequest)(nil),            // 35: xunara.v2.ListMachinesRequest
+	(*ListMachinesResponse)(nil),           // 36: xunara.v2.ListMachinesResponse
+	(*ListServicesRequest)(nil),            // 37: xunara.v2.ListServicesRequest
+	(*ListServicesResponse)(nil),           // 38: xunara.v2.ListServicesResponse
+	(*Service)(nil),                        // 39: xunara.v2.Service
+	(*AuditEvent)(nil),                     // 40: xunara.v2.AuditEvent
+	(*ListAuditRequest)(nil),               // 41: xunara.v2.ListAuditRequest
+	(*ListAuditResponse)(nil),              // 42: xunara.v2.ListAuditResponse
+	(*Webhook)(nil),                        // 43: xunara.v2.Webhook
+	(*ListWebhooksRequest)(nil),            // 44: xunara.v2.ListWebhooksRequest
+	(*ListWebhooksResponse)(nil),           // 45: xunara.v2.ListWebhooksResponse
+	(*RevokeAgentTokenRequest)(nil),        // 46: xunara.v2.RevokeAgentTokenRequest
+	(*RevokeAgentTokenResponse)(nil),       // 47: xunara.v2.RevokeAgentTokenResponse
+	(*Organization)(nil),                   // 48: xunara.v2.Organization
+	(*OrganizationStats)(nil),              // 49: xunara.v2.OrganizationStats
+	(*ListOrganizationsRequest)(nil),       // 50: xunara.v2.ListOrganizationsRequest
+	(*ListOrganizationsResponse)(nil),      // 51: xunara.v2.ListOrganizationsResponse
+	(*GetOrganizationRequest)(nil),         // 52: xunara.v2.GetOrganizationRequest
+	(*CreateOrganizationRequest)(nil),      // 53: xunara.v2.CreateOrganizationRequest
+	(*StringList)(nil),                     // 54: xunara.v2.StringList
+	(*UpdateOrganizationRequest)(nil),      // 55: xunara.v2.UpdateOrganizationRequest
+	(*DeleteOrganizationRequest)(nil),      // 56: xunara.v2.DeleteOrganizationRequest
+	(*DeleteOrganizationResponse)(nil),     // 57: xunara.v2.DeleteOrganizationResponse
+	(*PlatformAuditEvent)(nil),             // 58: xunara.v2.PlatformAuditEvent
+	(*ListPlatformAuditRequest)(nil),       // 59: xunara.v2.ListPlatformAuditRequest
+	(*ListPlatformAuditResponse)(nil),      // 60: xunara.v2.ListPlatformAuditResponse
+	nil,                                    // 61: xunara.v2.PolicyStatus.GroupsEntry
+	nil,                                    // 62: xunara.v2.PolicyStatus.HostsEntry
+	nil,                                    // 63: xunara.v2.PolicyStatus.TagOwnersEntry
+	nil,                                    // 64: xunara.v2.PolicyGrant.AppEntry
+	nil,                                    // 65: xunara.v2.MachineDeviceAttrs.AttrsEntry
+	nil,                                    // 66: xunara.v2.Service.MetadataEntry
+	nil,                                    // 67: xunara.v2.ListPlatformAuditResponse.CursorsEntry
+	(*timestamppb.Timestamp)(nil),          // 68: google.protobuf.Timestamp
+	(*structpb.Value)(nil),                 // 69: google.protobuf.Value
 }
 var file_xunara_v2_platform_proto_depIdxs = []int32{
 	6,  // 0: xunara.v2.TailnetLockStatus.nodes:type_name -> xunara.v2.TailnetLockNodeCounts
 	9,  // 1: xunara.v2.IDTokenIssuerStatus.keys:type_name -> xunara.v2.IDTokenSigningKey
-	56, // 2: xunara.v2.IDTokenSigningKey.created:type_name -> google.protobuf.Timestamp
-	56, // 3: xunara.v2.IDTokenSigningKey.retired:type_name -> google.protobuf.Timestamp
+	68, // 2: xunara.v2.IDTokenSigningKey.created:type_name -> google.protobuf.Timestamp
+	68, // 3: xunara.v2.IDTokenSigningKey.retired:type_name -> google.protobuf.Timestamp
 	12, // 4: xunara.v2.DERPStatus.regions:type_name -> xunara.v2.DERPRegion
-	56, // 5: xunara.v2.Machine.created:type_name -> google.protobuf.Timestamp
-	56, // 6: xunara.v2.Machine.last_seen:type_name -> google.protobuf.Timestamp
-	53, // 7: xunara.v2.MachineDeviceAttrs.attrs:type_name -> xunara.v2.MachineDeviceAttrs.AttrsEntry
-	17, // 8: xunara.v2.ReachSession.sender:type_name -> xunara.v2.ReachPeer
-	17, // 9: xunara.v2.ReachSession.target:type_name -> xunara.v2.ReachPeer
-	56, // 10: xunara.v2.ReachSession.created:type_name -> google.protobuf.Timestamp
-	56, // 11: xunara.v2.ReachSession.updated:type_name -> google.protobuf.Timestamp
-	56, // 12: xunara.v2.ReachSession.expires:type_name -> google.protobuf.Timestamp
-	18, // 13: xunara.v2.ReachSession.output_bytes:type_name -> xunara.v2.ReachOutputBytes
-	16, // 14: xunara.v2.ListReachSessionsResponse.sessions:type_name -> xunara.v2.ReachSession
-	21, // 15: xunara.v2.FluxTransfer.sender:type_name -> xunara.v2.FluxPeer
-	21, // 16: xunara.v2.FluxTransfer.recipient:type_name -> xunara.v2.FluxPeer
-	56, // 17: xunara.v2.FluxTransfer.created_at:type_name -> google.protobuf.Timestamp
-	56, // 18: xunara.v2.FluxTransfer.updated_at:type_name -> google.protobuf.Timestamp
-	56, // 19: xunara.v2.FluxTransfer.expires_at:type_name -> google.protobuf.Timestamp
-	22, // 20: xunara.v2.ListFluxTransfersResponse.transfers:type_name -> xunara.v2.FluxTransfer
-	13, // 21: xunara.v2.ListMachinesResponse.machines:type_name -> xunara.v2.Machine
-	31, // 22: xunara.v2.ListServicesResponse.services:type_name -> xunara.v2.Service
-	54, // 23: xunara.v2.Service.metadata:type_name -> xunara.v2.Service.MetadataEntry
-	56, // 24: xunara.v2.Service.created:type_name -> google.protobuf.Timestamp
-	56, // 25: xunara.v2.Service.updated:type_name -> google.protobuf.Timestamp
-	56, // 26: xunara.v2.Service.health_reported_at:type_name -> google.protobuf.Timestamp
-	56, // 27: xunara.v2.AuditEvent.time:type_name -> google.protobuf.Timestamp
-	32, // 28: xunara.v2.ListAuditResponse.events:type_name -> xunara.v2.AuditEvent
-	56, // 29: xunara.v2.Webhook.created_at:type_name -> google.protobuf.Timestamp
-	56, // 30: xunara.v2.Webhook.updated_at:type_name -> google.protobuf.Timestamp
-	35, // 31: xunara.v2.ListWebhooksResponse.webhooks:type_name -> xunara.v2.Webhook
-	41, // 32: xunara.v2.Organization.stats:type_name -> xunara.v2.OrganizationStats
-	40, // 33: xunara.v2.ListOrganizationsResponse.organizations:type_name -> xunara.v2.Organization
-	46, // 34: xunara.v2.UpdateOrganizationRequest.domains:type_name -> xunara.v2.StringList
-	56, // 35: xunara.v2.PlatformAuditEvent.time:type_name -> google.protobuf.Timestamp
-	50, // 36: xunara.v2.ListPlatformAuditResponse.events:type_name -> xunara.v2.PlatformAuditEvent
-	55, // 37: xunara.v2.ListPlatformAuditResponse.cursors:type_name -> xunara.v2.ListPlatformAuditResponse.CursorsEntry
-	57, // 38: xunara.v2.MachineDeviceAttrs.AttrsEntry.value:type_name -> google.protobuf.Value
-	0,  // 39: xunara.v2.PlatformService.GetMeta:input_type -> xunara.v2.GetMetaRequest
-	2,  // 40: xunara.v2.PlatformService.GetOrganizationIdentity:input_type -> xunara.v2.GetOrganizationIdentityRequest
-	4,  // 41: xunara.v2.PlatformService.GetTailnetLock:input_type -> xunara.v2.GetTailnetLockRequest
-	7,  // 42: xunara.v2.PlatformService.GetIDTokenIssuer:input_type -> xunara.v2.GetIDTokenIssuerRequest
-	10, // 43: xunara.v2.PlatformService.GetDERPStatus:input_type -> xunara.v2.GetDERPStatusRequest
-	14, // 44: xunara.v2.PlatformService.GetMachineDeviceAttrs:input_type -> xunara.v2.GetMachineDeviceAttrsRequest
-	27, // 45: xunara.v2.PlatformService.ListMachines:input_type -> xunara.v2.ListMachinesRequest
-	29, // 46: xunara.v2.PlatformService.ListServices:input_type -> xunara.v2.ListServicesRequest
-	23, // 47: xunara.v2.PlatformService.ListFluxTransfers:input_type -> xunara.v2.ListFluxTransfersRequest
-	25, // 48: xunara.v2.PlatformService.GetFluxTransfer:input_type -> xunara.v2.GetFluxTransferRequest
-	19, // 49: xunara.v2.PlatformService.ListReachSessions:input_type -> xunara.v2.ListReachSessionsRequest
-	26, // 50: xunara.v2.PlatformService.GetReachSession:input_type -> xunara.v2.GetReachSessionRequest
-	33, // 51: xunara.v2.PlatformService.ListAudit:input_type -> xunara.v2.ListAuditRequest
-	36, // 52: xunara.v2.PlatformService.ListWebhooks:input_type -> xunara.v2.ListWebhooksRequest
-	38, // 53: xunara.v2.PlatformService.RevokeAgentToken:input_type -> xunara.v2.RevokeAgentTokenRequest
-	42, // 54: xunara.v2.PlatformAdminService.ListOrganizations:input_type -> xunara.v2.ListOrganizationsRequest
-	44, // 55: xunara.v2.PlatformAdminService.GetOrganization:input_type -> xunara.v2.GetOrganizationRequest
-	45, // 56: xunara.v2.PlatformAdminService.CreateOrganization:input_type -> xunara.v2.CreateOrganizationRequest
-	47, // 57: xunara.v2.PlatformAdminService.UpdateOrganization:input_type -> xunara.v2.UpdateOrganizationRequest
-	48, // 58: xunara.v2.PlatformAdminService.DeleteOrganization:input_type -> xunara.v2.DeleteOrganizationRequest
-	51, // 59: xunara.v2.PlatformAdminService.ListAudit:input_type -> xunara.v2.ListPlatformAuditRequest
-	1,  // 60: xunara.v2.PlatformService.GetMeta:output_type -> xunara.v2.Meta
-	3,  // 61: xunara.v2.PlatformService.GetOrganizationIdentity:output_type -> xunara.v2.OrganizationIdentity
-	5,  // 62: xunara.v2.PlatformService.GetTailnetLock:output_type -> xunara.v2.TailnetLockStatus
-	8,  // 63: xunara.v2.PlatformService.GetIDTokenIssuer:output_type -> xunara.v2.IDTokenIssuerStatus
-	11, // 64: xunara.v2.PlatformService.GetDERPStatus:output_type -> xunara.v2.DERPStatus
-	15, // 65: xunara.v2.PlatformService.GetMachineDeviceAttrs:output_type -> xunara.v2.MachineDeviceAttrs
-	28, // 66: xunara.v2.PlatformService.ListMachines:output_type -> xunara.v2.ListMachinesResponse
-	30, // 67: xunara.v2.PlatformService.ListServices:output_type -> xunara.v2.ListServicesResponse
-	24, // 68: xunara.v2.PlatformService.ListFluxTransfers:output_type -> xunara.v2.ListFluxTransfersResponse
-	22, // 69: xunara.v2.PlatformService.GetFluxTransfer:output_type -> xunara.v2.FluxTransfer
-	20, // 70: xunara.v2.PlatformService.ListReachSessions:output_type -> xunara.v2.ListReachSessionsResponse
-	16, // 71: xunara.v2.PlatformService.GetReachSession:output_type -> xunara.v2.ReachSession
-	34, // 72: xunara.v2.PlatformService.ListAudit:output_type -> xunara.v2.ListAuditResponse
-	37, // 73: xunara.v2.PlatformService.ListWebhooks:output_type -> xunara.v2.ListWebhooksResponse
-	39, // 74: xunara.v2.PlatformService.RevokeAgentToken:output_type -> xunara.v2.RevokeAgentTokenResponse
-	43, // 75: xunara.v2.PlatformAdminService.ListOrganizations:output_type -> xunara.v2.ListOrganizationsResponse
-	40, // 76: xunara.v2.PlatformAdminService.GetOrganization:output_type -> xunara.v2.Organization
-	40, // 77: xunara.v2.PlatformAdminService.CreateOrganization:output_type -> xunara.v2.Organization
-	40, // 78: xunara.v2.PlatformAdminService.UpdateOrganization:output_type -> xunara.v2.Organization
-	49, // 79: xunara.v2.PlatformAdminService.DeleteOrganization:output_type -> xunara.v2.DeleteOrganizationResponse
-	52, // 80: xunara.v2.PlatformAdminService.ListAudit:output_type -> xunara.v2.ListPlatformAuditResponse
-	60, // [60:81] is the sub-list for method output_type
-	39, // [39:60] is the sub-list for method input_type
-	39, // [39:39] is the sub-list for extension type_name
-	39, // [39:39] is the sub-list for extension extendee
-	0,  // [0:39] is the sub-list for field type_name
+	15, // 5: xunara.v2.PolicyStatus.acls:type_name -> xunara.v2.PolicyACLRule
+	16, // 6: xunara.v2.PolicyStatus.grants:type_name -> xunara.v2.PolicyGrant
+	61, // 7: xunara.v2.PolicyStatus.groups:type_name -> xunara.v2.PolicyStatus.GroupsEntry
+	62, // 8: xunara.v2.PolicyStatus.hosts:type_name -> xunara.v2.PolicyStatus.HostsEntry
+	63, // 9: xunara.v2.PolicyStatus.tag_owners:type_name -> xunara.v2.PolicyStatus.TagOwnersEntry
+	17, // 10: xunara.v2.PolicyStatus.ssh:type_name -> xunara.v2.PolicySSHRule
+	18, // 11: xunara.v2.PolicyStatus.node_attrs:type_name -> xunara.v2.PolicyNodeAttr
+	19, // 12: xunara.v2.PolicyStatus.tests:type_name -> xunara.v2.PolicyTestSummary
+	64, // 13: xunara.v2.PolicyGrant.app:type_name -> xunara.v2.PolicyGrant.AppEntry
+	20, // 14: xunara.v2.PolicyTestSummary.results:type_name -> xunara.v2.PolicyTestResult
+	68, // 15: xunara.v2.Machine.created:type_name -> google.protobuf.Timestamp
+	68, // 16: xunara.v2.Machine.last_seen:type_name -> google.protobuf.Timestamp
+	65, // 17: xunara.v2.MachineDeviceAttrs.attrs:type_name -> xunara.v2.MachineDeviceAttrs.AttrsEntry
+	25, // 18: xunara.v2.ReachSession.sender:type_name -> xunara.v2.ReachPeer
+	25, // 19: xunara.v2.ReachSession.target:type_name -> xunara.v2.ReachPeer
+	68, // 20: xunara.v2.ReachSession.created:type_name -> google.protobuf.Timestamp
+	68, // 21: xunara.v2.ReachSession.updated:type_name -> google.protobuf.Timestamp
+	68, // 22: xunara.v2.ReachSession.expires:type_name -> google.protobuf.Timestamp
+	26, // 23: xunara.v2.ReachSession.output_bytes:type_name -> xunara.v2.ReachOutputBytes
+	24, // 24: xunara.v2.ListReachSessionsResponse.sessions:type_name -> xunara.v2.ReachSession
+	29, // 25: xunara.v2.FluxTransfer.sender:type_name -> xunara.v2.FluxPeer
+	29, // 26: xunara.v2.FluxTransfer.recipient:type_name -> xunara.v2.FluxPeer
+	68, // 27: xunara.v2.FluxTransfer.created_at:type_name -> google.protobuf.Timestamp
+	68, // 28: xunara.v2.FluxTransfer.updated_at:type_name -> google.protobuf.Timestamp
+	68, // 29: xunara.v2.FluxTransfer.expires_at:type_name -> google.protobuf.Timestamp
+	30, // 30: xunara.v2.ListFluxTransfersResponse.transfers:type_name -> xunara.v2.FluxTransfer
+	21, // 31: xunara.v2.ListMachinesResponse.machines:type_name -> xunara.v2.Machine
+	39, // 32: xunara.v2.ListServicesResponse.services:type_name -> xunara.v2.Service
+	66, // 33: xunara.v2.Service.metadata:type_name -> xunara.v2.Service.MetadataEntry
+	68, // 34: xunara.v2.Service.created:type_name -> google.protobuf.Timestamp
+	68, // 35: xunara.v2.Service.updated:type_name -> google.protobuf.Timestamp
+	68, // 36: xunara.v2.Service.health_reported_at:type_name -> google.protobuf.Timestamp
+	68, // 37: xunara.v2.AuditEvent.time:type_name -> google.protobuf.Timestamp
+	40, // 38: xunara.v2.ListAuditResponse.events:type_name -> xunara.v2.AuditEvent
+	68, // 39: xunara.v2.Webhook.created_at:type_name -> google.protobuf.Timestamp
+	68, // 40: xunara.v2.Webhook.updated_at:type_name -> google.protobuf.Timestamp
+	43, // 41: xunara.v2.ListWebhooksResponse.webhooks:type_name -> xunara.v2.Webhook
+	49, // 42: xunara.v2.Organization.stats:type_name -> xunara.v2.OrganizationStats
+	48, // 43: xunara.v2.ListOrganizationsResponse.organizations:type_name -> xunara.v2.Organization
+	54, // 44: xunara.v2.UpdateOrganizationRequest.domains:type_name -> xunara.v2.StringList
+	68, // 45: xunara.v2.PlatformAuditEvent.time:type_name -> google.protobuf.Timestamp
+	58, // 46: xunara.v2.ListPlatformAuditResponse.events:type_name -> xunara.v2.PlatformAuditEvent
+	67, // 47: xunara.v2.ListPlatformAuditResponse.cursors:type_name -> xunara.v2.ListPlatformAuditResponse.CursorsEntry
+	54, // 48: xunara.v2.PolicyStatus.GroupsEntry.value:type_name -> xunara.v2.StringList
+	54, // 49: xunara.v2.PolicyStatus.TagOwnersEntry.value:type_name -> xunara.v2.StringList
+	54, // 50: xunara.v2.PolicyGrant.AppEntry.value:type_name -> xunara.v2.StringList
+	69, // 51: xunara.v2.MachineDeviceAttrs.AttrsEntry.value:type_name -> google.protobuf.Value
+	0,  // 52: xunara.v2.PlatformService.GetMeta:input_type -> xunara.v2.GetMetaRequest
+	2,  // 53: xunara.v2.PlatformService.GetOrganizationIdentity:input_type -> xunara.v2.GetOrganizationIdentityRequest
+	4,  // 54: xunara.v2.PlatformService.GetTailnetLock:input_type -> xunara.v2.GetTailnetLockRequest
+	7,  // 55: xunara.v2.PlatformService.GetIDTokenIssuer:input_type -> xunara.v2.GetIDTokenIssuerRequest
+	10, // 56: xunara.v2.PlatformService.GetDERPStatus:input_type -> xunara.v2.GetDERPStatusRequest
+	13, // 57: xunara.v2.PlatformService.GetPolicyStatus:input_type -> xunara.v2.GetPolicyStatusRequest
+	22, // 58: xunara.v2.PlatformService.GetMachineDeviceAttrs:input_type -> xunara.v2.GetMachineDeviceAttrsRequest
+	35, // 59: xunara.v2.PlatformService.ListMachines:input_type -> xunara.v2.ListMachinesRequest
+	37, // 60: xunara.v2.PlatformService.ListServices:input_type -> xunara.v2.ListServicesRequest
+	31, // 61: xunara.v2.PlatformService.ListFluxTransfers:input_type -> xunara.v2.ListFluxTransfersRequest
+	33, // 62: xunara.v2.PlatformService.GetFluxTransfer:input_type -> xunara.v2.GetFluxTransferRequest
+	27, // 63: xunara.v2.PlatformService.ListReachSessions:input_type -> xunara.v2.ListReachSessionsRequest
+	34, // 64: xunara.v2.PlatformService.GetReachSession:input_type -> xunara.v2.GetReachSessionRequest
+	41, // 65: xunara.v2.PlatformService.ListAudit:input_type -> xunara.v2.ListAuditRequest
+	44, // 66: xunara.v2.PlatformService.ListWebhooks:input_type -> xunara.v2.ListWebhooksRequest
+	46, // 67: xunara.v2.PlatformService.RevokeAgentToken:input_type -> xunara.v2.RevokeAgentTokenRequest
+	50, // 68: xunara.v2.PlatformAdminService.ListOrganizations:input_type -> xunara.v2.ListOrganizationsRequest
+	52, // 69: xunara.v2.PlatformAdminService.GetOrganization:input_type -> xunara.v2.GetOrganizationRequest
+	53, // 70: xunara.v2.PlatformAdminService.CreateOrganization:input_type -> xunara.v2.CreateOrganizationRequest
+	55, // 71: xunara.v2.PlatformAdminService.UpdateOrganization:input_type -> xunara.v2.UpdateOrganizationRequest
+	56, // 72: xunara.v2.PlatformAdminService.DeleteOrganization:input_type -> xunara.v2.DeleteOrganizationRequest
+	59, // 73: xunara.v2.PlatformAdminService.ListAudit:input_type -> xunara.v2.ListPlatformAuditRequest
+	1,  // 74: xunara.v2.PlatformService.GetMeta:output_type -> xunara.v2.Meta
+	3,  // 75: xunara.v2.PlatformService.GetOrganizationIdentity:output_type -> xunara.v2.OrganizationIdentity
+	5,  // 76: xunara.v2.PlatformService.GetTailnetLock:output_type -> xunara.v2.TailnetLockStatus
+	8,  // 77: xunara.v2.PlatformService.GetIDTokenIssuer:output_type -> xunara.v2.IDTokenIssuerStatus
+	11, // 78: xunara.v2.PlatformService.GetDERPStatus:output_type -> xunara.v2.DERPStatus
+	14, // 79: xunara.v2.PlatformService.GetPolicyStatus:output_type -> xunara.v2.PolicyStatus
+	23, // 80: xunara.v2.PlatformService.GetMachineDeviceAttrs:output_type -> xunara.v2.MachineDeviceAttrs
+	36, // 81: xunara.v2.PlatformService.ListMachines:output_type -> xunara.v2.ListMachinesResponse
+	38, // 82: xunara.v2.PlatformService.ListServices:output_type -> xunara.v2.ListServicesResponse
+	32, // 83: xunara.v2.PlatformService.ListFluxTransfers:output_type -> xunara.v2.ListFluxTransfersResponse
+	30, // 84: xunara.v2.PlatformService.GetFluxTransfer:output_type -> xunara.v2.FluxTransfer
+	28, // 85: xunara.v2.PlatformService.ListReachSessions:output_type -> xunara.v2.ListReachSessionsResponse
+	24, // 86: xunara.v2.PlatformService.GetReachSession:output_type -> xunara.v2.ReachSession
+	42, // 87: xunara.v2.PlatformService.ListAudit:output_type -> xunara.v2.ListAuditResponse
+	45, // 88: xunara.v2.PlatformService.ListWebhooks:output_type -> xunara.v2.ListWebhooksResponse
+	47, // 89: xunara.v2.PlatformService.RevokeAgentToken:output_type -> xunara.v2.RevokeAgentTokenResponse
+	51, // 90: xunara.v2.PlatformAdminService.ListOrganizations:output_type -> xunara.v2.ListOrganizationsResponse
+	48, // 91: xunara.v2.PlatformAdminService.GetOrganization:output_type -> xunara.v2.Organization
+	48, // 92: xunara.v2.PlatformAdminService.CreateOrganization:output_type -> xunara.v2.Organization
+	48, // 93: xunara.v2.PlatformAdminService.UpdateOrganization:output_type -> xunara.v2.Organization
+	57, // 94: xunara.v2.PlatformAdminService.DeleteOrganization:output_type -> xunara.v2.DeleteOrganizationResponse
+	60, // 95: xunara.v2.PlatformAdminService.ListAudit:output_type -> xunara.v2.ListPlatformAuditResponse
+	74, // [74:96] is the sub-list for method output_type
+	52, // [52:74] is the sub-list for method input_type
+	52, // [52:52] is the sub-list for extension type_name
+	52, // [52:52] is the sub-list for extension extendee
+	0,  // [0:52] is the sub-list for field type_name
 }
 
 func init() { file_xunara_v2_platform_proto_init() }
@@ -4219,15 +4965,15 @@ func file_xunara_v2_platform_proto_init() {
 	if File_xunara_v2_platform_proto != nil {
 		return
 	}
-	file_xunara_v2_platform_proto_msgTypes[16].OneofWrappers = []any{}
-	file_xunara_v2_platform_proto_msgTypes[47].OneofWrappers = []any{}
+	file_xunara_v2_platform_proto_msgTypes[24].OneofWrappers = []any{}
+	file_xunara_v2_platform_proto_msgTypes[55].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_xunara_v2_platform_proto_rawDesc), len(file_xunara_v2_platform_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   56,
+			NumMessages:   68,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

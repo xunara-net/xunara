@@ -121,7 +121,11 @@ var consoleTitles = map[string]string{
 
 // consolePage assembles a console template from the shared shell and a body.
 func consolePage(name, body string) *template.Template {
-	tmpl := template.New(name).Funcs(template.FuncMap{"fmtTime": consoleTime, "argvLine": consoleArgvLine})
+	tmpl := template.New(name).Funcs(template.FuncMap{
+		"fmtTime":  consoleTime,
+		"argvLine": consoleArgvLine,
+		"join":     func(values []string) string { return strings.Join(values, ", ") },
+	})
 	return template.Must(tmpl.Parse(consoleHead + body + consoleFoot))
 }
 
@@ -771,24 +775,126 @@ until one is.</p>
 
 	consolePolicyTemplate = consolePage("policy", `
 <h2>Policy</h2>
-{{if .Configured}}
-<dl>
-<dt>Document</dt><dd><code>{{.Path}}</code></dd>
-<dt>ACL rules</dt><dd>{{.Rules}}</dd>
-</dl>
-{{if .Warnings}}
-<h3>Warnings</h3>
-<ul>{{range .Warnings}}<li>{{.}}</li>{{end}}</ul>
-{{end}}
-{{if .Unsupported}}
-<h3>Unsupported fields</h3>
-<p>These top-level fields are understood but not enforced by this build:</p>
-<ul>{{range .Unsupported}}<li><code>{{.}}</code></li>{{end}}</ul>
-{{end}}
-{{if .LoadError}}<p class="warn">The document could not be re-read: {{.LoadError}}</p>{{end}}
-{{else}}
+{{with .View}}
+{{if not .Configured}}
 <p>No policy document is configured: every machine may reach every other
 machine, the same behaviour as an official tailnet without a policy.</p>
+{{else}}
+<p>Read-only view (Xunara Warden) of the ACL document in force. It is loaded
+from disk and reloaded when the file changes; there is no editor here.</p>
+<dl>
+<dt>Document</dt><dd><code>{{.Path}}</code></dd>
+<dt>Compiled rules</dt><dd>{{.RuleCount}}</dd>
+</dl>
+{{if .LoadError}}<p class="warn">The file on disk no longer parses, so the previous policy is still in force: {{.LoadError}}</p>{{end}}
+{{if .Warnings}}<h3>Warnings</h3><ul>{{range .Warnings}}<li>{{.}}</li>{{end}}</ul>{{end}}
+{{if .Unsupported}}<h3>Unsupported fields</h3>
+<p>These top-level fields are understood but not enforced by this build;
+ignoring them can only tighten the policy, never widen it.</p>
+<ul>{{range .Unsupported}}<li><code>{{.}}</code></li>{{end}}</ul>{{end}}
+
+<h3>Traffic rules</h3>
+{{if .ACLs}}
+<table>
+<thead><tr><th>Action</th><th>Proto</th><th>Source</th><th>Destination</th></tr></thead>
+<tbody>
+{{range .ACLs}}<tr>
+<td>{{.Action}}</td>
+<td>{{if .Proto}}{{.Proto}}{{else}}default set{{end}}</td>
+<td>{{join .Src}}{{if .Users}}{{join .Users}}{{end}}</td>
+<td>{{join .Dst}}{{if .Ports}}{{join .Ports}}{{end}}</td>
+</tr>{{end}}
+</tbody>
+</table>
+{{else}}<p>No ACL rules in the document.</p>{{end}}
+
+<h3>Grants</h3>
+{{if .Grants}}
+<table>
+<thead><tr><th>Source</th><th>Destination</th><th>Protocols / ports</th><th>App capabilities</th></tr></thead>
+<tbody>
+{{range .Grants}}<tr>
+<td>{{join .Src}}</td>
+<td>{{join .Dst}}</td>
+<td>{{join .IP}}</td>
+<td>{{range $cap, $values := .App}}<code>{{$cap}}</code> {{end}}</td>
+</tr>{{end}}
+</tbody>
+</table>
+{{else}}<p>No grants in the document.</p>{{end}}
+
+<h3>Groups</h3>
+{{if .Groups}}
+<table>
+<thead><tr><th>Group</th><th>Members</th></tr></thead>
+<tbody>
+{{range $name, $members := .Groups}}<tr><td><code>{{$name}}</code></td><td>{{join $members}}</td></tr>{{end}}
+</tbody>
+</table>
+{{else}}<p>No groups defined.</p>{{end}}
+
+<h3>Hosts</h3>
+{{if .Hosts}}
+<table>
+<thead><tr><th>Alias</th><th>Value</th></tr></thead>
+<tbody>
+{{range $alias, $value := .Hosts}}<tr><td><code>{{$alias}}</code></td><td><code>{{$value}}</code></td></tr>{{end}}
+</tbody>
+</table>
+{{else}}<p>No hosts defined.</p>{{end}}
+
+<h3>Tag owners</h3>
+{{if .TagOwners}}
+<table>
+<thead><tr><th>Tag</th><th>Owners</th></tr></thead>
+<tbody>
+{{range $tag, $owners := .TagOwners}}<tr><td><code>{{$tag}}</code></td><td>{{join $owners}}</td></tr>{{end}}
+</tbody>
+</table>
+{{else}}<p>No tag owners defined.</p>{{end}}
+
+<h3>SSH rules</h3>
+{{if .SSH}}
+<table>
+<thead><tr><th>Action</th><th>Source</th><th>Destination</th><th>Users</th><th>Environment</th><th>Check period</th></tr></thead>
+<tbody>
+{{range .SSH}}<tr>
+<td>{{.Action}}</td>
+<td>{{join .Src}}</td>
+<td>{{join .Dst}}</td>
+<td>{{join .Users}}</td>
+<td>{{if .AcceptEnv}}{{join .AcceptEnv}}{{else}}—{{end}}</td>
+<td>{{if .CheckPeriod}}{{.CheckPeriod}}{{else}}12h default{{end}}</td>
+</tr>{{end}}
+</tbody>
+</table>
+{{else}}<p>No SSH rules in the document.</p>{{end}}
+
+<h3>Node attributes</h3>
+{{if .NodeAttrs}}
+<table>
+<thead><tr><th>Target</th><th>Attributes</th></tr></thead>
+<tbody>
+{{range .NodeAttrs}}<tr><td>{{join .Target}}</td><td>{{join .Attr}}</td></tr>{{end}}
+</tbody>
+</table>
+{{else}}<p>No nodeAttrs in the document.</p>{{end}}
+
+<h3>Policy tests</h3>
+{{if .Tests.Results}}
+<table>
+<thead><tr><th>#</th><th>Source</th><th>Proto</th><th>Result</th></tr></thead>
+<tbody>
+{{range .Tests.Results}}<tr>
+<td>{{.Index}}</td>
+<td><code>{{.Src}}</code></td>
+<td>{{if .Proto}}{{.Proto}}{{else}}default set{{end}}</td>
+<td>{{if .Pass}}<span class="ok">pass</span>{{else}}<span class="warn">fail</span><ul>{{range .Failures}}<li>{{.}}</li>{{end}}</ul>{{end}}</td>
+</tr>{{end}}
+</tbody>
+</table>
+{{else}}<p>Not run ({{.Tests.Total}} in the document){{if .Tests.Reason}}: {{.Tests.Reason}}{{end}}.</p>{{end}}
+{{end}}
 {{end}}
 `)
 

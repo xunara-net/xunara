@@ -50,6 +50,7 @@ const (
 	PlatformService_GetTailnetLock_FullMethodName          = "/xunara.v2.PlatformService/GetTailnetLock"
 	PlatformService_GetIDTokenIssuer_FullMethodName        = "/xunara.v2.PlatformService/GetIDTokenIssuer"
 	PlatformService_GetDERPStatus_FullMethodName           = "/xunara.v2.PlatformService/GetDERPStatus"
+	PlatformService_GetPolicyStatus_FullMethodName         = "/xunara.v2.PlatformService/GetPolicyStatus"
 	PlatformService_GetMachineDeviceAttrs_FullMethodName   = "/xunara.v2.PlatformService/GetMachineDeviceAttrs"
 	PlatformService_ListMachines_FullMethodName            = "/xunara.v2.PlatformService/ListMachines"
 	PlatformService_ListServices_FullMethodName            = "/xunara.v2.PlatformService/ListServices"
@@ -93,6 +94,12 @@ type PlatformServiceClient interface {
 	// itself is configuration: this surface is read-only. Relay host names are
 	// public netmap information; no secret is returned.
 	GetDERPStatus(ctx context.Context, in *GetDERPStatusRequest, opts ...grpc.CallOption) (*DERPStatus, error)
+	// GetPolicyStatus reports the ACL document this organization is enforcing
+	// (Xunara Warden) and the outcome of the document's own tests against the
+	// current machines (GET /api/v2/policy). The document is loaded from disk
+	// and reloaded by the watcher: this surface is read-only, and a document
+	// whose tests fail is data, not an RPC error.
+	GetPolicyStatus(ctx context.Context, in *GetPolicyStatusRequest, opts ...grpc.CallOption) (*PolicyStatus, error)
 	// GetMachineDeviceAttrs returns the device posture attributes a machine
 	// reported about itself (PATCH /machine/set-device-attr). Values are the
 	// JSON scalars the node sent. Another organization's machine is NOT_FOUND.
@@ -184,6 +191,16 @@ func (c *platformServiceClient) GetDERPStatus(ctx context.Context, in *GetDERPSt
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DERPStatus)
 	err := c.cc.Invoke(ctx, PlatformService_GetDERPStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *platformServiceClient) GetPolicyStatus(ctx context.Context, in *GetPolicyStatusRequest, opts ...grpc.CallOption) (*PolicyStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(PolicyStatus)
+	err := c.cc.Invoke(ctx, PlatformService_GetPolicyStatus_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -321,6 +338,12 @@ type PlatformServiceServer interface {
 	// itself is configuration: this surface is read-only. Relay host names are
 	// public netmap information; no secret is returned.
 	GetDERPStatus(context.Context, *GetDERPStatusRequest) (*DERPStatus, error)
+	// GetPolicyStatus reports the ACL document this organization is enforcing
+	// (Xunara Warden) and the outcome of the document's own tests against the
+	// current machines (GET /api/v2/policy). The document is loaded from disk
+	// and reloaded by the watcher: this surface is read-only, and a document
+	// whose tests fail is data, not an RPC error.
+	GetPolicyStatus(context.Context, *GetPolicyStatusRequest) (*PolicyStatus, error)
 	// GetMachineDeviceAttrs returns the device posture attributes a machine
 	// reported about itself (PATCH /machine/set-device-attr). Values are the
 	// JSON scalars the node sent. Another organization's machine is NOT_FOUND.
@@ -382,6 +405,9 @@ func (UnimplementedPlatformServiceServer) GetIDTokenIssuer(context.Context, *Get
 }
 func (UnimplementedPlatformServiceServer) GetDERPStatus(context.Context, *GetDERPStatusRequest) (*DERPStatus, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetDERPStatus not implemented")
+}
+func (UnimplementedPlatformServiceServer) GetPolicyStatus(context.Context, *GetPolicyStatusRequest) (*PolicyStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetPolicyStatus not implemented")
 }
 func (UnimplementedPlatformServiceServer) GetMachineDeviceAttrs(context.Context, *GetMachineDeviceAttrsRequest) (*MachineDeviceAttrs, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetMachineDeviceAttrs not implemented")
@@ -520,6 +546,24 @@ func _PlatformService_GetDERPStatus_Handler(srv interface{}, ctx context.Context
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PlatformServiceServer).GetDERPStatus(ctx, req.(*GetDERPStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PlatformService_GetPolicyStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetPolicyStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PlatformServiceServer).GetPolicyStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PlatformService_GetPolicyStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PlatformServiceServer).GetPolicyStatus(ctx, req.(*GetPolicyStatusRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -730,6 +774,10 @@ var PlatformService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetDERPStatus",
 			Handler:    _PlatformService_GetDERPStatus_Handler,
+		},
+		{
+			MethodName: "GetPolicyStatus",
+			Handler:    _PlatformService_GetPolicyStatus_Handler,
 		},
 		{
 			MethodName: "GetMachineDeviceAttrs",

@@ -299,6 +299,103 @@ func (g *grpcPlatformServer) GetDERPStatus(ctx context.Context, _ *xunarav2.GetD
 	return out, nil
 }
 
+// GetPolicyStatus implements PlatformService.GetPolicyStatus: the same
+// read-only policy view as GET /api/v2/policy (spec section 34.1). The request
+// carries no parameters: the organization follows from the authority, and the
+// document is local configuration. A document whose tests fail is data, not an
+// RPC error.
+func (g *grpcPlatformServer) GetPolicyStatus(ctx context.Context, _ *xunarav2.GetPolicyStatusRequest) (*xunarav2.PolicyStatus, error) {
+	s, _, err := g.authorize(ctx, identity.ScopeRead)
+	if err != nil {
+		return nil, err
+	}
+
+	view := s.policyView()
+	out := &xunarav2.PolicyStatus{
+		Configured:  view.Configured,
+		Path:        view.Path,
+		RuleCount:   uint32(view.RuleCount),
+		Warnings:    view.Warnings,
+		Unsupported: view.Unsupported,
+		LoadError:   view.LoadError,
+		Acls:        make([]*xunarav2.PolicyACLRule, 0, len(view.ACLs)),
+		Grants:      make([]*xunarav2.PolicyGrant, 0, len(view.Grants)),
+		Groups:      policyStringLists(view.Groups),
+		Hosts:       view.Hosts,
+		TagOwners:   policyStringLists(view.TagOwners),
+		Ssh:         make([]*xunarav2.PolicySSHRule, 0, len(view.SSH)),
+		NodeAttrs:   make([]*xunarav2.PolicyNodeAttr, 0, len(view.NodeAttrs)),
+		Tests: &xunarav2.PolicyTestSummary{
+			Total:   uint32(view.Tests.Total),
+			Ran:     view.Tests.Ran,
+			Reason:  view.Tests.Reason,
+			Results: make([]*xunarav2.PolicyTestResult, 0, len(view.Tests.Results)),
+		},
+	}
+	for _, row := range view.ACLs {
+		out.Acls = append(out.Acls, &xunarav2.PolicyACLRule{
+			Action: row.Action,
+			Proto:  row.Proto,
+			Src:    row.Src,
+			Dst:    row.Dst,
+			Users:  row.Users,
+			Ports:  row.Ports,
+		})
+	}
+	for _, row := range view.Grants {
+		grant := &xunarav2.PolicyGrant{
+			Src: row.Src,
+			Dst: row.Dst,
+			Ip:  row.IP,
+			Via: row.Via,
+			App: make(map[string]*xunarav2.StringList, len(row.App)),
+		}
+		for name, values := range row.App {
+			encoded := make([]string, len(values))
+			for i, value := range values {
+				encoded[i] = string(value)
+			}
+			grant.App[name] = &xunarav2.StringList{Values: encoded}
+		}
+		out.Grants = append(out.Grants, grant)
+	}
+	for _, row := range view.SSH {
+		out.Ssh = append(out.Ssh, &xunarav2.PolicySSHRule{
+			Action:      row.Action,
+			Src:         row.Src,
+			Dst:         row.Dst,
+			Users:       row.Users,
+			AcceptEnv:   row.AcceptEnv,
+			CheckPeriod: row.CheckPeriod,
+		})
+	}
+	for _, row := range view.NodeAttrs {
+		out.NodeAttrs = append(out.NodeAttrs, &xunarav2.PolicyNodeAttr{
+			Target: row.Target,
+			Attr:   row.Attr,
+		})
+	}
+	for _, result := range view.Tests.Results {
+		out.Tests.Results = append(out.Tests.Results, &xunarav2.PolicyTestResult{
+			Index:    uint32(result.Index),
+			Src:      result.Src,
+			Proto:    result.Proto,
+			Pass:     result.Pass,
+			Failures: result.Failures,
+		})
+	}
+	return out, nil
+}
+
+// policyStringLists converts document map values to the proto map type.
+func policyStringLists(in map[string][]string) map[string]*xunarav2.StringList {
+	out := make(map[string]*xunarav2.StringList, len(in))
+	for name, values := range in {
+		out[name] = &xunarav2.StringList{Values: values}
+	}
+	return out
+}
+
 func (g *grpcPlatformServer) GetMachineDeviceAttrs(ctx context.Context, req *xunarav2.GetMachineDeviceAttrsRequest) (*xunarav2.MachineDeviceAttrs, error) {
 	s, _, err := g.authorize(ctx, identity.ScopeRead)
 	if err != nil {

@@ -585,7 +585,7 @@ reference/{go-oidc,oauth2,dex,webauthn}
   - 已知限制（M9 剩余）：无。Remote 已由 M22（Xunara Reach，spec §29）交付，
     File Transfer 已由 M18（Xunara Flux，spec §25）交付；credential 的列出/
     吊销已完成：M5d 的 `/api/v2/agent-tokens` 与 console Agents 页面。
-- ACL/Zero Trust（`Xunara Warden`）。
+- ~~ACL/Zero Trust（`Xunara Warden`）。~~ 已完成（M28）：只读管理面（spec §34）。
 
 ---
 
@@ -1499,6 +1499,42 @@ nil，端点 404），补上单组织 flag 与多组织组织表接线；规格�
   未启用说明页）。
 - 明确不做（v1）：管理面取消/删除、内容下载/导出、按文件名全文搜索、
   跨组织视图、内容扫描（DLP 不在 v1，§25）。
+
+---
+
+## M28 — Xunara Warden 管理面（只读，v1，已完成）
+
+目标：管理员能回答"这份策略到底写了什么、组里都有谁、自带的 tests 现在是否
+通过"，同时策略仍只从磁盘加载、由 watcher 整体重载。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §34。只读：没有
+编辑/热更新入口，也没有"在线编辑 ACL"的通道。
+
+- policy：`Document.Clone`（深拷贝：含 grant capability 的 `json.RawMessage`、
+  SSH `checkPeriod` 指针、`Unsupported`）与 `Engine.Document()`。管理面渲染的
+  是副本，永远不会碰到 netmap 编译器正在使用的文档。
+- HTTP `GET /api/v2/policy`（read scope、`Cache-Control: no-store`）：
+  `configured`/`path`/`ruleCount`/`warnings`/`unsupported`/`loadError` + 各
+  section（`acls`/`grants`/`groups`/`hosts`/`tagOwners`/`ssh`/`nodeAttrs`）；
+  `checkPeriod` 渲染为 `"always"` 或 duration 字符串；数组恒为 `[]` 而非
+  null，自动化客户端不必区分"缺失"与"空"。
+- `loadError`：磁盘文件解析失败时 watcher 保留上一份可用策略，管理面明确
+  说明"生效中的是哪份"，而不是 5xx。`tests` 对当前节点运行文档自带断言
+  （与 `xunara policy check` 同语义）：无节点/无 tests/运行前校验失败时
+  `ran=false` + `reason`；断言不满足是 `pass=false` + `failures`（数据，
+  不是 HTTP 错误）。
+- gRPC `PlatformService.GetPolicyStatus`（proto 重新生成）：语义、认证与
+  错误映射与 HTTP 一致；grants 的 app 值以 JSON 文本传输，maps 用既有
+  `StringList`。
+- Console `/console/policy` 重写为 Warden 视图：规则/grants/组/hosts/
+  tagOwners/SSH/nodeAttrs 表 + 自测结果 + warnings/unsupported/loadError；
+  只读、无按钮（原页面只显示规则计数）。
+- 测试：`policy/policy_test.go`（深拷贝独立性、engine 每次返回新副本）；
+  `control/api_v2_policy_test.go`（未配置形状、完整 section、loadError、
+  无节点不误报失败、歧义选择器仍是数据不是 5xx、gRPC 认证/权限/镜像）；
+  `control/console_test.go` 新增 Warden 表格渲染与只读断言。
+- 明确不做（v1）：编辑/热更新策略、按选择器解析当前节点（"谁能访问谁"）、
+  任意流的按需评估、ACL 编辑器/语法高亮、grants `via`、ACL `srcPosture`
+  条件（仍未实现，§M13/M14）。
 
 ---
 
