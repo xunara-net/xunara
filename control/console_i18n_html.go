@@ -21,6 +21,10 @@ import (
 //     buttons and status words translate without touching surrounding markup;
 //   - placeholder, title, aria-label and alt attribute values.
 //
+// Content marked with the standard HTML attribute translate="no" is copied
+// verbatim: the console prints runtime data (login names, hostnames) that must
+// never be mistranslated just because it happens to read like UI copy.
+//
 // It never enters <script>, <style>, <code>, <pre> or <title> content, so
 // code samples, secrets printed once, and the raw JS stay byte-identical. An
 // untranslated string is left alone; nothing is ever removed.
@@ -202,11 +206,22 @@ func (l *localizer) skippedOpenAt(page string, start int) string {
 		return ""
 	}
 	name, closing, selfClosing := tagParts(page[start:end])
-	if closing || selfClosing || !consoleSkipped[name] {
+	if closing || selfClosing || name == "" {
 		return ""
 	}
-	return name
+	if consoleSkipped[name] {
+		return name
+	}
+	// translate="no" opts an element out of localization; it only applies
+	// when the element is closed, or the rest of the page would be swallowed.
+	if translateNoRe.MatchString(page[start:end]) && indexFrom(page, end, "</"+name) < len(page) {
+		return name
+	}
+	return ""
 }
+
+// translateNoRe matches the HTML attribute that marks runtime data.
+var translateNoRe = regexp.MustCompile(`(?i)\btranslate\s*=\s*"no"`)
 
 // tagParts splits a raw tag into its lowercase name and shape.
 func tagParts(tag string) (name string, closing, selfClosing bool) {

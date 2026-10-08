@@ -19,13 +19,13 @@ halves. Approval and withdrawal live on the Machines page.</p>
 {{range .View.ExitNodes}}
 <tr>
 <td>{{.Hostname}}<br><code>{{.StableID}}</code></td>
-<td>{{if .Owner}}{{.Owner}}{{else}}—{{end}}</td>
+<td>{{if .Owner}}<span translate="no">{{.Owner}}</span>{{else}}—{{end}}</td>
 <td>{{if .Online}}<span class="ok">online</span>{{else}}<span class="off">offline</span>{{end}}
 {{if not .Announced}} <span class="tag warn">not advertising</span>{{end}}</td>
 <td>{{if .IPv4}}<code>{{.IPv4}}</code>{{end}}{{if .IPv6}}<br><code>{{.IPv6}}</code>{{end}}</td>
 <td>{{if .DERPHome}}{{.DERPHome}}{{else}}—{{end}}</td>
 <td>{{if .ClientCount}}{{.ClientCount}}{{else}}none{{end}}
-{{range .Clients}}<br>{{.Hostname}} <span class="off">({{.Owner}})</span>{{end}}</td>
+{{range .Clients}}<br>{{.Hostname}} <span class="off" translate="no">({{.Owner}})</span>{{end}}</td>
 </tr>
 {{end}}
 </tbody>
@@ -47,7 +47,7 @@ the node makes it effective again.</p>
 {{range .View.Clients}}
 <tr>
 <td>{{.Hostname}}<br><code>{{.StableID}}</code></td>
-<td>{{if .Owner}}{{.Owner}}{{else}}—{{end}}</td>
+<td>{{if .Owner}}<span translate="no">{{.Owner}}</span>{{else}}—{{end}}</td>
 <td>{{if .Online}}<span class="ok">online</span>{{else}}<span class="off">offline</span>{{end}}</td>
 <td>{{if .ExitNodeHostname}}{{.ExitNodeHostname}}{{else}}<span class="off">unknown node</span>{{end}}<br><code>{{.ExitNodeStableID}}</code></td>
 <td>{{if .Resolved}}<span class="ok">in effect</span>{{else}}<span class="warn">unresolved</span>{{end}}</td>

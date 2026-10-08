@@ -20,7 +20,7 @@ and DERP are not good enough; the control plane never selects one.</p>
 {{range .View.Relays}}
 <tr>
 <td>{{.Hostname}}<br><code>{{.StableID}}</code></td>
-<td>{{if .Owner}}{{.Owner}}{{else}}—{{end}}</td>
+<td>{{if .Owner}}<span translate="no">{{.Owner}}</span>{{else}}—{{end}}</td>
 <td>{{if .Online}}<span class="ok">online</span>{{else}}<span class="off">offline</span>{{end}}</td>
 <td>{{if .Announced}}<span class="ok">offers relay</span>{{else}}<span class="tag warn">no relay offer</span>{{end}}
 {{if .Disabled}} <span class="tag warn">disable-relay-server</span>{{end}}
@@ -43,9 +43,9 @@ appears here, and a relay grant decides who may use it.</p>
 <tbody>
 {{range .View.Grants}}
 <tr>
-<td>{{range .Sources}}{{.Hostname}} <span class="off">({{.Owner}})</span>
+<td>{{range .Sources}}{{.Hostname}} <span class="off" translate="no">({{.Owner}})</span>
 {{if .ClientDisabled}}<span class="tag warn">disable-relay-client</span>{{end}}<br>{{end}}</td>
-<td>{{range .Targets}}{{.Hostname}} <span class="off">({{.Owner}})</span>
+<td>{{range .Targets}}{{.Hostname}} <span class="off" translate="no">({{.Owner}})</span>
 {{if not .Announced}}<span class="tag warn">no relay offer</span>{{end}}
 {{if .Disabled}}<span class="tag warn">disable-relay-server</span>{{end}}<br>{{end}}</td>
 </tr>

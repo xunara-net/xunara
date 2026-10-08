@@ -249,7 +249,7 @@ footer.console-foot a { color: var(--muted); }
 </div>
 </details>
 <button class="theme-toggle" type="button" hidden aria-label="{{T "Switch color theme"}}">◐</button>
-<span class="who-name">{{.User}}</span> <span class="tag">{{T .Role}}</span>
+<span class="who-name" translate="no">{{.User}}</span> <span class="tag">{{T .Role}}</span>
 <form method="post" action="/logout"><button class="ghost" type="submit">{{T "Sign out"}}</button></form>
 </div>
 </header>
@@ -577,10 +577,10 @@ device a human identity.</p>
 <tbody>
 {{range .Users}}
 <tr>
-<td>{{.LoginName}}</td>
-<td>{{.DisplayName}}</td>
+<td><span translate="no">{{.LoginName}}</span></td>
+<td><span translate="no">{{.DisplayName}}</span></td>
 <td>{{.Role}}</td>
-<td>{{if .Email}}{{.Email}}{{else}}—{{end}}</td>
+<td>{{if .Email}}<span translate="no">{{.Email}}</span>{{else}}—{{end}}</td>
 <td>{{fmtTime .CreatedAt}}</td>
 <td>{{range .Identities}}<code>{{.ProviderID}}</code> {{.Subject}}<br>{{else}}—{{end}}</td>
 </tr>
@@ -593,7 +593,7 @@ device a human identity.</p>
 {{range .Users}}
 {{if $.CanWrite}}
 <form method="post" action="/console/users/{{.ID}}">
-<h3>{{.LoginName}}</h3>
+<h3><span translate="no">{{.LoginName}}</span></h3>
 <input type="hidden" name="csrf" value="{{$.CSRF}}">
 <div class="field">
 <label>Display name <input name="displayName" value="{{.DisplayName}}"></label>
@@ -624,7 +624,7 @@ device a human identity.</p>
 <td>{{if .Note}}{{.Note}}{{else}}—{{end}}</td>
 <td>{{fmtTime .Created}}</td>
 <td>{{fmtTime .Expires}}</td>
-<td>{{if .Redeemed}}<span>redeemed</span> {{.UsedBy}}{{else if .Expired}}expired{{else}}open{{end}}</td>
+<td>{{if .Redeemed}}<span>redeemed</span> <span translate="no">{{.UsedBy}}</span>{{else if .Expired}}expired{{else}}open{{end}}</td>
 <td>
 {{if and $.CanWrite .Open}}
 <form method="post" action="/console/invites/{{.ID}}/delete">
@@ -718,7 +718,7 @@ is shown once, at creation time, and never again.</p>
 {{range .AuthKeys}}
 <tr>
 <td>{{.ID}}</td>
-<td>{{.Owner}}</td>
+<td><span translate="no">{{.Owner}}</span></td>
 <td>{{if .Tags}}{{range .Tags}}<code>{{.}}</code> {{end}}{{else}}—{{end}}</td>
 <td>{{if .Reusable}}yes{{else}}no{{end}}</td>
 <td>{{if .Ephemeral}}yes{{else}}no{{end}}</td>
@@ -911,7 +911,7 @@ again:</p>
 {{range .Keys}}
 <tr>
 <td>{{.Name}}<br><code>{{.ID}}</code></td>
-<td>{{.Owner}}</td>
+<td><span translate="no">{{.Owner}}</span></td>
 <td>{{range .Scopes}}<span class="tag">{{.}}</span> {{end}}</td>
 <td>{{fmtTime .Created}}</td>
 <td>{{if .Expires}}{{fmtTime .Expires}}{{else}}never{{end}}</td>

@@ -27,7 +27,7 @@ type providerView struct {
 // a GET: doing so would hand the tailnet to whoever can reach the URL, so
 // local sign-in is a POST that has to present a password.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	returnTo := safeReturnTo(r.URL.Query().Get("return_to"))
+	returnTo := loginReturnTo(r.URL.Query().Get("return_to"))
 
 	if providerID := r.URL.Query().Get("provider"); providerID != "" && providerID != identity.LocalProviderID {
 		s.startExternalLogin(w, r, providerID, returnTo)
@@ -131,7 +131,7 @@ func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	returnTo := safeReturnTo(r.PostFormValue("return_to"))
+	returnTo := loginReturnTo(r.PostFormValue("return_to"))
 	login := strings.TrimSpace(r.PostFormValue("login"))
 	password := r.PostFormValue("password")
 	now := time.Now()
@@ -458,6 +458,16 @@ func safeReturnTo(raw string) string {
 		return "/"
 	}
 	return raw
+}
+
+// loginReturnTo resolves where a successful sign-in lands. Someone who signs
+// in wants the console; the landing page is only the answer when the input
+// did not name anything better (or tried to leave the site).
+func loginReturnTo(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return "/console/"
+	}
+	return safeReturnTo(raw)
 }
 
 // providerName returns the display name of a provider.

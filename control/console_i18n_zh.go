@@ -159,6 +159,7 @@ var consoleZH = map[string]string{
 	"Invitation failed":                     "邀请创建失败",
 	"Invitation rejected":                   "邀请被拒绝",
 	"Invitation revoked.":                   "邀请已撤销。",
+	"Invitation created. Share this link:":  "邀请已创建。请把下面的链接发给对方：",
 	"Invitations":                           "注册邀请",
 	"Language":                              "语言",
 	"Last used":                             "最近使用",

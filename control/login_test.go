@@ -261,6 +261,12 @@ func TestLoginRefusesUnknownProviderAndBadReturnTo(t *testing.T) {
 		}
 	}
 
+	// A visitor who just opens /login lands in the console after signing in.
+	resp = getRequest(t, client, hs.URL+"/login", nil)
+	if got := hiddenValue(t, bodyString(t, resp), "return_to"); got != "/console/" {
+		t.Errorf("plain /login return_to = %q, want /console/", got)
+	}
+
 	// A signed-in visitor does not get the form again.
 	cookie := loginLocal(t, client, hs.URL, "/console/")
 	resp = getRequest(t, client, hs.URL+"/login?return_to=/console/machines", cookie)
@@ -281,6 +287,20 @@ func TestSafeReturnTo(t *testing.T) {
 	for _, raw := range bad {
 		if got := safeReturnTo(raw); got != "/" {
 			t.Errorf("safeReturnTo(%q) = %q, want /", raw, got)
+		}
+	}
+	for _, raw := range bad[1:] {
+		if got := loginReturnTo(raw); got != "/" {
+			t.Errorf("loginReturnTo(%q) = %q, want /", raw, got)
+		}
+	}
+	for raw, want := range map[string]string{
+		"":              "/console/",
+		"/register/abc": "/register/abc",
+		"/":             "/",
+	} {
+		if got := loginReturnTo(raw); got != want {
+			t.Errorf("loginReturnTo(%q) = %q, want %q", raw, got, want)
 		}
 	}
 }

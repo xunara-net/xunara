@@ -48,7 +48,7 @@ keys are the actionable subset; the rest is the schedule.</p>
 {{range .Expiry}}
 <tr>
 <td>{{.Hostname}}</td>
-<td>{{if .Owner}}{{.Owner}}{{else}}—{{end}}</td>
+<td>{{if .Owner}}<span translate="no">{{.Owner}}</span>{{else}}—{{end}}</td>
 <td>{{fmtTime .Expiry}}</td>
 <td>{{if eq .State "expired"}}<span class="warn">expired</span>{{else if eq .State "expiring"}}<span class="tag warn">expiring</span>{{else}}scheduled{{end}}</td>
 </tr>

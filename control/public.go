@@ -55,6 +55,7 @@ a { color: var(--accent); }
 .panel pre { margin: .6rem 0 1rem; background: var(--surface-2); border: 1px solid var(--border);
              border-radius: var(--radius-sm); padding: .7rem .8rem; overflow-x: auto; }
 .panel code { font-family: var(--mono); font-size: .84rem; white-space: nowrap; }
+.panel pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .meta { display: grid; grid-template-columns: max-content 1fr; gap: .3rem .9rem; margin: 0; font-size: .88rem; }
 .meta dt { color: var(--muted); }
 .meta dd { margin: 0; overflow-wrap: anywhere; }
@@ -201,7 +202,7 @@ var (
 <p class="notice">First run: read the one-time token from the server's state directory and finish setup.</p>
 <p><a class="pbtn wide" href="/setup">Set up the administrator</a></p>
 {{else}}<p class="sub">Sign in to the console to manage this tailnet.</p>{{end}}
-{{if .LocalLogin}}
+{{if .LocalLogin}}{{if not .Setup}}
 <form method="post" action="/login">
 <input type="hidden" name="_csrf" value="{{.FormToken}}">
 <input type="hidden" name="return_to" value="{{.ReturnTo}}">
@@ -211,7 +212,7 @@ var (
 <input id="password" name="password" type="password" autocomplete="current-password" required>
 <button class="pbtn wide" type="submit">Sign in</button>
 </form>
-{{end}}
+{{end}}{{end}}
 {{if .Providers}}
 <p class="divider">or continue with</p>
 {{range .Providers}}<a class="provider" href="{{.URL}}">{{.Name}}</a>{{end}}

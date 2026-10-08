@@ -32,7 +32,7 @@ endpoints enabled is shown below as a misconfiguration.</p>
 {{range .View.Nodes}}
 <tr>
 <td>{{.Hostname}}<br><code>{{.StableID}}</code></td>
-<td>{{if .Owner}}{{.Owner}}{{else}}—{{end}}</td>
+<td>{{if .Owner}}<span translate="no">{{.Owner}}</span>{{else}}—{{end}}</td>
 <td>{{if .Online}}<span class="ok">online</span>{{else}}<span class="off">offline</span>{{end}}</td>
 <td>{{if .Serve}}<span class="ok">https granted</span>{{else}}<span class="off">not granted</span>{{end}}</td>
 <td>{{if .CertDomains}}{{range .CertDomains}}<code>{{.}}</code><br>{{end}}{{else}}<span class="off">none</span>{{end}}</td>

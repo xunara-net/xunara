@@ -613,3 +613,41 @@ func linkTokenFromPage(t *testing.T, page string) string {
 	}
 	return token
 }
+
+// TestConsoleDoesNotTranslateRuntimeData checks that a login name that reads
+// like UI copy is printed verbatim: a user called "Cancel" must not become
+// a button label.
+func TestConsoleDoesNotTranslateRuntimeData(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/users")
+
+	user := identity.User{LoginName: "Cancel", DisplayName: "Sign out"}
+	if err := s.Identity().CreateUser(&user); err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+
+	request, err := http.NewRequest(http.MethodGet, hs.URL+"/console/users", nil)
+	if err != nil {
+		t.Fatalf("building request: %v", err)
+	}
+	request.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+	request.AddCookie(cookie)
+	resp, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("GET /console/users: %v", err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	body := bodyString(t, resp)
+
+	if !strings.Contains(body, "登录名") {
+		t.Errorf("the page is not Chinese; the test would not prove anything:\n%.800s", body)
+	}
+	if !strings.Contains(body, `<span translate="no">Cancel</span>`) {
+		t.Errorf("the login name was translated or lost:\n%.1200s", body)
+	}
+	if !strings.Contains(body, `translate="no">Sign out</span>`) {
+		t.Errorf("the display name was translated or lost:\n%.1200s", body)
+	}
+}

@@ -108,7 +108,7 @@ func (s *Server) handleSetupPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/login", http.StatusFound)
 		return
 	}
-	s.renderPage(w, r, setupPageTemplate, map[string]any{
+	s.renderPublicPage(w, r, setupPageTemplate, map[string]any{
 		"Title":     "Set up the administrator",
 		"Token":     "",
 		"Login":     "admin",
