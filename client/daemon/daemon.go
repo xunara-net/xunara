@@ -285,11 +285,26 @@ type Agent struct {
 	// least a few times this to tolerate a missed report.
 	HealthInterval time.Duration
 
+	// ExecuteReach starts the Reach execution loop with Run (PROJECT_SPEC
+	// section 29). The loop only executes sessions the local operator
+	// approved; a deployment still has to opt in.
+	ExecuteReach bool
+	// ReachInterval is how often the loop looks for accepted sessions. Zero
+	// uses the default.
+	ReachInterval time.Duration
+
 	// netmapMu guards the netmap the agent last applied and how many it has
 	// applied in total.
 	netmapMu   sync.Mutex
 	netmaps    int
 	lastNetmap *tailcfg.MapResponse
+
+	// reachMu guards reachRunning, the session IDs this agent is executing.
+	reachMu      sync.Mutex
+	reachRunning map[string]bool
+	// reachWG tracks the executions started by the reach loop so a stopping
+	// agent can wait for them to report their outcome.
+	reachWG sync.WaitGroup
 }
 
 // NewAgent builds the steady-state loop for an enrolled state.
@@ -342,6 +357,16 @@ func (a *Agent) Run(ctx context.Context) error {
 		// re-reads both files each cycle, so enabling health on a service
 		// takes effect without a restart.
 		go a.healthLoop(ctx, keys)
+	}
+	if a.ExecuteReach {
+		go func() {
+			// Give in-flight commands a chance to report their result before
+			// the process exits.
+			defer a.reachWG.Wait()
+			if err := a.reachServe(ctx, keys); err != nil && ctx.Err() == nil {
+				a.Logger.Warn("reach loop stopped", "err", err)
+			}
+		}()
 	}
 
 	backoff := interval

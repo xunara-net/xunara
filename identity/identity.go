@@ -219,4 +219,15 @@ const (
 	AuditFluxFailed    = "flux.transfer_failed"
 	AuditFluxCancelled = "flux.transfer_cancelled"
 	AuditFluxExpired   = "flux.transfer_expired"
+
+	// Xunara Reach remote command sessions (PROJECT_SPEC section 29). argv and
+	// output never appear in audit details.
+	AuditReachOffered  = "reach.offered"
+	AuditReachAccepted = "reach.accepted"
+	AuditReachDenied   = "reach.denied"
+	AuditReachStarted  = "reach.started"
+	AuditReachFinished = "reach.finished"
+	AuditReachFailed   = "reach.failed"
+	AuditReachCanceled = "reach.canceled"
+	AuditReachExpired  = "reach.expired"
 )

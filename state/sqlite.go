@@ -200,6 +200,36 @@ CREATE TABLE IF NOT EXISTS rate_limits (
 );
 CREATE INDEX IF NOT EXISTS idx_rate_limits_window ON rate_limits(window_start);
 `,
+
+	// v14: Xunara Reach remote command sessions (section 29). The control
+	// plane orchestrates sessions and relays output chunks; argv and output
+	// live here, never in the audit log. Chunk rows die with their session.
+	`
+CREATE TABLE IF NOT EXISTS reach_sessions (
+	id          TEXT    PRIMARY KEY,
+	sender_node INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+	target_node INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+	state       TEXT    NOT NULL,
+	argv        TEXT    NOT NULL,
+	timeout_ms  INTEGER NOT NULL,
+	exit_code   INTEGER,
+	error       TEXT    NOT NULL DEFAULT '',
+	created_at  INTEGER NOT NULL,
+	updated_at  INTEGER NOT NULL,
+	expires_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reach_sender ON reach_sessions(sender_node, state);
+CREATE INDEX IF NOT EXISTS idx_reach_target ON reach_sessions(target_node, state);
+CREATE INDEX IF NOT EXISTS idx_reach_expiry ON reach_sessions(state, expires_at);
+CREATE TABLE IF NOT EXISTS reach_chunks (
+	session_id TEXT    NOT NULL REFERENCES reach_sessions(id) ON DELETE CASCADE,
+	stream     TEXT    NOT NULL,
+	seq        INTEGER NOT NULL,
+	data       BLOB    NOT NULL,
+	created_at INTEGER NOT NULL,
+	PRIMARY KEY (session_id, stream, seq)
+);
+`,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.

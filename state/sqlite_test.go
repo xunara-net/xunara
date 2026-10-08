@@ -360,6 +360,42 @@ func TestSQLiteMigratesV12ToV13(t *testing.T) {
 	}
 }
 
+// TestSQLiteMigratesV13ToV14 simulates a database written before Xunara Reach
+// existed: reopening it must create the session and chunk tables.
+func TestSQLiteMigratesV13ToV14(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	ctx := context.Background()
+	first := openTestSQLite(t, path)
+	node := Node{Hostname: "old", NodeKey: key.NewNode().Public()}
+	target := Node{Hostname: "old-target", NodeKey: key.NewNode().Public()}
+	for _, n := range []*Node{&node, &target} {
+		if err := first.CreateNode(n); err != nil {
+			t.Fatalf("CreateNode: %v", err)
+		}
+	}
+	for _, table := range []string{"reach_chunks", "reach_sessions"} {
+		if _, err := first.db.ExecContext(ctx, "DROP TABLE "+table); err != nil {
+			t.Fatalf("dropping %s: %v", table, err)
+		}
+	}
+	if _, err := first.db.ExecContext(ctx, "PRAGMA user_version = 13"); err != nil {
+		t.Fatalf("downgrading schema version: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second := openTestSQLite(t, path)
+	if _, ok := second.GetNodeByNodeKey(node.NodeKey); !ok {
+		t.Fatal("node did not survive the v13 -> v14 migration")
+	}
+	session := ReachSession{Sender: node.ID, Target: target.ID, Argv: []string{"true"}, Timeout: time.Minute}
+	if err := second.CreateReachSession(&session, ReachQuotas{}); err != nil {
+		t.Fatalf("CreateReachSession after migration: %v", err)
+	}
+}
+
 func TestSQLiteStoreConcurrentAccess(t *testing.T) {
 	s := openTestSQLite(t, filepath.Join(t.TempDir(), "state.db"))
 

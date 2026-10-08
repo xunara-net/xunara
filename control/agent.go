@@ -74,6 +74,20 @@ type agentRequest struct {
 	NodeKey    string `json:"node_key"`
 }
 
+// withHeaders fills empty key fields from the request headers. Reach sends
+// its credential in headers on every call (creates included), so a session
+// endpoint reads the same way whether the keys arrive in a JSON body or in
+// X-Xunara-Machine-Key/X-Xunara-Node-Key. The keys are verified either way.
+func (a agentRequest) withHeaders(req *http.Request) agentRequest {
+	if a.MachineKey == "" {
+		a.MachineKey = req.Header.Get("X-Xunara-Machine-Key")
+	}
+	if a.NodeKey == "" {
+		a.NodeKey = req.Header.Get("X-Xunara-Node-Key")
+	}
+	return a
+}
+
 // agentHeartbeatRequest is the body of POST /api/agent/v1/heartbeat.
 type agentHeartbeatRequest struct {
 	agentRequest
@@ -103,6 +117,18 @@ func (s *Server) agentRouter() http.Handler {
 		r.Get("/flux/transfers/{id}/content", s.handleFluxDownload)
 		r.Post("/flux/transfers/{id}/complete", s.handleFluxComplete)
 		r.Post("/flux/transfers/{id}/fail", s.handleFluxFail)
+	}
+	if s.cfg.ReachEnabled {
+		r.Post("/reach/sessions", s.handleReachCreate)
+		r.Get("/reach/sessions", s.handleReachList)
+		r.Get("/reach/sessions/{id}", s.handleReachGet)
+		r.Post("/reach/sessions/{id}/accept", s.handleReachAccept)
+		r.Post("/reach/sessions/{id}/deny", s.handleReachDeny)
+		r.Post("/reach/sessions/{id}/start", s.handleReachStart)
+		r.Post("/reach/sessions/{id}/chunks", s.handleReachChunks)
+		r.Get("/reach/sessions/{id}/chunks", s.handleReachChunksRead)
+		r.Post("/reach/sessions/{id}/finish", s.handleReachFinish)
+		r.Post("/reach/sessions/{id}/cancel", s.handleReachCancel)
 	}
 	return r
 }

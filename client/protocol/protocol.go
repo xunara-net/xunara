@@ -318,3 +318,15 @@ func IsUnauthorized(err error) bool {
 	}
 	return he.StatusCode == http.StatusUnauthorized || he.StatusCode == http.StatusForbidden
 }
+
+// IsNotFound reports whether err is a 404: the endpoint does not exist on
+// this control plane, which for optional protocols means the deployment has
+// not enabled the feature. Callers treat it as "keep going, but slowly"
+// rather than as a failure.
+func IsNotFound(err error) bool {
+	var he *HTTPError
+	if !errors.As(err, &he) {
+		return false
+	}
+	return he.StatusCode == http.StatusNotFound
+}

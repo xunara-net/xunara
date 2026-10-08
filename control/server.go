@@ -104,6 +104,10 @@ type Config struct {
 	// Flux configures Xunara Flux file transfers. Nil uses the defaults;
 	// FluxConfig.Disabled turns the feature off (endpoints answer 404).
 	Flux *FluxConfig
+	// ReachEnabled turns on Xunara Reach remote command execution (spec
+	// section 29). It is opt-in: running commands on nodes is powerful enough
+	// that a deployment must ask for it (agent endpoints answer 404 when off).
+	ReachEnabled bool
 	// CertDomains are extra DNS names for which clients may obtain TLS
 	// certificates, on top of each node's own MagicDNS FQDN. They only take
 	// effect when DNSProvider is set: cert issuance needs a public zone the

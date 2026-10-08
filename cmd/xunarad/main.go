@@ -72,6 +72,8 @@ func main() {
 			"how long a service readiness report stays valid before the service is withdrawn from discovery")
 		idTokenRateLimit = flag.Int("id-token-rate-limit", control.DefaultIDTokenRateLimit,
 			"identity tokens one node may obtain per audience per minute (0 uses the default)")
+		reachEnabled = flag.Bool("reach", false,
+			"enable Xunara Reach remote command execution (agents must be re-run with -reach too)")
 		webhookEvents = flag.String("webhook-events", "",
 			"comma-separated audit action globs to deliver (default all events)")
 	)
@@ -193,6 +195,7 @@ func main() {
 		DNSProvider:         dnsProvider,
 		ServiceHealthTTL:    *serviceHealthTTL,
 		IDTokenRateLimit:    *idTokenRateLimit,
+		ReachEnabled:        *reachEnabled,
 		Webhooks:            webhooks,
 		Logger:              logger,
 	})
@@ -219,7 +222,7 @@ var orgScopedFlags = []string{
 	"oidc-issuer", "oidc-id", "oidc-client-id", "oidc-redirect-url", "oidc-scopes",
 	"allow-local-login", "cert-domain",
 	"passkey", "passkey-rpid", "passkey-origin", "passkey-display-name",
-	"services-health-ttl", "id-token-rate-limit",
+	"services-health-ttl", "id-token-rate-limit", "reach",
 	"dns-webhook-url", "dns-webhook-token-env",
 	"dns-cloudflare-zone", "dns-cloudflare-token-env",
 	"webhook-url", "webhook-secret-env", "webhook-events",

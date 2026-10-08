@@ -25,13 +25,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
 	"unicode"
-
-	"tailscale.com/tailcfg"
 
 	"github.com/xunara/xunara/client/flux"
 	"github.com/xunara/xunara/client/protocol"
@@ -118,7 +115,7 @@ func runFluxSend(ctx context.Context, args []string) error {
 	ctx, cancel := context.WithTimeout(ctx, *timeout)
 	defer cancel()
 
-	recipient, err := resolveFluxRecipient(ctx, client, state.Token, keys, *to)
+	recipient, err := resolvePeer(ctx, client, state.Token, keys, *to, "a node cannot send a file to itself")
 	if err != nil {
 		return err
 	}
@@ -517,120 +514,6 @@ func waitForFluxTransfer(ctx context.Context, client *protocol.Client, token str
 		case <-time.After(fluxPollInterval):
 		}
 	}
-}
-
-// resolveFluxRecipient maps -to onto a node stable ID. A stable ID is passed
-// through when no peer matches it (the control plane validates it); any other
-// value must match exactly one peer by hostname.
-func resolveFluxRecipient(ctx context.Context, client *protocol.Client, token string, keys protocol.Keys, to string) (string, error) {
-	to = strings.TrimSpace(to)
-	netmap, err := client.Netmap(ctx, token, keys)
-	if err != nil {
-		return "", fmt.Errorf("resolving %q: %w", to, err)
-	}
-
-	type match struct{ stableID, name string }
-	var matches []match
-	add := func(n *tailcfg.Node) {
-		if n == nil {
-			return
-		}
-		for _, m := range matches {
-			if m.stableID == string(n.StableID) {
-				return
-			}
-		}
-		matches = append(matches, match{stableID: string(n.StableID), name: fluxNodeName(n)})
-	}
-	if fluxNodeMatches(netmap.Node, to) {
-		add(netmap.Node)
-	}
-	for _, peer := range netmap.Peers {
-		if fluxNodeMatches(peer, to) {
-			add(peer)
-		}
-	}
-
-	switch {
-	case len(matches) == 1:
-		if netmap.Node != nil && matches[0].stableID == string(netmap.Node.StableID) {
-			return "", errors.New("a node cannot send a file to itself")
-		}
-		return matches[0].stableID, nil
-	case len(matches) > 1:
-		ids := make([]string, 0, len(matches))
-		for _, m := range matches {
-			ids = append(ids, m.stableID)
-		}
-		sort.Strings(ids)
-		return "", fmt.Errorf("%q matches several nodes (%s); use a stable ID", to, strings.Join(ids, ", "))
-	case looksLikeFluxStableID(to):
-		return to, nil
-	default:
-		return "", fmt.Errorf("no node matches %q", to)
-	}
-}
-
-// fluxNodeMatches reports whether a netmap node answers to a user-typed name.
-func fluxNodeMatches(n *tailcfg.Node, want string) bool {
-	if n == nil {
-		return false
-	}
-	want = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(want), "."))
-	if want == "" {
-		return false
-	}
-	if strings.ToLower(string(n.StableID)) == want {
-		return true
-	}
-	for _, candidate := range fluxNodeNames(n) {
-		if strings.ToLower(strings.TrimSuffix(candidate, ".")) == want {
-			return true
-		}
-	}
-	return false
-}
-
-// fluxNodeNames are the names a user may type for a node.
-func fluxNodeNames(n *tailcfg.Node) []string {
-	var names []string
-	if n.Hostinfo.Valid() {
-		names = append(names, n.Hostinfo.Hostname())
-	}
-	if n.ComputedName != "" {
-		names = append(names, n.ComputedName)
-	}
-	if n.Name != "" {
-		names = append(names, strings.TrimSuffix(n.Name, "."))
-		if label, _, ok := strings.Cut(n.Name, "."); ok {
-			names = append(names, label)
-		}
-	}
-	return names
-}
-
-// fluxNodeName picks the friendliest name of a node for messages.
-func fluxNodeName(n *tailcfg.Node) string {
-	for _, name := range fluxNodeNames(n) {
-		if name != "" {
-			return name
-		}
-	}
-	if n != nil {
-		return string(n.StableID)
-	}
-	return ""
-}
-
-// looksLikeFluxStableID reports whether a value has the shape of a node
-// stable ID ("n" + 16 hex characters), so a node that is not in this netmap
-// can still be addressed by its ID.
-func looksLikeFluxStableID(value string) bool {
-	if len(value) != 17 || value[0] != 'n' {
-		return false
-	}
-	_, err := hex.DecodeString(value[1:])
-	return err == nil
 }
 
 // writeFluxTransfers renders the transfer table.

@@ -34,6 +34,7 @@ func (s *Server) runJanitor(ctx context.Context) {
 			s.reapPasskeyCeremonies(now)
 			s.reapFluxTransfers(now)
 			s.reapRateLimits(now)
+			s.reapReach(now)
 		case <-health.C:
 			s.reapServiceHealth(time.Now().UTC())
 		}

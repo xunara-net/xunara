@@ -225,12 +225,12 @@ func TestFluxTerminalError(t *testing.T) {
 }
 
 func TestLooksLikeFluxStableID(t *testing.T) {
-	if !looksLikeFluxStableID("n0123456789abcdef") {
+	if !looksLikeStableID("n0123456789abcdef") {
 		t.Error("rejected a valid stable ID")
 	}
 	for _, bad := range []string{"", "n0123", "x0123456789abcdef", "n0123456789abcdeg", "recipient"} {
-		if looksLikeFluxStableID(bad) {
-			t.Errorf("looksLikeFluxStableID(%q) = true", bad)
+		if looksLikeStableID(bad) {
+			t.Errorf("looksLikeStableID(%q) = true", bad)
 		}
 	}
 }

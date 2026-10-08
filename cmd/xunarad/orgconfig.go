@@ -44,6 +44,7 @@ type orgConfig struct {
 	NodeKeyExpiry       string              `json:"node_key_expiry"`
 	ServiceHealthTTL    string              `json:"service_health_ttl"`
 	IDTokenRateLimit    int                 `json:"id_token_rate_limit"`
+	ReachEnabled        bool                `json:"reach_enabled"`
 	CertDomains         []string            `json:"cert_domains"`
 	DNS                 *orgDNSConfig       `json:"dns"`
 	OIDC                *orgOIDCConfig      `json:"oidc"`
@@ -253,6 +254,7 @@ func (o orgConfig) controlConfig(logger *slog.Logger) (control.Config, error) {
 		NodeKeyExpiry:       nodeKeyExpiry,
 		ServiceHealthTTL:    serviceHealthTTL,
 		IDTokenRateLimit:    o.IDTokenRateLimit,
+		ReachEnabled:        o.ReachEnabled,
 		CertDomains:         o.CertDomains,
 		DNSProvider:         dnsProvider,
 		OIDCProviders:       oidcProviders,

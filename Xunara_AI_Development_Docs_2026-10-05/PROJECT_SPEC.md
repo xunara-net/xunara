@@ -1180,3 +1180,108 @@ audience 反复要求控制面签名（耗尽签名能力、骚扰依赖方、�
 - 配置：`control.Config.IDTokenRateLimit`（0=默认，负数启动失败）；
   `xunarad -id-token-rate-limit`；组织配置 `id_token_rate_limit`。
 - 不做：tailnet 级/全局限流、按 token 的配额与计量、按 audience 的授权策略。
+
+## 29. Xunara Reach — 远程命令执行（v1）
+
+目标：运维者从一台节点对另一台节点执行命令，输出流式回传。目标节点**显式
+审批**后才执行；控制面只编排会话并中继输出块，不代理隧道、不碰进程。
+
+边界（v1 明确不做）：
+
+- 不做交互式终端：无 PTY、无 stdin（命令的 stdin 是空的）。需要交互的场景
+  仍用 §22 的服务发现 + 官方 SSH（M6a）。
+- 不经过 shell：`argv` 逐元素执行（`exec` 语义），因此没有 shell 注入面；
+  `sh -c "..."` 由调用方自己显式写进 argv（后果自负，审批页会显示完整 argv）。
+- 不跨 tailnet 直连：agent 没有 TUN，节点之间不可直达；控制面只接力
+  "会话状态 + 输出块"，与 §25 的存储转发同一模式。
+- 不做提权/降权：命令以 agent 进程的权限与工作目录运行，文档明示
+  "不要用 root 跑 agent"，控制面不提供 sudo/runas。
+- 不做持久会话/断点续跑：会话终态后输出保留到 janitor 清理。
+
+### 29.1 模型与状态机
+
+```text
+offered ──accept──▶ accepted ──start──▶ running ──finish──▶ succeeded | failed
+   │                   │                   │
+   │deny/cancel        │cancel             │cancel
+   ▼                   ▼                   ▼
+denied              canceled            canceled
+   │
+   │（超时未处理）
+   ▼
+expired
+```
+
+- `offered`：发起节点创建，携带 `to`（目标 stable ID）、`argv`、`timeout`
+  （默认 60s，上限 15m）。等待目标审批的时间上限 5 分钟，过期即 `expired`。
+- `accepted`：目标审批通过；目标 agent 的 reach 循环取走并 `start` 进入
+  `running`（条件更新，只有一个实例能赢）。
+- `running`：命令在跑；输出以块写入。达到输出上限（每会话合计 2 MiB）时
+  目标终止命令并以 `failed` + `error=output limit exceeded` 收尾（截断不静默）。
+- 终态：`succeeded`（exit 0）/`failed`（非 0 或无法启动，带 `exitCode` 与
+  净化后的错误）/`denied`/`canceled`/`expired`。
+- 执行超时（timeout，或 `expires_at`）由目标杀进程并 `failed`
+  （`error=timed out`）；目标失联时 janitor 把逾期的非终态会话置为 `expired`。
+
+### 29.2 Agent 协议
+
+认证与其它 `/api/agent/v1` 端点相同（agent token + machine/node key 复述）；
+只有会话的两端可读，目标可 accept/deny/start/finish，双方可 cancel。
+
+```text
+POST /api/agent/v1/reach/sessions                     # {to, argv, timeoutSec} -> 会话视图
+GET  /api/agent/v1/reach/sessions                     # 本节点参与（发起或目标）的会话
+GET  /api/agent/v1/reach/sessions/{id}                # 参与者
+POST /api/agent/v1/reach/sessions/{id}/accept         # 目标：offered -> accepted
+POST /api/agent/v1/reach/sessions/{id}/deny           # 目标：offered -> denied
+POST /api/agent/v1/reach/sessions/{id}/start          # 目标：accepted -> running
+POST /api/agent/v1/reach/sessions/{id}/chunks         # 目标：{stream, seq, data(base64)}
+GET  /api/agent/v1/reach/sessions/{id}/chunks?out=&err= # 发起方：读取 seq > 游标的块
+POST /api/agent/v1/reach/sessions/{id}/finish         # 目标：{exitCode, error} -> succeeded/failed
+POST /api/agent/v1/reach/sessions/{id}/cancel         # 双方：-> canceled（running 时目标杀进程）
+```
+
+- `stream` ∈ `stdout|stderr`；`seq` 从 0 单调递增（按 stream）；重复 seq 拒绝
+  （幂等性由调用方负责，重试会得到 409，不会产生重复输出）。
+- `chunks` 读取用每 stream 的游标（`out`/`err`），响应含 `nextOut`/`nextErr`；
+  单次最多 64 块、每块 ≤ 24 KiB（base64 前）。
+- 限额 fail-closed：`argv` 1–16 项、每项 ≤ 4 KiB、合计 ≤ 16 KiB；`to` 必须是
+  已存在的 stable ID 且不是自己；同一对节点同时最多 8 个非终态会话；每节点
+  每 10 秒最多创建 6 个会话（复用 §28 的持久化限流器）。
+- 未知 `to`、跨租户（组织内不存在）→ 404；状态不允许的动作 → 409。
+
+### 29.3 审计
+
+```text
+reach.offered    # target=目标节点，detail="session=<id> from=<stable id>"
+reach.accepted   # 目标审批者（节点代理）
+reach.denied
+reach.started
+reach.finished   # detail 含 exit code
+reach.failed
+reach.canceled
+reach.expired
+```
+
+argv 与输出**永不**进审计/webhook；它们只在会话记录（参与者与管理面可见）
+与 CLI 输出里。审批页/CLI 显示完整 argv——这正是知情同意的内容。
+
+### 29.4 管理面（只读）
+
+- Console 之后的里程碑再加页面；v1 只有 CLI 与 agent API。
+- session 记录保留：终态后 janitor 清理（1 小时）。
+
+### 29.5 命令面
+
+```text
+xunara-agent reach offer  -to <host|stable-id> [-timeout 60s] -- <cmd> [args...]
+xunara-agent reach list   [-json]
+xunara-agent reach run    -to <host|stable-id> [-timeout 60s] -- <cmd> [args...]
+                          # offer + 等待审批/执行，流式打印 stdout/stderr，退出码映射
+xunara-agent reach show   <id>
+xunara-agent reach accept <id> | deny <id> | cancel <id>
+xunara-agent reach serve  # 目标侧执行循环（run 内默认启动；见下）
+```
+
+`xunara-agent run` 默认启动 reach 执行循环（目标侧）；`reach run` 是发起侧
+一条命令走完 offer → 等待 → 打印 → 退出。

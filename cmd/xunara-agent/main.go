@@ -47,6 +47,8 @@ func main() {
 		err = runServices(ctx, os.Args[2:])
 	case "flux":
 		err = runFlux(ctx, os.Args[2:])
+	case "reach":
+		err = runReach(ctx, os.Args[2:])
 	case "version":
 		fmt.Println("xunara-agent", daemon.Version)
 	case "help", "-h", "--help":
@@ -58,6 +60,11 @@ func main() {
 	}
 
 	if err != nil {
+		var exitErr *reachExitError
+		if errors.As(err, &exitErr) {
+			fmt.Fprintln(os.Stderr, "xunara-agent:", exitErr.msg)
+			os.Exit(exitErr.code)
+		}
 		var pending *daemon.PendingApprovalError
 		if errors.As(err, &pending) {
 			fmt.Fprintln(os.Stderr, err)
@@ -137,6 +144,7 @@ func runAgent(ctx context.Context, args []string) error {
 	interval := fs.Duration("interval", 30*time.Second, "heartbeat/netmap interval")
 	servicesInterval := fs.Duration("services-interval", 5*time.Minute, "how often to re-publish the service declaration")
 	healthInterval := fs.Duration("services-health-interval", 30*time.Second, "how often to report health-tracked service readiness")
+	reach := fs.Bool("reach", true, "run commands approved locally with `xunara-agent reach accept`")
 	logLevel := fs.String("log-level", "info", "log level: debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -161,6 +169,7 @@ func runAgent(ctx context.Context, args []string) error {
 	agent.StateDir = *stateDir
 	agent.ServicesInterval = *servicesInterval
 	agent.HealthInterval = *healthInterval
+	agent.ExecuteReach = *reach
 
 	if !state.Enrolled() {
 		return errors.New("this agent has not been approved yet; run `xunara-agent enroll` again after approving the device")
@@ -223,7 +232,7 @@ func usage() {
 usage:
   xunara-agent enroll -server <url> [-auth-key-file f] [-state-dir d] [-hostname h]
   xunara-agent run    [-state-dir d] [-interval 30s] [-services-interval 5m]
-                      [-services-health-interval 30s]
+                      [-services-health-interval 30s] [-reach=true|false]
   xunara-agent status [-state-dir d] [-json]
   xunara-agent services publish -file <file> [-state-dir d]
   xunara-agent services import -from consul [-consul-addr addr] [-dry-run] [-state-dir d]
@@ -236,6 +245,14 @@ usage:
   xunara-agent flux list [-json]
   xunara-agent flux deny [-reason <text>] <id>
   xunara-agent flux receive -dir <dir> [-yes] [-watch] [-interval 5s]
+  xunara-agent reach offer  -to <hostname|stable-id> [-timeout 60s] [-json] -- <cmd> [args...]
+  xunara-agent reach run    -to <hostname|stable-id> [-timeout 60s] -- <cmd> [args...]
+  xunara-agent reach list   [-json]
+  xunara-agent reach show   <id> [-json]
+  xunara-agent reach accept <id>
+  xunara-agent reach deny   <id>
+  xunara-agent reach cancel <id>
+  xunara-agent reach serve  [-interval 2s] [-log-level info]
   xunara-agent version
 
 The pre-auth key is read from the environment variable `+authKeyEnv+` or from
@@ -257,6 +274,13 @@ Flux sends files to other agents through the control plane, end-to-end
 encrypted: the control plane relays ciphertext it cannot read. The recipient
 must accept a transfer before anything is uploaded, and "flux receive -yes"
 is required when stdin is not interactive.
+
+Reach runs a command on another node through the control plane: argv is
+executed element by element, with no shell, no stdin and no PTY. The target
+must approve every command locally ("reach accept <id>", which prints the
+full argv) before its agent runs it; "reach run" offers, waits, streams the
+output and exits with the remote status. Reach is off unless the control
+plane enables it.
 `)
 }
 

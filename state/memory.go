@@ -51,6 +51,11 @@ type MemoryStore struct {
 	// rateLimits holds fixed-window counters, keyed by scope.
 	rateLimits map[string]rateBucket
 
+	// reach holds remote command sessions, keyed by session ID.
+	reach map[string]ReachSession
+	// reachChunks holds output per session, keyed by session ID then stream.
+	reachChunks map[string]map[string][]ReachChunk
+
 	tka TKAMeta
 
 	// configRevision counts out-of-band configuration changes.
@@ -73,6 +78,8 @@ func NewMemoryStore() *MemoryStore {
 		services:    make(map[string]Service),
 		flux:        make(map[string]FluxTransfer),
 		rateLimits:  make(map[string]rateBucket),
+		reach:       make(map[string]ReachSession),
+		reachChunks: make(map[string]map[string][]ReachChunk),
 		byNode:      make(map[key.NodePublic]NodeID),
 		byStab:      make(map[string]NodeID),
 		byMach:      make(map[key.MachinePublic][]NodeID),

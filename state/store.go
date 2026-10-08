@@ -24,6 +24,7 @@ type Store interface {
 	ServiceStore
 	FluxStore
 	RateLimitStore
+	ReachStore
 
 	// GetNodeByID returns the node with the given server-local ID.
 	GetNodeByID(id NodeID) (Node, bool)

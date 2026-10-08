@@ -582,9 +582,9 @@ reference/{go-oidc,oauth2,dex,webauthn}
       no-store、匿名 401、键不匹配 403）、`client/protocol/stream_test.go`
       （头、解析、取消、404 回落判定）、`client/daemon/e2e_test.go`
       （真实控制面下 Interval=10m 仍收到推送，证明是 push 而非轮询）。
-  - 已知限制（M9 剩余）：Remote/File Transfer 尚未构建。
-    （credential 的列出/吊销已完成：M5d 的 `/api/v2/agent-tokens` 与 console
-    Agents 页面。）
+  - 已知限制（M9 剩余）：无。Remote 已由 M22（Xunara Reach，spec §29）交付，
+    File Transfer 已由 M18（Xunara Flux，spec §25）交付；credential 的列出/
+    吊销已完成：M5d 的 `/api/v2/agent-tokens` 与 console Agents 页面。
 - ACL/Zero Trust（`Xunara Warden`）。
 
 ---
@@ -1295,6 +1295,58 @@ M16e 的 Consul 导入同一模式：导入器在节点侧运行，控制面拿�
   `cmd/xunarad/orgconfig_test.go`（负值拒绝）。
 - 明确不做（v1）：tailnet 级/全局限流、按 token 的配额与计量、按 audience 的
   授权策略（仍是"任意节点可为自身取任意 audience 的 token"）。
+
+---
+
+## M22 — Xunara Reach 远程命令执行（v1，已完成）
+
+目标：从一台节点对另一台节点执行命令并流式回传输出；**目标节点显式审批**，
+控制面只编排会话与中继输出块，不碰进程、不开隧道。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §29。
+
+- 边界（v1 明确不做）：无 PTY、无 stdin（stdin 为空）、不经 shell（argv 逐元素
+  `exec`）、不提权、无断点续跑、不穿透 NAT（与 §25 同一存储转发模式）。
+- `state`（迁移 v14）：`reach_sessions`（id/双方节点/state/argv/timeout/exit
+  code/error/时间戳）+ `reach_chunks`（`(session_id, stream, seq)` 主键，随会话
+  级联）。CAS 状态机 `offered → accepted → running → succeeded|failed`，
+  另有 denied/canceled/expired；`StartReachSession` 把截止时间换成执行窗口
+  （timeout + 30s 报告宽限）。限额常量集中导出（argv ≤16 项且 ≤16KiB、每项
+  ≤4KiB、timeout ≤15m、块 ≤24KiB、总输出 ≤2MiB、单次读 ≤64 块、同对节点并行
+  ≤8、offer 寿命 5m）；重复 seq 返回 `ErrReachChunkDuplicate`（幂等由调用方
+  负责），超总量返回 `ErrReachOutputLimit`（显式截断，绝不静默）。内存与
+  SQLite 两套实现语义一致，v13→v14 迁移测试。
+- 控制面 `/api/agent/v1/reach/sessions`（`control/reach.go`，`ReachEnabled`
+  时挂载）：create/list/get/accept/deny/start/chunks(POST+GET 游标)/finish/
+  cancel；只有两端可读（非参与者与未知 ID 同为 404），目标独占 accept/deny/
+  start/chunks/finish，任一方可 cancel。创建按节点限流（复用 §28 的持久化
+  限流器，10s 内 6 次，429 + `Retry-After`）；未知/自指目标 404；状态不允许
+  的动作 409；argv/timeout/stream/seq/块大小在 API 边缘 fail-closed 校验
+  （400/413）。认证与其它 agent 端点相同（bearer + machine/node key，POST 体
+  或 `X-Xunara-*` 头二者其一）。janitor 每分钟把逾期未终态的会话置为
+  `expired`（审计 actor=system）并删除终态满 1 小时的会话。
+- 审计：`reach.offered/accepted/denied/started/finished/failed/canceled/
+  expired`；**argv 与输出永不进审计**（只进会话记录与 CLI 输出）。
+- 客户端：`client/protocol/reach.go`（类型 + 全部端点封装）、
+  `client/daemon/reach.go`（目标侧执行循环：只在本地 `accept` 后取走会话，
+  CAS claim 防重复执行、每会话一个 watcher 把 cancel/expiry 变成杀进程、
+  输出按 ≤24KiB 分块中继并自行守住 2MiB 上限、超时/超限/启动失败都回写
+  `failed`，进程重启遗留的 running 会话报 `target agent restarted`，最多
+  8 个并发执行）。
+- 命令面：`xunara-agent reach offer|run|list|show|accept|deny|cancel|serve`。
+  `reach run` 一条命令走完 offer → 等审批 → 流式打印 stdout/stderr → 用远端
+  退出码退出；`accept <id>` 打印完整 argv（知情同意）；`run` 默认启动执行循环
+  (`-reach=false` 关闭)，`reach serve` 可单独常驻。控制面 `xunarad -reach`
+  （默认关，组织配置 `reach_enabled`）。
+- 测试：`state/reach_test.go`（生命周期 CAS、重复/越界块、输出上限、配额、
+  过期与删除、形状校验、拷贝隔离、SQLite 级联、v13→v14 迁移）、
+  `control/reach_test.go`（全流程 + 失败/拒绝/取消、权限矩阵、参数校验、
+  块限额、限流、janitor 过期与保留、Reach 关闭 404、审计不含 argv）、
+  `client/daemon/reach_test.go`（未审批不执行、双流输出中继、非零退出/超时/
+  输出超限、cancel 杀进程、重启遗留会话）、`cmd/xunara-agent/reach_test.go`
+  （真实控制面端到端 run + 退出码映射、拒绝路径、argv/参数解析、退出码映射、
+  表格渲染）。
+- 明确不做（v1）：交互式终端、sudo/runas、持久会话、控制面代理数据面、
+  Console 页面（只有 CLI 与 agent API）。
 
 ---
 
