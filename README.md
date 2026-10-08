@@ -47,6 +47,7 @@ cmd/         xunarad（控制面）、xunara（CLI）、xunara-agent（节点）
 veil/        自建 DERP 服务
 dnsprovider/ ACME DNS-01 的 DNS provider 适配
 webhook/     审计事件签名投递
+deploy/      systemd 部署（单元、安装脚本、环境模板、ACL 示例）
 ```
 
 ## 构建与运行
@@ -62,6 +63,16 @@ go run ./cmd/xunarad -listen 0.0.0.0:8080 -server-url https://control.example.co
 go run ./cmd/xunara -h
 go run ./cmd/xunara-agent -h
 go run ./cmd/xunara-veil -h
+```
+
+正式部署（systemd、非特权账号、状态目录与备份、HTTPS 与通行密钥的前置条件）见
+[deploy/README.md](deploy/README.md)：
+
+```bash
+CGO_ENABLED=0 go build -trimpath \
+  -ldflags "-s -w -X github.com/xunara/xunara/control.Version=$(git describe --tags --always --dirty)" \
+  -o /tmp/xunarad ./cmd/xunarad
+sudo deploy/install.sh /tmp/xunarad
 ```
 
 ## 文档

@@ -28,8 +28,11 @@ import (
 	"github.com/xunara/xunara/webhook"
 )
 
-// Version is the Xunara server version reported by /version.
-const Version = "0.0.0-dev"
+// Version is the Xunara server version reported by /version and shown in the
+// console footer. A release build overrides it with
+// -ldflags "-X github.com/xunara/xunara/control.Version=<version>"; the
+// default keeps a source build honest about being a development snapshot.
+var Version = "0.0.0-dev"
 
 // Config configures a [Server].
 type Config struct {

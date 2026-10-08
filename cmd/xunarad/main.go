@@ -23,6 +23,7 @@ import (
 
 func main() {
 	var (
+		showVersion     = flag.Bool("version", false, "print the build version and exit")
 		listen          = flag.String("listen", "0.0.0.0:8080", "address to listen on")
 		stateDir        = flag.String("state-dir", "data", "directory for persistent state")
 		serverURL       = flag.String("server-url", "", "externally reachable base URL (defaults to http://<listen>)")
@@ -98,6 +99,13 @@ func main() {
 	flag.Var(&certDomains, "cert-domain", "extra DNS name clients may obtain TLS certificates for; repeatable")
 	flag.Var(&passkeyOrigins, "passkey-origin", "allowed WebAuthn origin (repeatable); empty derives it from -server-url")
 	flag.Parse()
+
+	// Packaging and install scripts need the version without starting the
+	// server, so answer it before any configuration is validated.
+	if *showVersion {
+		fmt.Println("xunarad " + control.Version)
+		return
+	}
 
 	logger := newLogger(*logLevel)
 
