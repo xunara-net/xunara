@@ -10,6 +10,7 @@ package veil
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,9 +20,11 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/time/rate"
 	"tailscale.com/atomicfile"
 	"tailscale.com/derp/derpserver"
@@ -90,6 +93,19 @@ type Config struct {
 	// test deployments that opt into insecure dialing.
 	CertFile    string
 	CertKeyFile string
+	// CertMode selects how TLS certificates are obtained. Empty means
+	// "manual when CertFile/CertKeyFile are set, otherwise no TLS".
+	// CertModeLetsEncrypt obtains and renews certificates from Let's Encrypt
+	// with ACME (TLS-ALPN-01), so a deployment never has to manage cert files
+	// by hand; it requires HostName and CertDir.
+	CertMode string
+	// CertDir is the ACME state directory: the account key and issued
+	// certificates are cached there, so restarts and renewals reuse them
+	// instead of asking the CA again. Required with CertModeLetsEncrypt.
+	CertDir string
+	// ACMEEmail is the optional contact address registered with the ACME
+	// account (Let's Encrypt uses it for expiry warnings).
+	ACMEEmail string
 	// InsecureForTests marks this node as InsecureForTests in generated DERP
 	// maps, for local plain-HTTP test deployments only. Never enable it in
 	// production.
@@ -112,6 +128,10 @@ type Server struct {
 	key  key.NodePrivate
 	derp *derpserver.Server
 
+	// acme is the automatic certificate manager (CertModeLetsEncrypt) and
+	// nil otherwise. It serves certificates for cfg.HostName only.
+	acme *autocert.Manager
+
 	mu       sync.Mutex
 	listener net.Listener
 	addr     net.Addr
@@ -123,8 +143,17 @@ func New(cfg Config) (*Server, error) {
 	if cfg.ListenAddr == "" {
 		return nil, errors.New("veil: ListenAddr is required")
 	}
-	if (cfg.CertFile == "") != (cfg.CertKeyFile == "") {
-		return nil, errors.New("veil: CertFile and CertKeyFile must be set together")
+	certMode, err := cfg.certMode()
+	if err != nil {
+		return nil, err
+	}
+	if certMode == CertModeLetsEncrypt {
+		if cfg.CertFile != "" || cfg.CertKeyFile != "" {
+			return nil, errors.New("veil: CertMode letsencrypt cannot be combined with CertFile/CertKeyFile")
+		}
+		if cfg.CertDir == "" {
+			return nil, errors.New("veil: CertMode letsencrypt requires CertDir (the ACME cache)")
+		}
 	}
 	if cfg.StateDir == "" {
 		cfg.StateDir = "."
@@ -169,6 +198,25 @@ func New(cfg Config) (*Server, error) {
 		key:  nodeKey,
 		derp: derpserver.New(nodeKey, cfg.logf()),
 	}
+	if certMode == CertModeLetsEncrypt {
+		host, err := cfg.acmeHost()
+		if err != nil {
+			return nil, err
+		}
+		manager := &autocert.Manager{
+			Prompt: autocert.AcceptTOS,
+			// Fail closed: certificates are only ever issued for the
+			// configured name, never for whatever SNI a client sends.
+			HostPolicy: autocert.HostWhitelist(host),
+			Cache:      autocert.DirCache(cfg.CertDir),
+		}
+		if cfg.ACMEEmail != "" {
+			manager.Email = cfg.ACMEEmail
+		}
+		s.acme = manager
+		s.log.Info("veil ACME certificates enabled",
+			"host", host, "cache", cfg.CertDir, "challenge", "tls-alpn-01")
+	}
 	if cfg.VerifyURL != "" {
 		s.derp.SetVerifyClientURL(cfg.VerifyURL)
 	}
@@ -182,7 +230,11 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	if cfg.TLS() {
-		s.log.Info("veil TLS enabled", "cert", cfg.CertFile, "host", cfg.HostName)
+		if s.acme != nil {
+			s.log.Info("veil TLS enabled", "cert", "acme", "host", strings.ToLower(cfg.HostName))
+		} else {
+			s.log.Info("veil TLS enabled", "cert", cfg.CertFile, "host", cfg.HostName)
+		}
 	} else {
 		s.log.Warn("veil serving DERP without TLS; use this only for local testing")
 	}
@@ -217,7 +269,65 @@ func (c Config) bandwidthBurst() int {
 func (s *Server) MeshKeyEnabled() bool { return s.derp.HasMeshKey() }
 
 // TLS reports whether the server serves TLS.
-func (c Config) TLS() bool { return c.CertFile != "" && c.CertKeyFile != "" }
+func (c Config) TLS() bool {
+	mode, err := c.certMode()
+	return err == nil && mode != ""
+}
+
+// Certificate modes: how Veil obtains the certificate it serves clients.
+const (
+	// CertModeLetsEncrypt obtains and renews certificates from Let's Encrypt
+	// over ACME, proving control of HostName with a TLS-ALPN-01 challenge on
+	// this same listener. No certificate files are involved.
+	CertModeLetsEncrypt = "letsencrypt"
+	// CertModeManual serves the operator's CertFile/CertKeyFile unchanged.
+	CertModeManual = "manual"
+)
+
+// certMode normalizes the configured certificate mode: letsencrypt, manual,
+// or "" for a server that does not serve TLS.
+func (c Config) certMode() (string, error) {
+	switch c.CertMode {
+	case "":
+		if c.CertFile == "" && c.CertKeyFile == "" {
+			return "", nil
+		}
+		if c.CertFile == "" || c.CertKeyFile == "" {
+			return "", errors.New("veil: CertFile and CertKeyFile must be set together")
+		}
+		return CertModeManual, nil
+	case CertModeManual:
+		if c.CertFile == "" || c.CertKeyFile == "" {
+			return "", errors.New("veil: CertMode manual requires both CertFile and CertKeyFile")
+		}
+		return CertModeManual, nil
+	case CertModeLetsEncrypt:
+		return CertModeLetsEncrypt, nil
+	default:
+		return "", fmt.Errorf("veil: unsupported CertMode %q (want %q or %q)",
+			c.CertMode, CertModeLetsEncrypt, CertModeManual)
+	}
+}
+
+// acmeHost validates and normalizes the hostname an automatic certificate is
+// issued for. ACME only issues for DNS names, and the name must match the SNI
+// clients send, so anything that cannot be an SNI host is refused here.
+func (c Config) acmeHost() (string, error) {
+	host := strings.ToLower(strings.TrimSpace(c.HostName))
+	switch {
+	case host == "":
+		return "", errors.New("veil: CertMode letsencrypt requires HostName")
+	case net.ParseIP(host) != nil:
+		return "", errors.New("veil: CertMode letsencrypt requires HostName to be a DNS name, not an IP address")
+	case !strings.Contains(host, "."):
+		return "", fmt.Errorf("veil: CertMode letsencrypt requires a fully qualified HostName (got %q)", c.HostName)
+	case strings.ContainsAny(host, " :/\t\r\n"):
+		return "", fmt.Errorf("veil: HostName %q is not a valid DNS name", c.HostName)
+	case !strings.ContainsAny(host, "abcdefghijklmnopqrstuvwxyz0123456789-."):
+		return "", fmt.Errorf("veil: HostName %q is not a valid DNS name", c.HostName)
+	}
+	return host, nil
+}
 
 // logf adapts the server logger to the derpserver logger interface.
 func (c Config) logf() func(string, ...any) {
@@ -338,9 +448,17 @@ func (s *Server) Serve(ctx context.Context) error {
 	go func() {
 		s.log.Info("veil listening", "addr", ln.Addr().String(), "tls", s.cfg.TLS())
 		var err error
-		if s.cfg.TLS() {
+		switch {
+		case s.acme != nil:
+			// TLS-ALPN-01: the ACME validation handshake arrives on this
+			// same listener, so no extra port 80 server is needed.
+			srv.TLSConfig = s.acme.TLSConfig()
+			srv.TLSConfig.MinVersion = tls.VersionTLS12
+			err = srv.ServeTLS(ln, "", "")
+		case s.cfg.TLS():
+			srv.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 			err = srv.ServeTLS(ln, s.cfg.CertFile, s.cfg.CertKeyFile)
-		} else {
+		default:
 			err = srv.Serve(ln)
 		}
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {

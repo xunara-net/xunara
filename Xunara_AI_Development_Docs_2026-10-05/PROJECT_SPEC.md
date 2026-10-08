@@ -2220,3 +2220,62 @@ Console `/console/serve`（nav "Serve"，任意角色可看）：
   隐私边界、留存、限额），不在 v1。
 - v1 的替代物是控制面审计日志（平台/Console 的 `audit`）与 §39 Security
   Center 的安全姿态快照；§39.4 与 §40.3 同样明确排除按流日志。
+
+---
+
+## 45. Xunara Veil 自动 TLS 证书（ACME TLS-ALPN-01，v1）
+
+目标：消除 M6e 遗留的运维缺口——DERP 服务此前只能手工提供 TLS 证书文件，
+续期与轮换全部由操作者负责。Veil 现在可以直接向 Let's Encrypt 申请并自动
+续期证书，域名控制权用 **TLS-ALPN-01** 证明：ACME 校验握手复用 DERP 自己的
+TLS listener，不需要额外开放 80 端口，也不依赖 DNS provider。
+
+### 45.1 配置与判据
+
+`veil.Config` 新增：
+
+- `CertMode`：`""`（缺省：有 `CertFile`/`CertKeyFile` 等价 `manual`，都没有
+  则不服务 TLS）、`manual`、`letsencrypt`；未知值启动即拒绝（fail-closed）。
+- `CertDir`：ACME 缓存目录（账号密钥 + 已签发证书），`letsencrypt` 必填；
+  目录必须持久化，否则每次重启都会重新向 CA 申请。
+- `ACMEEmail`：可选的联系邮箱，仅用于 CA 的证书到期提醒，不写日志。
+
+`letsencrypt` 的启动校验（全部 fail-closed）：
+
+- 必须提供 `CertDir`，且不得与 `CertFile`/`CertKeyFile` 同时出现；
+- `HostName` 必须是 FQDN（含点、非 IP、无端口/空白、仅 `[a-z0-9-.]`），
+  小写归一化后使用——SNI 与证书名必须与 DERP map 中客户端拨号的域名一致；
+- `HostPolicy` 固定为 `autocert.HostWhitelist(host)`：SNI 非配置域名（含空
+  SNI、父域）在**任何** ACME 请求之前被拒绝，攻击者无法借本服务对任意域名
+  触发签发或消耗 CA 速率限制；
+- TLS 最低版本 1.2；证书与账号密钥由 `autocert.DirCache` 以 0600 落盘。
+
+证书续期由 `autocert` 自动执行（默认在 30 天或生命周期 1/3 的较小者之前
+续期），失败重试有节流；重启后从 `CertDir` 复用缓存，不重复下单。
+
+### 45.2 CLI 与兼容性
+
+- `cmd/xunara-veil` 新增 `-cert-mode`、`-cert-dir`、`-acme-email`；原
+  `-cert-file`/`-cert-key-file` 行为不变（缺省即 manual），`-hostname`
+  仍是 map 与证书共用的名字。
+- 官方客户端协议不变：DERP upgrade、probe、STUN、mesh 均照旧；新增的 ALPN
+  `acme-tls/1` 只在客户端主动提供时协商（即 CA 校验），普通 DERP 客户端
+  仍走 `h2`/`http/1.1`。控制面 netmap 无任何改动。
+
+### 45.3 明确不做（v1）
+
+- HTTP-01：不开放 80 端口、不提供明文挑战面；
+- DNS-01 自动续期（那是 §M6f 的证书签发路径，私钥在客户端）；
+- 通配符证书、多域名 SAN、自定义 ACME directory/CA、EAB（企业 CA）；
+- 证书内容查看/导出/吊销（与 §43.3 同口径）。
+
+### 45.4 测试
+
+- `veil/acme_test.go`：
+  - 表驱动：无 TLS / manual（缺一文件、显式成对）/ letsencrypt（缺 CertDir、
+    与证书文件冲突、缺 HostName、IP、非 FQDN、带端口）/ 未知模式；
+  - TLS-ALPN-01 wiring：`NextProtos` 含 `acme.ALPNProto` 与 `http/1.1`；
+    空 SNI、其他主机、父域被 HostPolicy 拒绝；
+  - 缓存复用路径：向 `DirCache` 播种证书后 `GetCertificate` 直接命中，不发
+    任何 ACME 网络请求（模拟重启后的部署）；
+  - manual 模式端到端：手工证书起 TLS listener，HEAD `/derp/probe` 通过。

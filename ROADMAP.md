@@ -488,8 +488,8 @@ reference/{go-oidc,oauth2,dex,webauthn}
     - `cmd/xunara-veil -bandwidth-limit/-bandwidth-burst`。
     - 测试：`veil/ratelimit_test.go`（限速生效、Close 解除等待、mesh key
       校验与不泄漏、burst 派生表、限速下 DERP 中继端到端）。
-  - 已知限制：DERP 服务自身无自动证书（TLS 证书目前手动
-    `-cert-file`/`-cert-key-file`）。
+  - 已知限制（M38 已解决）：DERP 服务自身无自动证书（TLS 证书目前手动
+    `-cert-file`/`-cert-key-file`）→ 见 M38：ACME TLS-ALPN-01 自动申请与续期。
 - M6f 已完成：证书签发 DNS-01（`services/serve` 的控制面部分）。
   - `control.DNSProvider` 接口（`PutTXT`/`DeleteTXT`，带 context）：控制面在
     ACME DNS-01 校验期间代表节点写入/清理 `_acme-challenge` 记录，
@@ -1787,6 +1787,28 @@ Flow Logs 的明确结论。规格见
   流量统计、gRPC（§43.3）。
 - 测试：`control/serve_test.go`（四种姿态、有无 DNS provider 的证书口径、HTTP
   401/200/member、Console 无表单跨角色可读）。
+
+---
+
+## M38 — Xunara Veil 自动 TLS 证书（ACME TLS-ALPN-01，v1，已完成）
+
+目标：关闭 M6e 的最后一条已知限制——DERP 服务必须手工准备证书文件。Veil 现在
+可从 Let's Encrypt 自动申请并续期证书，用 TLS-ALPN-01 在同一个 TLS listener
+上完成域名验证（无需 80 端口、无需 DNS provider）。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §45。
+
+- `veil.Config` 新增 `CertMode`（`""`/`manual`/`letsencrypt`）、`CertDir`
+  （ACME 缓存，必填）、`ACMEEmail`（可选）；`cmd/xunara-veil` 新增
+  `-cert-mode`/`-cert-dir`/`-acme-email`，原 `-cert-file`/`-cert-key-file`
+  行为不变（缺省即 manual，单独给一个文件仍旧报错）。
+- fail-closed 校验：未知模式拒绝；letsencrypt 要求 FQDN HostName（拒绝 IP、
+  端口、空/非法字符）与 `CertDir`，且不得与证书文件共存；SNI 非配置域名在
+  任何 ACME 请求之前被 `HostWhitelist` 拒绝；TLS 最低 1.2；证书与账号密钥
+  0600 落在 `CertDir`，重启复用缓存不重复下单；续期由 autocert 自动执行。
+- 兼容性：DERP upgrade/probe/STUN/mesh 全部不变，新增 `acme-tls/1` ALPN 只在
+  CA 校验握手时协商；控制面 netmap 无改动。
+- 测试：`veil/acme_test.go`（模式校验表、HostPolicy/ALPN wiring、播种缓存后
+  不发网络请求直接出证书、manual TLS 端到端 `HEAD /derp/probe`）。
 
 ---
 

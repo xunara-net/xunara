@@ -32,6 +32,9 @@ func main() {
 		bandwidthB  = flag.Int("bandwidth-burst", 0, "token bucket size in bytes for -bandwidth-limit (0: derived from the limit)")
 		certFile    = flag.String("cert-file", "", "TLS certificate file (enables TLS with -cert-key-file)")
 		certKeyFile = flag.String("cert-key-file", "", "TLS private key file")
+		certMode    = flag.String("cert-mode", "", `TLS certificate mode: "manual" (uses -cert-file/-cert-key-file) or "letsencrypt" (ACME via TLS-ALPN-01; requires -hostname and -cert-dir)`)
+		certDir     = flag.String("cert-dir", "", "ACME certificate and account cache directory (required with -cert-mode=letsencrypt)")
+		acmeEmail   = flag.String("acme-email", "", "contact email for the ACME account (optional)")
 		insecure    = flag.Bool("insecure-for-tests", false, "mark the node InsecureForTests in generated DERP maps; local plain-HTTP tests only")
 		regionID    = flag.Int("region-id", veil.DefaultRegionID, "DERP region ID in generated maps")
 		regionCode  = flag.String("region-code", "veil", "DERP region code in generated maps")
@@ -68,6 +71,9 @@ func main() {
 		BandwidthBurst:   *bandwidthB,
 		CertFile:         *certFile,
 		CertKeyFile:      *certKeyFile,
+		CertMode:         *certMode,
+		CertDir:          *certDir,
+		ACMEEmail:        *acmeEmail,
 		InsecureForTests: *insecure,
 		RegionID:         *regionID,
 		RegionCode:       *regionCode,
