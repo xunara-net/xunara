@@ -1908,3 +1908,72 @@ v1 明确不产生"评分"：没有 0–100 分、没有风险等级合成，避
   - 共享启用时计数正确、未启用时 enabled=false 且不查询注册表；
   - HTTP：匿名 401、read scope 200、响应不含 secret/密钥材料；
   - Console：页面渲染 findings、任意角色可读、无表单/POST 入口。
+
+---
+
+## 40. Xunara Horizon 管理面（Exit Nodes，只读，v1）
+
+目标：把 exit node 的"供给"和"消费"放在一个面上——哪些节点被批准为 exit
+node、每台正在被哪些节点使用、哪些选择已经失效。只读；批准/撤回仍在
+Machines 面（路由审批），选择 exit node 永远在客户端本地（`ipn.Prefs`），
+控制面不远程改客户端的出口选择。
+
+### 40.1 数据模型与判据
+
+- exit node：`ApprovedRoutes` 含默认路由（`0.0.0.0/0` 或 `::/0`）的节点；
+  批准是控制面的授权事实。节点是否**正在广播**默认路由单独报告
+  （`announced`），因此"已批准但不再广播"会在表里显示为异常，而不是消失。
+- 使用关系：官方客户端在 `Hostinfo.ExitNodeID` 上报当前选择的 exit node
+  **stable ID**（upstream `ipn/ipnlocal` 明确该字段告知控制面选择，见
+  reference）。控制面按 stable ID 把客户端归到 exit node 下。
+- 选择可能失效：客户端选中的 stable ID 已不是批准的 exit node（撤回、删除、
+  或换机）。这类选择标记为 `resolved=false`，仍然列出（fail-visible），
+  控制台显示为 unresolved，而不是静默丢弃。
+- 一个节点没有选择 exit node 时不出现在 clients 列表（不占位）。
+
+### 40.2 HTTP 与 Console
+
+`GET /api/v2/exit-nodes`（read scope）：
+
+```text
+{
+  "exitNodes": [
+    { nodeId, stableId, hostname, owner, online, announced, ipv4, ipv6,
+      derpHome, lastSeen, clientCount,
+      clients: [ { nodeId, stableId, hostname, owner, online } ] }
+  ],
+  "clients": [
+    { nodeId, stableId, hostname, owner, online,
+      exitNodeStableId, exitNodeHostname, resolved }
+  ]
+}
+```
+
+- `exitNodes` 按 nodeId 升序；`clients` 按 nodeId 升序（全体有选择的关系）。
+- owner 是 login name；不返回节点密钥、地址以外的网络细节或任何 secret。
+- gRPC 不做（只读管理面走 HTTP/Console，与 §31/§33/§35/§39 同构）。
+
+Console `/console/exit-nodes`（nav "Exit nodes"，任意角色可看）：
+
+- Exit nodes 表：节点/所有者/在线/地址/DERP home/客户端数与被使用列表；
+- Clients 表：节点/所有者/在线/选中的 exit node（hostname + stable ID）/状态
+  （resolved 或 unresolved）；
+- 无表单、无写入口；批准/撤回路由仍在 Machines 页。
+
+### 40.3 明确不做（v1）
+
+- 远程为节点选择/取消 exit node（客户端本地偏好，控制面只读）；
+- exit node 的流量统计、带宽、按流日志（控制面没有数据面遥测）；
+- 出口节点的高可用/自动选择/故障转移（客户端能力，控制面不参与）；
+- MagicDNS 层面的 exit 策略、per-app 分流（均为客户端功能）。
+
+### 40.4 测试
+
+- `control/exit_nodes_test.go`：
+  - 批准默认路由的节点进入 exitNodes；未批准/已撤回的节点不进入；
+  - `Hostinfo.ExitNodeID` 把客户端归到对应 exit node，clientCount 正确；
+  - 选择未知 stable ID（已删除/未批准）→ clients 中 resolved=false；
+  - 撤回默认路由后，原使用关系变为 unresolved，exitNodes 消失；
+  - 没有选择的节点不出现在 clients；
+  - HTTP：匿名 401、read scope 200、member 可读；响应不含密钥材料；
+  - Console：页面渲染两个表、无表单、member 可读。

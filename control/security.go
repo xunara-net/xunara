@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/xunara/xunara/identity"
-	"github.com/xunara/xunara/state"
 )
 
 // Xunara Security Center (PROJECT_SPEC section 39): a read-only snapshot of
@@ -136,7 +135,7 @@ func (s *Server) securityView() securityView {
 		if node.Ephemeral {
 			view.Nodes.Ephemeral++
 		}
-		if nodeIsExitNode(node) {
+		if nodeHasApprovedExitRoute(node) {
 			view.Nodes.ExitNodes++
 		}
 	}
@@ -260,17 +259,6 @@ func (s *Server) securityFindings(view securityView) []securityFinding {
 		return strings.Compare(a.ID, b.ID)
 	})
 	return findings
-}
-
-// nodeIsExitNode reports whether a node is approved to route the default
-// routes, mirroring the netmap's own definition.
-func nodeIsExitNode(node state.Node) bool {
-	for _, route := range node.ApprovedRoutes {
-		if route == state.ExitRouteV4 || route == state.ExitRouteV6 {
-			return true
-		}
-	}
-	return false
 }
 
 // handleAPIV2Security implements GET /api/v2/security (spec section 39.3).

@@ -1685,6 +1685,31 @@ write 角色 + CSRF），管理面没有任何写入口。
 
 ---
 
+## M34 — Xunara Horizon 管理面（Exit Nodes，只读，已完成）
+
+目标：把 exit node 的供给与消费放到一个面上——哪些节点被批准为 exit node、
+每台正在被哪些节点使用、哪些选择已经失效。批准/撤回仍在 Machines 页（路由
+审批），出口选择永远在客户端本地。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §40（spec §20 P0
+"Exit Nodes"）。
+
+- HTTP `GET /api/v2/exit-nodes`（read scope）与 Console `/console/exit-nodes`
+  （nav "Exit nodes"，任意角色可读）：exitNodes 按 nodeId 升序列出批准了默认
+  路由的节点（online、**announced**、地址、DERP home、lastSeen、客户端数与
+  客户端列表）；clients 按 nodeId 升序列出所有上报了 `Hostinfo.ExitNodeID`
+  的节点（exitNodeStableId、可解析时的 hostname、resolved）。
+- 判据：批准（ApprovedRoutes 含 0.0.0.0/0 或 ::/0）是控制面授权事实；是否
+  正在广播（`IsExitNode`）单独报告，"已批准但不再广播"显示为异常而不是消失。
+  选择失效（撤回/删除/未知 stable ID）保持可见并标 unresolved，不静默丢弃；
+  没有选择的节点不进入 clients。
+- 只读、无表单、无写入口；不返回节点密钥或地址以外的网络细节。
+- 不做：远程选择/取消 exit node、流量统计/按流日志、自动选择与故障转移、
+  per-app 分流（§40.3）。
+- 测试：`control/exit_nodes_test.go`（批准/未批准/撤回、使用关系归组、
+  unresolved、无选择不出现、HTTP 401/200/member、Console 渲染与无表单）。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。

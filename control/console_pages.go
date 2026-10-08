@@ -72,6 +72,7 @@ footer { text-align: center; color: #5b616e; font-size: .8rem; }
 <nav>
 <a href="/console/"{{if eq .Nav "overview"}} class="active"{{end}}>Overview</a>
 <a href="/console/machines"{{if eq .Nav "machines"}} class="active"{{end}}>Machines</a>
+<a href="/console/exit-nodes"{{if eq .Nav "exit-nodes"}} class="active"{{end}}>Exit nodes</a>
 <a href="/console/services"{{if eq .Nav "services"}} class="active"{{end}}>Services</a>
 <a href="/console/devices"{{if eq .Nav "devices"}} class="active"{{end}}>Devices</a>
 <a href="/console/users"{{if eq .Nav "users"}} class="active"{{end}}>Users</a>
@@ -106,25 +107,26 @@ const consoleFoot = `</main>
 // consoleTitles label each section; the nav identifier doubles as the key so a
 // handler cannot forget to set a page title.
 var consoleTitles = map[string]string{
-	"overview":  "Overview",
-	"machines":  "Machines",
-	"services":  "Services",
-	"devices":   "Devices",
-	"users":     "Users",
-	"passkeys":  "Passkeys",
-	"dns":       "DNS",
-	"derp":      "DERP",
-	"auth-keys": "Auth keys",
-	"agents":    "Agents",
-	"api-keys":  "API keys",
-	"shares":    "Shares",
-	"reach":     "Reach",
-	"flux":      "Flux",
-	"ssh-check": "SSH checks",
-	"webhooks":  "Webhooks",
-	"policy":    "Policy",
-	"security":  "Security",
-	"audit":     "Audit",
+	"overview":   "Overview",
+	"machines":   "Machines",
+	"exit-nodes": "Exit nodes",
+	"services":   "Services",
+	"devices":    "Devices",
+	"users":      "Users",
+	"passkeys":   "Passkeys",
+	"dns":        "DNS",
+	"derp":       "DERP",
+	"auth-keys":  "Auth keys",
+	"agents":     "Agents",
+	"api-keys":   "API keys",
+	"shares":     "Shares",
+	"reach":      "Reach",
+	"flux":       "Flux",
+	"ssh-check":  "SSH checks",
+	"webhooks":   "Webhooks",
+	"policy":     "Policy",
+	"security":   "Security",
+	"audit":      "Audit",
 }
 
 // consolePage assembles a console template from the shared shell and a body.
