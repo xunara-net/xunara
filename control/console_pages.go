@@ -89,10 +89,16 @@ body { font-family: var(--font); margin: 0; background: var(--bg); color: var(--
 
 /* Top bar: dark chrome with the brand, preferences and the account block. */
 .topbar { position: sticky; top: 0; z-index: 50; display: flex; align-items: center; gap: .8rem;
+          flex-wrap: wrap; row-gap: .4rem;
           padding: .62rem 1.4rem; background: var(--chrome); color: var(--chrome-fg); }
 .brand { display: flex; align-items: baseline; gap: .45rem; font-size: 1rem; font-weight: 700; letter-spacing: .01em; }
 .brand span { color: var(--chrome-muted); font-weight: 500; }
-.who { margin-left: auto; display: flex; align-items: center; gap: .5rem; font-size: .84rem; color: var(--chrome-muted); }
+.who { margin-left: auto; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+       justify-content: flex-end; font-size: .84rem; color: var(--chrome-muted); }
+/* Chinese labels are short enough to break between two characters, which reads
+   as vertical text in a squeezed flex row; keep every chip on one line and let
+   the bar wrap instead. */
+.brand, .nav-toggle, .who-name, .topbar .tag, .prefs summary, .theme-toggle, .topbar button { white-space: nowrap; }
 .who form { margin: 0; }
 .who-name { font-weight: 600; color: var(--chrome-fg); }
 .topbar .tag { background: rgba(255, 255, 255, .09); color: var(--chrome-muted); border-color: transparent; }
@@ -156,6 +162,9 @@ th { background: var(--surface-2); color: var(--muted); font-weight: 600; font-s
 tbody tr:hover td { background: var(--surface-2); }
 tr:last-child td { border-bottom: 0; }
 td.actions, th.actions { text-align: right; white-space: nowrap; }
+/* Identifiers in tables read as one token; the row scrolls, so they must not
+   be split mid-word (prose keeps normal wrapping). */
+td code, th code { white-space: nowrap; }
 .table-filter { display: block; width: 100%; max-width: 20rem; margin: .7rem 0 0; font: inherit;
                 padding: .42rem .6rem; border: 1px solid var(--border-2); border-radius: var(--radius-sm);
                 background: var(--surface); color: var(--fg); }
@@ -213,6 +222,10 @@ footer.console-foot a { color: var(--muted); }
   main { padding: .9rem 0 2rem; }
   dl { grid-template-columns: 1fr; gap: .1rem; }
   dt { margin-top: .5rem; }
+  /* Phone widths have no room for nine columns: keep each cell wide enough
+     for a word or two and let the table scroll inside .table-wrap instead of
+     squeezing values into one character per line. */
+  th, td { min-width: 6.5rem; }
   .page-head h1 { font-size: 1.2rem; }
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
@@ -284,11 +297,14 @@ const consoleJS = `
   var themeButton = document.querySelector(".theme-toggle");
   if (themeButton) {
     themeButton.hidden = false;
+    /* The label names the theme the button switches *to*; both are template
+       message ids so the hint follows the console language. */
+    var themeLabels = { dark: {{T "Switch to dark theme"}}, light: {{T "Switch to light theme"}} };
     var label = function () {
       var next = preferredTheme() === "dark" ? "light" : "dark";
       themeButton.textContent = next === "dark" ? "\u263e" : "\u2600";
-      themeButton.setAttribute("aria-label", "Switch to " + next + " theme");
-      themeButton.title = themeButton.getAttribute("aria-label");
+      themeButton.setAttribute("aria-label", themeLabels[next]);
+      themeButton.title = themeLabels[next];
     };
     label();
     themeButton.addEventListener("click", function () {
@@ -318,8 +334,8 @@ const consoleJS = `
     var box = document.createElement("input");
     box.type = "search";
     box.className = "table-filter";
-    box.placeholder = "Filter rows\u2026";
-    box.setAttribute("aria-label", "Filter table rows");
+    box.placeholder = {{T "Filter rows…"}};
+    box.setAttribute("aria-label", {{T "Filter table rows"}});
     wrap.parentNode.insertBefore(box, wrap);
     box.addEventListener("input", function () {
       var needle = box.value.toLowerCase();
@@ -336,8 +352,8 @@ const consoleJS = `
     if (!form || form.dataset.confirm === "skip") return;
     var danger = form.querySelector("button.danger");
     if (!danger) return;
-    var verb = danger.textContent.trim() || "Confirm";
-    if (!window.confirm(verb + " \u2014 are you sure?")) event.preventDefault();
+    var verb = danger.textContent.trim() || {{T "Confirm"}};
+    if (!window.confirm({{T "Please confirm: %s"}}.replace("%s", verb))) event.preventDefault();
   });
 })();
 `

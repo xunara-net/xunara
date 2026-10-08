@@ -434,3 +434,59 @@ func TestSecurityListSeparator(t *testing.T) {
 		t.Errorf("English security page lost its list separator:\n%.600s", en)
 	}
 }
+
+// TestConsoleScriptLocalized checks the strings the inline console script
+// creates itself: the localization pass skips <script>, so those have to be
+// rendered through the T helper at template time.
+func TestConsoleScriptLocalized(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/machines")
+
+	zh := bodyString(t, getRequestWithLanguage(t, client, hs.URL+"/console/machines", "zh-CN,zh;q=0.9", cookie))
+	for _, want := range []string{
+		`box.placeholder = "筛选行…"`,
+		`"Filter table rows"`, // replaced below by the localized value
+		`themeLabels = { dark: "切换到深色主题", light: "切换到浅色主题" }`,
+		`window.confirm("请确认：%s".replace("%s", verb))`,
+	} {
+		if want == `"Filter table rows"` {
+			if !strings.Contains(zh, `box.setAttribute("aria-label", "筛选表格行")`) {
+				t.Errorf("table filter aria-label is not localized:\n%.400s", zh)
+			}
+			continue
+		}
+		if !strings.Contains(zh, want) {
+			t.Errorf("console script does not contain %q:\n%.600s", want, zh)
+		}
+	}
+
+	en := bodyString(t, getRequestWithLanguage(t, client, hs.URL+"/console/machines", "en-US,en;q=0.9", cookie))
+	for _, want := range []string{
+		`box.placeholder = "Filter rows…"`,
+		`box.setAttribute("aria-label", "Filter table rows")`,
+		`themeLabels = { dark: "Switch to dark theme", light: "Switch to light theme" }`,
+		`window.confirm("Please confirm: %s".replace("%s", verb))`,
+	} {
+		if !strings.Contains(en, want) {
+			t.Errorf("English console script does not contain %q:\n%.600s", want, en)
+		}
+	}
+}
+
+// TestLoginScriptLocalized checks the same for the passkey sign-in script on
+// the standalone sign-in page.
+func TestLoginScriptLocalized(t *testing.T) {
+	s := newServerWithConfig(t, Config{ServerURL: testPasskeyOrigin, Passkeys: testPasskeyConfig()})
+	hs := newTestHTTPServer(t, s)
+
+	body := bodyString(t, getRequestWithLanguage(t, noRedirectClient(), hs.URL+"/login", "zh-CN,zh;q=0.9"))
+	if !strings.Contains(body, `err.message || "通行密钥登录失败。"`) {
+		t.Errorf("Chinese passkey script keeps the English fallback:\n%.400s", body)
+	}
+	body = bodyString(t, getRequestWithLanguage(t, noRedirectClient(), hs.URL+"/login", "en-US,en;q=0.9"))
+	if !strings.Contains(body, `err.message || "Passkey sign-in failed."`) {
+		t.Errorf("English passkey script changed:\n%.400s", body)
+	}
+}

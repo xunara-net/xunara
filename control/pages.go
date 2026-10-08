@@ -48,8 +48,15 @@ code { font-family: var(--mono); font-size: .85em; background: var(--surface-2);
 
 var pageFoot = template.Must(template.New("foot").Parse(`<footer>Xunara {{.Version}}</footer></main></body></html>`))
 
+// pageTemplate parses one standalone page. T is registered here so the parser
+// accepts the message ids in inline scripts; renderPage rebinds it per request
+// so each page is rendered in the operator's language.
+func pageTemplate(name, body string) *template.Template {
+	return template.Must(template.New(name).Funcs(template.FuncMap{"T": translator("en")}).Parse(body))
+}
+
 var (
-	loginPageTemplate = template.Must(template.New("login").Parse(pageHead + `
+	loginPageTemplate = pageTemplate("login", pageHead+`
 <h1>Sign in</h1>
 <p>Choose an identity provider to continue.</p>
 {{range .Providers}}<a class="provider" href="{{.URL}}">{{.Name}}</a>{{end}}
@@ -57,7 +64,7 @@ var (
 <p><button id="passkey-signin" type="button">Sign in with a passkey</button></p>
 <p id="passkey-status" class="status" role="status"></p>
 {{end}}
-` + `{{if .Passkey}}<script>` + passkeyBrowserJS + `
+`+`{{if .Passkey}}<script>`+passkeyBrowserJS+`
 (function () {
   const button = document.getElementById("passkey-signin");
   const status = document.getElementById("passkey-status");
@@ -72,20 +79,20 @@ var (
       const finish = await passkeyPost(url, encodeAssertion(credential));
       window.location = finish.redirect || "/";
     } catch (err) {
-      status.textContent = err.message || "Passkey sign-in failed.";
+      status.textContent = err.message || {{T "Passkey sign-in failed."}};
       button.disabled = false;
     }
   });
 })();
-</script>{{end}}` + `</main></body></html>`))
+</script>{{end}}`+`</main></body></html>`)
 
-	errorPageTemplate = template.Must(template.New("error").Parse(pageHead + `
+	errorPageTemplate = pageTemplate("error", pageHead+`
 <h1>{{.Title}}</h1>
 <p>{{.Message}}</p>
 <p><a href="/login">Back to sign-in</a></p>
-` + `</main></body></html>`))
+`+`</main></body></html>`)
 
-	approvePageTemplate = template.Must(template.New("approve").Parse(pageHead + `
+	approvePageTemplate = pageTemplate("approve", pageHead+`
 <h1>Device approval</h1>
 <p>A device is asking to join the tailnet. Approving authorizes the machine keys
 below; it does not make the device a human identity.</p>
@@ -111,15 +118,15 @@ below; it does not make the device a human identity.</p>
 {{else}}
 <p>Your role is read-only; ask an admin or owner to approve this device.</p>
 {{end}}
-` + `</main></body></html>`))
+`+`</main></body></html>`)
 
-	decidedPageTemplate = template.Must(template.New("decided").Parse(pageHead + `
+	decidedPageTemplate = pageTemplate("decided", pageHead+`
 <h1>Registration {{.State}}</h1>
 <p>This device registration was already {{.State}}. You can close this window and
 return to the device.</p>
-` + `</main></body></html>`))
+`+`</main></body></html>`)
 
-	sshCheckPageTemplate = template.Must(template.New("sshcheck").Parse(pageHead + `
+	sshCheckPageTemplate = pageTemplate("sshcheck", pageHead+`
 <h1>SSH check</h1>
 <p>A Tailscale SSH connection is waiting for a decision. Approving lets it
 proceed; the decision is recorded in the audit log.</p>
@@ -147,7 +154,7 @@ proceed; the decision is recorded in the audit log.</p>
 {{else}}
 <p>Your role is read-only; ask an admin or owner to decide this connection.</p>
 {{end}}
-` + `</main></body></html>`))
+`+`</main></body></html>`)
 )
 
 // renderLoginPage lists the configured providers, and the passkey button when
@@ -168,8 +175,17 @@ func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, tmpl *templa
 		data["Title"] = translateTitle(lang, title)
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// The template is cloned per request so the T helper (used by inline
+	// scripts, which the localization pass deliberately skips) is bound to the
+	// operator's language without touching the shared parsed template.
+	localized, err := tmpl.Clone()
+	if err != nil {
+		s.log.Error("cloning page template", "template", tmpl.Name(), "err", err)
+		return
+	}
+	localized.Funcs(template.FuncMap{"T": translator(lang)})
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
+	if err := localized.Execute(&buf, data); err != nil {
 		s.log.Error("rendering page", "template", tmpl.Name(), "err", err)
 		return
 	}

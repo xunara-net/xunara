@@ -35,6 +35,9 @@ func TestConsoleUIShell(t *testing.T) {
 		`localStorage`,
 		`<button class="nav-toggle" type="button" aria-expanded="false" aria-controls="console-nav" hidden>`,
 		`<button class="theme-toggle" type="button" hidden`,
+		// Short Chinese labels must not break between characters in the top
+		// bar; the chips stay on one line and the bar wraps instead.
+		`.brand, .nav-toggle, .who-name, .topbar .tag, .prefs summary, .theme-toggle, .topbar button { white-space: nowrap; }`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("console shell does not contain %q", want)
