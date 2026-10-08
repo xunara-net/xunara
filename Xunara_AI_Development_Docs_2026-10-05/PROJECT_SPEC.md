@@ -896,17 +896,20 @@ pending ──accept──▶ accepted ──upload──▶ uploaded ──comp
   60，留 4 字节余量）。超过即 413；接收方解密后必须重新校验 SHA-256。
 - 默认单文件 ≤ 8 MiB（`DefaultFluxMaxSize`，部署可配），报价与上传都强制。
 - 活跃（pending/accepted/uploaded）传输：每节点（作为任一角色）≤ 32 条，
-  每组织 ≤ 512 条、密文总量 ≤ 1 GiB；超限 429。终态行保留 24h 供双方查询，
-  janitor 清理；节点删除级联删除其传输行。
+  每组织 ≤ 1024 条、已上传内容的声明明文总量 ≤ 1 GiB（密文只多 60 字节，
+  按声明 size 计即够）；超限 429。终态行保留 24h 供双方查询，janitor 清理；
+  节点删除级联删除其传输行（内容文件由 janitor 孤儿扫描兜底删除）。
 - TTL 默认 1h（可配）：超过后任何非终态 → `expired`，密文删除。
 - 解析/校验失败 400；未认证 401；不是本人参与的传输 404（不泄漏存在性）；
   状态冲突 409；文件超过声明大小/限额 413；配额 429。
 
 ### 25.3 HTTP 端点（Agent 协议）
 
-认证与 M9 相同（Bearer agent token + machine/node key 复述；POST 走 JSON body，
-GET/PUT 走 `X-Xunara-Machine-Key`/`X-Xunara-Node-Key` 头）。所有响应不包含
-其他节点的私密材料；`recipientKey` 是收件人主动公开的本次公钥。
+认证与 M9 相同（Bearer agent token + machine/node key 复述）。flux 端点统一
+用 `X-Xunara-Machine-Key`/`X-Xunara-Node-Key` 请求头（与 `/events` 相同：
+二进制上传/下载的 body 不夹带 JSON），POST 的 JSON body 只放业务字段。
+所有响应不包含其他节点的私密材料；`recipientKey` 是收件人主动公开的本次
+公钥。
 
 ```text
 POST /api/agent/v1/flux/transfers                   报价 {recipient, name, size, sha256}

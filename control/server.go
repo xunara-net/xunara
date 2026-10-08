@@ -92,6 +92,9 @@ type Config struct {
 	// management. Nil disables the feature: the endpoints answer 404 and the
 	// sign-in page offers no passkey button.
 	Passkeys *identity.PasskeyConfig
+	// Flux configures Xunara Flux file transfers. Nil uses the defaults;
+	// FluxConfig.Disabled turns the feature off (endpoints answer 404).
+	Flux *FluxConfig
 	// CertDomains are extra DNS names for which clients may obtain TLS
 	// certificates, on top of each node's own MagicDNS FQDN. They only take
 	// effect when DNSProvider is set: cert issuance needs a public zone the
@@ -140,6 +143,10 @@ type Server struct {
 	// passkeys performs WebAuthn registration and login, or nil when the
 	// feature is not configured.
 	passkeys *identity.PasskeyService
+
+	// flux holds the normalized Xunara Flux configuration and content
+	// directory, or nil when file transfer is disabled.
+	flux *fluxServer
 
 	// secureCookies marks cookies Secure; sessionTTL bounds browser sessions;
 	// authTTL bounds pending login transactions.
@@ -303,6 +310,13 @@ func New(cfg Config) (*Server, error) {
 		}
 	}
 
+	// Xunara Flux: a configuration that cannot work stops the server too.
+	flux, err := newFluxServer(cfg.StateDir, cfg.Flux)
+	if err != nil {
+		store.Close()
+		return nil, err
+	}
+
 	resolvers, err := parseResolvers(cfg.Nameservers)
 	if err != nil {
 		store.Close()
@@ -338,6 +352,7 @@ func New(cfg Config) (*Server, error) {
 		providers:         providers,
 		providerRedirects: redirects,
 		passkeys:          passkeys,
+		flux:              flux,
 		secureCookies:     strings.HasPrefix(strings.ToLower(cfg.ServerURL), "https://"),
 		sessionTTL:        sessionTTL,
 		authTTL:           identity.DefaultAuthTransactionTTL,
@@ -357,6 +372,10 @@ func New(cfg Config) (*Server, error) {
 
 	if passkeys != nil {
 		cfg.Logger.Info("passkey sign-in enabled", "rp_id", cfg.Passkeys.RPID)
+	}
+	if flux != nil {
+		cfg.Logger.Info("flux file transfer enabled",
+			"dir", flux.dir, "max_size", flux.maxSize, "ttl", flux.ttl)
 	}
 
 	// The DERP policy decides what clients are served; a policy that names a

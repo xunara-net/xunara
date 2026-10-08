@@ -2,6 +2,10 @@ package control
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/xunara/xunara/identity"
@@ -24,6 +28,7 @@ func (s *Server) runJanitor(ctx context.Context) {
 			s.reapSSHChecks(now)
 			s.reapACMEChallenges(now)
 			s.reapPasskeyCeremonies(now)
+			s.reapFluxTransfers(now)
 		}
 	}
 }
@@ -78,6 +83,69 @@ func (s *Server) reapPasskeyCeremonies(now time.Time) {
 	}
 	if deleted > 0 {
 		s.log.Info("reaped expired passkey ceremonies", "count", deleted)
+	}
+}
+
+// reapFluxTransfers expires transfers past their TTL, prunes finished ones
+// after their retention window, and sweeps content files whose row is gone
+// (the cascade that runs when a node is deleted cannot remove files).
+func (s *Server) reapFluxTransfers(now time.Time) {
+	if s.flux == nil {
+		return
+	}
+
+	expired, err := s.store.ExpireFluxTransfers(now)
+	if err != nil {
+		s.log.Warn("expiring flux transfers", "err", err)
+	} else {
+		for _, transfer := range expired {
+			s.flux.removeContent(transfer.ID)
+			s.audit("system", identity.AuditFluxExpired, "flux:"+transfer.ID,
+				fmt.Sprintf("expired %s (%d bytes)", transfer.Name, transfer.Size))
+		}
+		if len(expired) > 0 {
+			s.log.Info("expired flux transfers", "count", len(expired))
+		}
+	}
+
+	if pruned, err := s.store.PruneFluxTransfers(now.Add(-fluxTerminalRetention)); err != nil {
+		s.log.Warn("pruning flux transfers", "err", err)
+	} else {
+		for _, transfer := range pruned {
+			s.flux.removeContent(transfer.ID)
+		}
+	}
+
+	s.sweepFluxOrphans()
+}
+
+// sweepFluxOrphans removes content files that no transfer row references.
+// Without it, deleting a node would leave its uploaded ciphertext behind
+// forever.
+func (s *Server) sweepFluxOrphans() {
+	entries, err := os.ReadDir(s.flux.dir)
+	if err != nil {
+		s.log.Warn("scanning the flux content directory", "err", err)
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		id, ok := strings.CutSuffix(name, ".bin")
+		if !ok {
+			// A leftover upload temp file from a crash.
+			if strings.HasPrefix(name, ".upload-") {
+				os.Remove(filepath.Join(s.flux.dir, name))
+			}
+			continue
+		}
+		if _, ok := s.store.GetFluxTransfer(id); !ok {
+			if err := os.Remove(filepath.Join(s.flux.dir, name)); err != nil {
+				s.log.Warn("removing orphaned flux content", "file", name, "err", err)
+			}
+		}
 	}
 }
 

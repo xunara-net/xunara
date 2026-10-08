@@ -202,4 +202,14 @@ const (
 	// never the credential ID, public key or challenge.
 	AuditPasskeyRegistered = "passkey.registered"
 	AuditPasskeyDeleted    = "passkey.deleted"
+	// Xunara Flux (file transfer) lifecycle. Details name the transfer ID,
+	// file name and size; content and keys are never written.
+	AuditFluxOffered   = "flux.transfer_offered"
+	AuditFluxAccepted  = "flux.transfer_accepted"
+	AuditFluxDenied    = "flux.transfer_denied"
+	AuditFluxUploaded  = "flux.transfer_uploaded"
+	AuditFluxCompleted = "flux.transfer_completed"
+	AuditFluxFailed    = "flux.transfer_failed"
+	AuditFluxCancelled = "flux.transfer_cancelled"
+	AuditFluxExpired   = "flux.transfer_expired"
 )

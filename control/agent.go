@@ -92,6 +92,17 @@ func (s *Server) agentRouter() http.Handler {
 	r.Post("/heartbeat", s.handleAgentHeartbeat)
 	r.Get("/events", s.handleAgentEvents)
 	r.Post("/services", s.handleAgentServices)
+	if s.flux != nil {
+		r.Post("/flux/transfers", s.handleFluxCreate)
+		r.Get("/flux/transfers", s.handleFluxList)
+		r.Post("/flux/transfers/{id}/accept", s.handleFluxAccept)
+		r.Post("/flux/transfers/{id}/deny", s.handleFluxDeny)
+		r.Post("/flux/transfers/{id}/cancel", s.handleFluxCancel)
+		r.Put("/flux/transfers/{id}/content", s.handleFluxUpload)
+		r.Get("/flux/transfers/{id}/content", s.handleFluxDownload)
+		r.Post("/flux/transfers/{id}/complete", s.handleFluxComplete)
+		r.Post("/flux/transfers/{id}/fail", s.handleFluxFail)
+	}
 	return r
 }
 
