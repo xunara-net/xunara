@@ -137,7 +137,7 @@ func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWri
 			peers := msg.Peers
 			selfNode := msg.Node
 			changed := sess.diff(msg, peers)
-			if sess.syncDNS(msg, mapper.DNSConfig(s.mapperConfig(), self)) {
+			if sess.syncDNS(msg, s.dnsConfigFor(self)) {
 				changed = true
 			}
 			if sess.syncPacketFilter(msg, s.packetFilterFor(self), req.Version) {
@@ -218,6 +218,7 @@ func (s *Server) fullMap(self state.Node, req tailcfg.MapRequest) *tailcfg.MapRe
 	nodes := s.netmapNodesFor(self, shares)
 	cfg := s.mapperConfigFor(shares)
 	cfg.FilterFor = func(self state.Node) []tailcfg.FilterRule { return s.packetFilterForNodes(self, nodes) }
+	cfg.ExtraRecords = s.extraDNSRecordsFor(self)
 	resp := mapper.Full(self, nodes, cfg, shares.onlineFunc(s.isOnline), req.Version)
 	if req.OmitPeers {
 		resp.Peers = nil
@@ -244,7 +245,6 @@ func (s *Server) mapperConfigFor(shares *shareNetmap) mapper.Config {
 		Domain:         s.cfg.Domain,
 		Resolvers:      s.resolvers,
 		Routes:         s.dnsRoutes,
-		ExtraRecords:   s.extraDNSRecords(),
 		CertDomainsFor: s.certDomainsFor,
 		DERPMap:        s.derpMap,
 		FilterFor:      s.packetFilterFor,
@@ -262,10 +262,21 @@ func (s *Server) mapperConfigFor(shares *shareNetmap) mapper.Config {
 	return cfg
 }
 
-// extraDNSRecords returns the records published through MagicDNS to every
-// client. ACME challenge records are excluded: only the public certificate
-// authority needs them, and they can live outside the tailnet domain.
-func (s *Server) extraDNSRecords() []state.DNSRecord {
+// dnsConfigFor builds the DNS configuration of one node. Only the Atlas
+// service records depend on the viewer (section 46); everything else is
+// tailnet-wide.
+func (s *Server) dnsConfigFor(self state.Node) *tailcfg.DNSConfig {
+	cfg := s.mapperConfig()
+	cfg.ExtraRecords = s.extraDNSRecordsFor(self)
+	return mapper.DNSConfig(cfg, self)
+}
+
+// extraDNSRecordsFor returns the records published through MagicDNS to one
+// node: administrator- and ACME-created records, plus the services that node
+// may discover. ACME challenge records are excluded: only the public
+// certificate authority needs them, and they can live outside the tailnet
+// domain.
+func (s *Server) extraDNSRecordsFor(self state.Node) []state.DNSRecord {
 	records := s.store.ListDNSRecords()
 	out := records[:0:0]
 	for _, r := range records {
@@ -277,7 +288,7 @@ func (s *Server) extraDNSRecords() []state.DNSRecord {
 	// Services a node advertises about itself (Xunara Atlas) resolve through
 	// MagicDNS to the node that publishes them; the records are derived from
 	// the registry rather than stored, so a withdrawal removes them.
-	return append(out, s.serviceDNSRecords()...)
+	return append(out, s.serviceDNSRecordsFor(self)...)
 }
 
 // clientVersionFor builds the client-version advisory from the configured

@@ -135,6 +135,9 @@ func (s *MemoryStore) NodeServiceCounts() (map[NodeID]int, error) {
 // copyService returns a copy that shares no mutable state with the store.
 func copyService(svc Service) Service {
 	out := svc
+	if len(svc.Visibility) > 0 {
+		out.Visibility = slices.Clone(svc.Visibility)
+	}
 	if len(svc.Metadata) > 0 {
 		out.Metadata = make(map[string]string, len(svc.Metadata))
 		for k, v := range svc.Metadata {

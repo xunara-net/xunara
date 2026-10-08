@@ -23,6 +23,13 @@ type Service struct {
 	Protocol string
 	// Port is the endpoint's port.
 	Port uint16
+	// Visibility lists the selectors (the ACL source-selector grammar) whose
+	// nodes may discover this service through MagicDNS. It is normalized:
+	// trimmed, deduplicated and sorted, with "*" meaning the whole
+	// organization. An empty value means the default, "*": the v1 behavior.
+	// Visibility narrows discovery only; the ACL rules still decide who may
+	// connect.
+	Visibility []string
 	// Metadata is operator-facing description (version, region, ...). It is
 	// never a secret and never written to the audit log.
 	Metadata map[string]string

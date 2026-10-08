@@ -31,7 +31,7 @@ func seedServiceStore(t *testing.T) (state.Store, state.Node) {
 		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"}},
 		{Name: "metrics", Protocol: "tcp", Port: 9090},
 		{Name: "db", Protocol: "tcp", Port: 5432, Health: true},
-		{Name: "cache", Protocol: "tcp", Port: 6379, Health: true},
+		{Name: "cache", Protocol: "tcp", Port: 6379, Health: true, Visibility: []string{"group:eng"}},
 	}); err != nil {
 		t.Fatalf("ReplaceNodeServices: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestWriteServicesList(t *testing.T) {
 		t.Fatalf("writeServicesList: %v", err)
 	}
 	out := buf.String()
-	for _, want := range []string{"api", "metrics", "tcp", "8080", "9090", "web", web.StableID, "healthy", "unhealthy"} {
+	for _, want := range []string{"api", "metrics", "tcp", "8080", "9090", "web", web.StableID, "healthy", "unhealthy", "group:eng"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("list output lacks %q:\n%s", want, out)
 		}
@@ -60,11 +60,15 @@ func TestWriteServicesList(t *testing.T) {
 		t.Errorf("list shows a node without services:\n%s", out)
 	}
 
-	// The health column says "-" for services that never opted in.
+	// The visibility column says "*" for the organization default, and the
+	// health column says "-" for services that never opted in.
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
-		if len(fields) > 3 && fields[0] == "api" && fields[3] != "-" {
-			t.Errorf("untracked service health = %q, want a dash:\n%s", fields[3], out)
+		if len(fields) > 4 && fields[0] == "api" && (fields[3] != "*" || fields[4] != "-") {
+			t.Errorf("api row = %v, want visibility * and health -:\n%s", fields, out)
+		}
+		if len(fields) > 4 && fields[0] == "cache" && fields[3] != "group:eng" {
+			t.Errorf("cache visibility = %q, want group:eng:\n%s", fields[3], out)
 		}
 	}
 

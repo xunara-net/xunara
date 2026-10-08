@@ -234,6 +234,20 @@ PRIMARY KEY (session_id, stream, seq)
 	// v15: the per-organization share namespace (section 38): synthetic node
 	// IDs and masquerade addresses for nodes shared from another organization.
 	sqliteShareMigration,
+
+	// v16: Atlas service visibility (section 46). Like the health table, this
+	// is a separate table rather than a column on node_services so the
+	// migration is replayable (a republish replaces the declaration rows, and
+	// the visibility must be rewritten with them). A missing row means the v1
+	// default: discovery by the whole organization.
+	`
+CREATE TABLE IF NOT EXISTS node_service_visibility (
+	node_id    INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+	name       TEXT    NOT NULL,
+	visibility TEXT    NOT NULL,
+	PRIMARY KEY (node_id, name)
+);
+`,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.

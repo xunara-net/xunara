@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -9,7 +10,8 @@ import (
 // normalized: protocol case/whitespace folded, empty metadata nil.
 func TestValidateServicesCanonicalizes(t *testing.T) {
 	services, err := ValidateServices([]Service{
-		{Name: "api", Protocol: " TCP ", Port: 8080, Metadata: map[string]string{"version": "1.2"}},
+		{Name: "api", Protocol: " TCP ", Port: 8080, Metadata: map[string]string{"version": "1.2"},
+			Visibility: []string{" tag:prod ", "group:eng", "tag:prod"}},
 		{Name: "metrics", Protocol: "UDP", Port: 9090},
 	})
 	if err != nil {
@@ -26,6 +28,12 @@ func TestValidateServicesCanonicalizes(t *testing.T) {
 	}
 	if services[1].Metadata != nil {
 		t.Errorf("empty metadata = %+v, want nil", services[1].Metadata)
+	}
+	if !slices.Equal(services[0].Visibility, []string{"group:eng", "tag:prod"}) {
+		t.Errorf("visibility = %v, want group:eng then tag:prod", services[0].Visibility)
+	}
+	if services[1].Visibility != nil {
+		t.Errorf("default visibility = %v, want nil", services[1].Visibility)
 	}
 }
 
@@ -68,6 +76,12 @@ func TestValidateServicesRejects(t *testing.T) {
 		{"metadata too many entries", []Service{
 			{Name: "api", Protocol: "tcp", Port: 1, Metadata: tooMuchMetadata},
 		}, "more than"},
+		{"empty visibility selector", []Service{
+			{Name: "api", Protocol: "tcp", Port: 1, Visibility: []string{" "}},
+		}, "empty"},
+		{"visibility selector with control character", []Service{
+			{Name: "api", Protocol: "tcp", Port: 1, Visibility: []string{"tag:a\x1b"}},
+		}, "printable"},
 	}
 
 	for _, tc := range cases {

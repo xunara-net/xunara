@@ -578,17 +578,18 @@ func (g *grpcPlatformServer) ListServices(ctx context.Context, req *xunarav2.Lis
 		}
 		view := s.serviceView(svc, node)
 		entry := &xunarav2.Service{
-			Name:      view.Name,
-			Protocol:  view.Protocol,
-			Port:      uint32(view.Port),
-			Metadata:  view.Metadata,
-			MachineId: view.NodeID,
-			StableId:  view.StableID,
-			Hostname:  view.Hostname,
-			DnsName:   view.DNSName,
-			Created:   timestamppb.New(view.Created),
-			Updated:   timestamppb.New(view.Updated),
-			Health:    view.Health,
+			Name:       view.Name,
+			Protocol:   view.Protocol,
+			Port:       uint32(view.Port),
+			Metadata:   view.Metadata,
+			MachineId:  view.NodeID,
+			StableId:   view.StableID,
+			Hostname:   view.Hostname,
+			DnsName:    view.DNSName,
+			Visibility: view.Visibility,
+			Created:    timestamppb.New(view.Created),
+			Updated:    timestamppb.New(view.Updated),
+			Health:     view.Health,
 		}
 		if !view.HealthReportedAt.IsZero() {
 			entry.HealthReportedAt = timestamppb.New(view.HealthReportedAt)

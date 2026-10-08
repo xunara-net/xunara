@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/xunara/xunara/identity"
+	"github.com/xunara/xunara/policy"
 	"github.com/xunara/xunara/state"
 )
 
@@ -63,6 +65,10 @@ type agentService struct {
 	Protocol string            `json:"protocol"`
 	Port     uint32            `json:"port"`
 	Metadata map[string]string `json:"metadata,omitempty"`
+	// Visibility narrows which nodes may discover the service through
+	// MagicDNS (section 46): ACL source selectors resolved against the node
+	// that publishes it. Empty means the whole organization.
+	Visibility []string `json:"visibility,omitempty"`
 	// Health opts the service into readiness reporting (section 26). Without
 	// it the service is always discoverable, exactly as before health
 	// reporting existed.
@@ -75,9 +81,12 @@ type serviceView struct {
 	Protocol string            `json:"protocol"`
 	Port     uint16            `json:"port"`
 	Metadata map[string]string `json:"metadata,omitempty"`
-	NodeID   uint64            `json:"nodeId"`
-	StableID string            `json:"stableId"`
-	Hostname string            `json:"hostname"`
+	// Visibility lists the selectors that may discover the service; ["*"] is
+	// the default (the whole organization).
+	Visibility []string `json:"visibility"`
+	NodeID     uint64   `json:"nodeId"`
+	StableID   string   `json:"stableId"`
+	Hostname   string   `json:"hostname"`
 	// DNSName is the MagicDNS name the service is reachable under, when the
 	// deployment has a domain configured.
 	DNSName string `json:"dnsName,omitempty"`
@@ -113,7 +122,7 @@ func (s *Server) handleAgentServices(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	services, err := normalizeAgentServices(body.Services)
+	services, err := s.normalizeAgentServices(body.Services)
 	if err != nil {
 		httpError(w, NewHTTPError(http.StatusBadRequest, err.Error(), nil))
 		return
@@ -178,6 +187,15 @@ func (s *Server) serviceViews(node state.Node, services []state.Service) []servi
 	return views
 }
 
+// visibilityOrDefault renders a stored visibility list: an empty value means
+// the v1 default, the whole organization.
+func visibilityOrDefault(visibility []string) []string {
+	if len(visibility) == 0 {
+		return []string{"*"}
+	}
+	return visibility
+}
+
 // sameServiceSet reports whether a declaration matches the stored set. A
 // declaration is a set, not a list: order carries no meaning. Names are unique
 // on both sides (the store enforces it, normalizeAgentServices enforces it),
@@ -198,6 +216,9 @@ func sameServiceSet(stored, declared []state.Service) bool {
 		if svc.Protocol != other.Protocol || svc.Port != other.Port || svc.Health != other.Health {
 			return false
 		}
+		if !slices.Equal(svc.Visibility, other.Visibility) {
+			return false
+		}
 		if !maps.Equal(svc.Metadata, other.Metadata) {
 			return false
 		}
@@ -208,11 +229,18 @@ func sameServiceSet(stored, declared []state.Service) bool {
 // normalizeAgentServices validates a published set and converts it to store
 // records. Every rule is fail-closed: the whole publish fails rather than
 // dropping or rewriting a service the node meant to advertise.
-func normalizeAgentServices(services []agentService) ([]state.Service, error) {
+//
+// Visibility selectors are checked against the policy document that is
+// currently loaded, so a declaration naming an undeclared group or tag is
+// refused instead of silently hiding the service. A deployment without a
+// policy document has no groups or tags to name, so only the default (no
+// selectors) is accepted there.
+func (s *Server) normalizeAgentServices(services []agentService) ([]state.Service, error) {
 	if len(services) > maxServicesPerNode {
 		return nil, fmt.Errorf("at most %d services may be advertised per node", maxServicesPerNode)
 	}
 
+	engine := s.policy.Load()
 	out := make([]state.Service, 0, len(services))
 	seen := make(map[string]bool, len(services))
 	for _, svc := range services {
@@ -235,13 +263,26 @@ func normalizeAgentServices(services []agentService) ([]state.Service, error) {
 		if err != nil {
 			return nil, fmt.Errorf("service %q: %w", svc.Name, err)
 		}
+		visibility, err := policy.NormalizeServiceVisibility(svc.Visibility)
+		if err != nil {
+			return nil, fmt.Errorf("service %q: %w", svc.Name, err)
+		}
+		if len(visibility) > 0 {
+			if engine == nil {
+				return nil, fmt.Errorf("service %q: visibility selectors require a policy document", svc.Name)
+			}
+			if err := engine.ValidateServiceVisibility(visibility); err != nil {
+				return nil, fmt.Errorf("service %q: %w", svc.Name, err)
+			}
+		}
 
 		out = append(out, state.Service{
-			Name:     svc.Name,
-			Protocol: protocol,
-			Port:     uint16(svc.Port),
-			Metadata: metadata,
-			Health:   svc.Health,
+			Name:       svc.Name,
+			Protocol:   protocol,
+			Port:       uint16(svc.Port),
+			Visibility: visibility,
+			Metadata:   metadata,
+			Health:     svc.Health,
 		})
 	}
 	return out, nil
@@ -397,15 +438,16 @@ func (s *Server) checkServiceBudget(node state.Node, services []state.Service) e
 // serviceView renders one stored service for the read surfaces.
 func (s *Server) serviceView(svc state.Service, node state.Node) serviceView {
 	view := serviceView{
-		Name:     svc.Name,
-		Protocol: svc.Protocol,
-		Port:     svc.Port,
-		Metadata: svc.Metadata,
-		NodeID:   uint64(node.ID),
-		StableID: node.StableID,
-		Hostname: node.Hostname,
-		Created:  svc.Created,
-		Updated:  svc.Updated,
+		Name:       svc.Name,
+		Protocol:   svc.Protocol,
+		Port:       svc.Port,
+		Metadata:   svc.Metadata,
+		Visibility: visibilityOrDefault(svc.Visibility),
+		NodeID:     uint64(node.ID),
+		StableID:   node.StableID,
+		Hostname:   node.Hostname,
+		Created:    svc.Created,
+		Updated:    svc.Updated,
 	}
 	if domain := strings.Trim(s.cfg.Domain, "."); domain != "" {
 		view.DNSName = svc.Name + "." + domain
@@ -432,18 +474,23 @@ func servicesAuditDetail(services []state.Service) string {
 	return truncateClean("advertised "+strings.Join(names, ", "), maxAuditDetailsLen)
 }
 
-// serviceDNSRecords renders advertised services as MagicDNS A/AAAA records
-// pointing at the node that advertises them. Discovery through DNS is what
-// makes a service usable by an official client, which resolves the name and
-// connects under the existing ACL rules.
-func (s *Server) serviceDNSRecords() []state.DNSRecord {
+// serviceDNSRecordsFor renders the advertised services one node may discover
+// as MagicDNS A/AAAA records pointing at the node that advertises them.
+// Discovery through DNS is what makes a service usable by an official client,
+// which resolves the name and connects under the existing ACL rules.
+func (s *Server) serviceDNSRecordsFor(self state.Node) []state.DNSRecord {
 	domain := strings.Trim(s.cfg.Domain, ".")
 	if domain == "" {
 		return nil
 	}
 
+	services := s.store.ListServices()
+	visible := s.visibleServiceNames(self, services)
 	var out []state.DNSRecord
-	for _, svc := range s.store.ListServices() {
+	for _, svc := range services {
+		if !visible[svc.Name] {
+			continue
+		}
 		// A health-tracked service that is not (or no longer) ready is
 		// withdrawn from discovery: no record, so clients stop resolving it.
 		// This is discovery only; ACLs still decide who may connect.
@@ -462,6 +509,40 @@ func (s *Server) serviceDNSRecords() []state.DNSRecord {
 		}
 		if node.IPv6.IsValid() {
 			out = append(out, state.DNSRecord{Name: name, Type: "AAAA", Value: node.IPv6.String(), NodeID: node.ID})
+		}
+	}
+	return out
+}
+
+// visibleServiceNames returns the advertised services self may discover
+// (section 46). A node always discovers its own services, and a service that
+// declared no selectors keeps the v1 default: the whole organization.
+//
+// Restricted services resolve through the policy document that is loaded
+// now. Without a document there is nothing to resolve, so they stay visible
+// only to their publisher (fail closed) rather than silently widening again.
+func (s *Server) visibleServiceNames(self state.Node, services []state.Service) map[string]bool {
+	engine := s.policy.Load()
+	var nodes []state.Node
+
+	out := make(map[string]bool, len(services))
+	for _, svc := range services {
+		switch {
+		case svc.NodeID == self.ID, len(svc.Visibility) == 0:
+			out[svc.Name] = true
+		case engine == nil:
+			// Fail closed: the selectors cannot be resolved.
+		default:
+			publisher, ok := s.store.GetNodeByID(svc.NodeID)
+			if !ok {
+				continue
+			}
+			if nodes == nil {
+				nodes = s.store.ListNodes()
+			}
+			if engine.ServiceVisibility(nodes, publisher, svc.Visibility)[self.ID] {
+				out[svc.Name] = true
+			}
 		}
 	}
 	return out

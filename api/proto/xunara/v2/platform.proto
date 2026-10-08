@@ -584,6 +584,10 @@ message Service {
   // health_reported_at is when the node last reported readiness; unset when
   // it never did.
   google.protobuf.Timestamp health_reported_at = 12;
+  // visibility lists the selectors that may discover the service through
+  // MagicDNS; ["*"] is the default (the whole organization). It narrows
+  // discovery only: the ACL rules still decide who may connect.
+  repeated string visibility = 13;
 }
 
 message AuditEvent {

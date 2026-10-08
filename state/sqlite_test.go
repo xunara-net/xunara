@@ -396,6 +396,46 @@ func TestSQLiteMigratesV13ToV14(t *testing.T) {
 	}
 }
 
+// TestSQLiteMigratesV15ToV16 simulates a database written before Atlas service
+// visibility existed: reopening it must add the column, keep the service rows
+// readable and leave them discoverable by the whole organization.
+func TestSQLiteMigratesV15ToV16(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	ctx := context.Background()
+	first := openTestSQLite(t, path)
+	node := Node{Hostname: "old", NodeKey: key.NewNode().Public()}
+	if err := first.CreateNode(&node); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	if err := first.ReplaceNodeServices(node.ID, []Service{
+		{Name: "api", Protocol: "tcp", Port: 8080},
+	}); err != nil {
+		t.Fatalf("ReplaceNodeServices: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "DROP TABLE node_service_visibility"); err != nil {
+		t.Fatalf("dropping node_service_visibility: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "PRAGMA user_version = 15"); err != nil {
+		t.Fatalf("downgrading schema version: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second := openTestSQLite(t, path)
+	if _, ok := second.GetNodeByNodeKey(node.NodeKey); !ok {
+		t.Fatal("node did not survive the v15 -> v16 migration")
+	}
+	svc, ok := second.GetServiceByName("api")
+	if !ok || svc.Port != 8080 {
+		t.Fatalf("service after migration = %+v, %v", svc, ok)
+	}
+	if len(svc.Visibility) != 0 {
+		t.Errorf("service visibility after migration = %v, want the organization default", svc.Visibility)
+	}
+}
+
 func TestSQLiteStoreConcurrentAccess(t *testing.T) {
 	s := openTestSQLite(t, filepath.Join(t.TempDir(), "state.db"))
 

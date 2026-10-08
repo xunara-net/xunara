@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 	"time"
 
@@ -735,7 +736,7 @@ func TestPlatformGRPCListServices(t *testing.T) {
 	web := seedAPIMachine(t, s, "web", nil)
 	seedAPIMachine(t, s, "quiet", nil)
 	if err := s.store.ReplaceNodeServices(web.ID, []state.Service{
-		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"}},
+		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"}, Visibility: []string{"tag:app"}},
 		{Name: "metrics", Protocol: "udp", Port: 9090},
 	}); err != nil {
 		t.Fatalf("ReplaceNodeServices: %v", err)
@@ -767,6 +768,12 @@ func TestPlatformGRPCListServices(t *testing.T) {
 	}
 	if first.GetDnsName() != "api.example.com" || first.GetMetadata()["version"] != "2" {
 		t.Errorf("first service dns/metadata = %+v", first)
+	}
+	if !slices.Equal(first.GetVisibility(), []string{"tag:app"}) {
+		t.Errorf("first service visibility = %v, want tag:app", first.GetVisibility())
+	}
+	if len(list.GetServices()[1].GetVisibility()) != 1 || list.GetServices()[1].GetVisibility()[0] != "*" {
+		t.Errorf("default visibility = %v, want [*]", list.GetServices()[1].GetVisibility())
 	}
 	if first.GetCreated() == nil || first.GetUpdated() == nil {
 		t.Errorf("first service has no timestamps: %+v", first)

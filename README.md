@@ -21,8 +21,9 @@ v1 规格范围（M1–M38）已全部实现：`go test ./...` 与关键包的 `
   身份分离；Session 支持吊销、过期、轮换，可多实例部署。
 - **网络**：MagicDNS、ACL / Grants / nodeAttrs、子网路由与 Exit Node 审批、
   Tailscale SSH（含 check 审批）、设备授权与预认证密钥。
-- **扩展**：Atlas 服务发现（健康摘除、Consul/K8s 导入）、Flux 端到端加密文件
-  投递、Reach 远程命令（目标显式审批）、Share 跨组织机器共享、Workload Identity。
+- **扩展**：Atlas 服务发现（健康摘除、Consul/K8s 导入、按选择器收敛的
+  MagicDNS 可见范围）、Flux 端到端加密文件投递、Reach 远程命令（目标显式
+  审批）、Share 跨组织机器共享、Workload Identity。
 - **运维**：Web Console（22 页）、HTTP `/api/v2` + gRPC、Webhooks（签名 + 重试）、
   审计日志、Security Center，以及路由 / DERP / Relay / Serve / Reach / Flux
   等只读管理面。

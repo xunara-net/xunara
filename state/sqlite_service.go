@@ -52,6 +52,9 @@ func (s *SQLiteStore) ReplaceNodeServices(id NodeID, services []Service) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM node_services WHERE node_id = ?", int64(id)); err != nil {
 		return fmt.Errorf("state: clearing services of node %d: %w", id, err)
 	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM node_service_visibility WHERE node_id = ?", int64(id)); err != nil {
+		return fmt.Errorf("state: clearing service visibility of node %d: %w", id, err)
+	}
 
 	seen := make(map[string]bool, len(services))
 	for _, svc := range services {
@@ -81,6 +84,10 @@ func (s *SQLiteStore) ReplaceNodeServices(id NodeID, services []Service) error {
 		if svc.Metadata == nil {
 			metadata = []byte("{}")
 		}
+		visibility, err := json.Marshal(svc.Visibility)
+		if err != nil {
+			return fmt.Errorf("state: encoding visibility of service %q: %w", svc.Name, err)
+		}
 		createdAt := svc.Created
 		if prev, ok := created[svc.Name]; ok {
 			createdAt = prev
@@ -97,6 +104,14 @@ func (s *SQLiteStore) ReplaceNodeServices(id NodeID, services []Service) error {
 				return errServiceNameTaken(svc.Name)
 			}
 			return fmt.Errorf("state: storing service %q on node %d: %w", svc.Name, id, err)
+		}
+		if len(svc.Visibility) > 0 {
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO node_service_visibility (node_id, name, visibility)
+				VALUES (?, ?, ?)`,
+				int64(id), svc.Name, string(visibility)); err != nil {
+				return fmt.Errorf("state: storing visibility of service %q: %w", svc.Name, err)
+			}
 		}
 	}
 
@@ -242,6 +257,7 @@ func scanService(row rowScanner) (Service, error) {
 		nodeID     int64
 		port       int
 		metadata   string
+		visibility string
 		created    int64
 		updated    int64
 		healthy    int
@@ -249,7 +265,7 @@ func scanService(row rowScanner) (Service, error) {
 		reportedAt *int64
 		until      *int64
 	)
-	if err := row.Scan(&nodeID, &svc.Name, &svc.Protocol, &port, &metadata, &created, &updated,
+	if err := row.Scan(&nodeID, &svc.Name, &svc.Protocol, &port, &metadata, &visibility, &created, &updated,
 		&healthy, &reportedAt, &until, &tracked); err != nil {
 		return Service{}, err
 	}
@@ -267,6 +283,12 @@ func scanService(row rowScanner) (Service, error) {
 			svc.Metadata = meta
 		}
 	}
+	if visibility != "" {
+		var selectors []string
+		if err := json.Unmarshal([]byte(visibility), &selectors); err == nil && len(selectors) > 0 {
+			svc.Visibility = selectors
+		}
+	}
 	return svc, nil
 }
 
@@ -274,9 +296,10 @@ func scanService(row rowScanner) (Service, error) {
 // declaration row joined with its optional health row. Callers append their
 // own filter/order clause over the aliases.
 func serviceSelect(suffix string) string {
-	return `SELECT s.node_id, s.name, s.protocol, s.port, s.metadata, s.created, s.updated,
+	return `SELECT s.node_id, s.name, s.protocol, s.port, s.metadata, COALESCE(v.visibility, ''), s.created, s.updated,
 			COALESCE(h.healthy, 0), h.reported_at, h.until, h.name IS NOT NULL
 		FROM node_services s
+		LEFT JOIN node_service_visibility v ON v.node_id = s.node_id AND v.name = s.name
 		LEFT JOIN node_service_health h ON h.node_id = s.node_id AND h.name = s.name ` + suffix
 }
 

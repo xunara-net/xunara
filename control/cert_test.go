@@ -123,7 +123,11 @@ func TestSetDNSPublishesACMEChallenge(t *testing.T) {
 	}
 
 	// Challenge records are for the public CA, not for tailnet resolvers.
-	if got := s.extraDNSRecords(); len(got) != 0 {
+	node, ok := s.store.GetNodeByNodeKey(nodeKey.Public())
+	if !ok {
+		t.Fatal("registered node is missing from the store")
+	}
+	if got := s.extraDNSRecordsFor(node); len(got) != 0 {
 		t.Errorf("ExtraRecords = %+v, want none", got)
 	}
 }

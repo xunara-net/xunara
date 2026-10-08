@@ -711,7 +711,9 @@ node.services_updated   # target=节点，detail=服务名列表（含协议/端
 
 ### 22.7 后续（不在 v1）
 
-- 按 ACL/grants 的可见性（当前与 MagicDNS 节点名一样全组织可见）；
+- ~~按 ACL/grants 的可见性~~：已由 §46（M39）交付——发布者声明 `visibility`
+  选择器，MagicDNS 只对命中的节点发布记录；ACL 自动派生（"能连才可见"）
+  的取舍见 §46.4；
 - ~~服务就绪/健康状态与自动摘除~~：已由 §26（M19）交付；
 - 跨组织服务共享（Sharing）；
 - 与 `svc:`（Tailscale Services VIP）互通——需要上游控制面语义，不猜 API。
@@ -2279,3 +2281,77 @@ TLS listener，不需要额外开放 80 端口，也不依赖 DNS provider。
   - 缓存复用路径：向 `DirCache` 播种证书后 `GetCertificate` 直接命中，不发
     任何 ACME 网络请求（模拟重启后的部署）；
   - manual 模式端到端：手工证书起 TLS listener，HEAD `/derp/probe` 通过。
+
+---
+
+## 46. Xunara Atlas 服务可见性（v2）
+
+目标：v1 的服务名对全组织可见（与 MagicDNS 节点名一样，见 §22.7）。v2 允许
+发布者给服务声明 **visibility**（发现范围），收紧"谁能解析这个名字"，同时
+不改变任何可达性语义——ACL 仍然决定谁能连接（发现不等于授权）。
+
+### 46.1 语义
+
+- 声明字段：`visibility: ["<selector>", ...]`，选择器语法与 ACL 的 **src**
+  一致：`*`、`user:<login>`、`group:<name>`、`tag:<tag>`、`autogroup:member`、
+  `autogroup:tagged`、`autogroup:self`、`host:<alias>`、IP/前缀。
+  `autogroup:internet` 只能作目的端，拒绝。
+- 省略/空 = `*`：全组织可见，即 v1 行为（向后兼容）。
+- 解析基准是**发布者节点**：`autogroup:self` 指发布者所属用户的设备。
+- 发布者永远能发现自己发布的（自己的服务名不因选择器而对自己消失）。
+- 影响面只有 MagicDNS 中由 Atlas 注册表派生的 A/AAAA 记录
+  （`DNSConfig.ExtraRecords`）。管理面（`/api/v2/services`、gRPC、Console、
+  `xunara services`）始终显示真实声明与可见范围；`set-dns` 管理员记录保持
+  全局。
+
+### 46.2 校验与失败模式（fail-closed）
+
+- 发布时：选择器必须在**当前加载的策略文档**里可解析（未声明的 tag/group、
+  未定义的 host alias、非法前缀、空串、控制字符、超过 16 条/128 字节 → 400）；
+  没有策略文档时只接受默认（`*`）。
+- 解析时：选择器解析不出任何节点（例如策略变更后 group 被删）→ 该选择器贡献
+  空集；若全部选择器都解析不出，服务只对发布者可见。**绝不因为解析失败而扩大
+  可见范围。**
+- 策略文档被移除（watcher 将引擎置空）→ 受限服务只对发布者可见；默认服务
+  不变。
+- 健康（§26）与可见性是 AND：不健康先摘除，与可见范围无关。
+
+### 46.3 兼容性
+
+- 官方客户端协议不变：可见性只改变节点自己 netmap 里
+  `DNSConfig.ExtraRecords` 的内容；`MapResponse` 结构、TS2021/Noise、ACL
+  编译都不动。
+- 每个节点本来就收到自己的 `DNSConfig`，逐节点差异是协议内行为；
+  `mapSession.dns` 指纹继续保证只在变化时下发。
+- 升级：老数据没有 visibility 行（state 迁移 v16 只加表），读出为空 = 默认，
+  行为与 v1 完全一致。
+- 跨组织（§38 Share）不适用：可见性只在本组织的节点之间判定，共享不会扩展
+  服务发现。
+
+### 46.4 与 ACL 派生的取舍
+
+§22.7 的原始设想是"按 ACL/grants 自动收敛（能连才可见）"。v2 选择**发布者
+声明**而不是自动派生，理由记录在此，避免以后误读：
+
+- ACL 编译（`FilterFor`）是"按目的节点"展开的，逐服务评估会把
+  O(服务 × 规则 × 节点) 摊到每次 map update（`DNSConfig` 在每个 update 帧
+  都要重算），在 512 服务上限下不可接受；
+- 声明式可见性的成本是 O(服务 × 选择器)，默认值与 v1 一致，升级零风险；
+- 发布者最清楚服务面向谁；可见性只影响发现、不扩大任何访问权限，因此把
+  "收紧发现"交给发布者不违反零信任（ACL 仍是唯一授权来源）。
+- 将来若要做 ACL 自动收敛，必须先解决评估成本（例如按 engine 代际缓存），
+  并单独写规格。
+
+### 46.5 测试
+
+- `policy/visibility_test.go`：规范化（排序/去重/空白/控制字符/长度/条数）、
+  校验（未声明 tag/group、`autogroup:internet`、其它 autogroup、合法
+  user/host/前缀）、解析（`*`/group/tag/`autogroup:self` 随发布者变化/
+  未知选择器为空集）。
+- `control/service_visibility_test.go`：发布→按节点过滤 MagicDNS（发布者、
+  选择器命中者、无关节点）、默认服务全组织可见、netmap 端到端、管理面仍显示
+  声明与 `["*"]`、发布校验表（含无策略文档）、策略移除后 fail-closed。
+- `client/protocol/validate_test.go`：客户端镜像校验与规范化。
+- `state/service_test.go` + `state/sqlite_test.go`：往返、拷贝隔离、
+  v15→v16 迁移（老服务读回默认可见性）。
+- Console 与 gRPC：服务页与 `ListServices` 渲染 `visibility`。

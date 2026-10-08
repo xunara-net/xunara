@@ -904,7 +904,7 @@ func TestConsoleServicesPage(t *testing.T) {
 	seedAPIMachine(t, s, "quiet", nil)
 	if err := s.store.ReplaceNodeServices(web.ID, []state.Service{
 		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"}},
-		{Name: "db", Protocol: "tcp", Port: 5432, Health: true},
+		{Name: "db", Protocol: "tcp", Port: 5432, Health: true, Visibility: []string{"tag:app", "group:eng"}},
 	}); err != nil {
 		t.Fatalf("ReplaceNodeServices: %v", err)
 	}
@@ -913,7 +913,7 @@ func TestConsoleServicesPage(t *testing.T) {
 	}
 
 	page := bodyString(t, getRequest(t, client, hs.URL+"/console/services", cookie))
-	for _, want := range []string{"api", "tcp", "8080", "web", web.StableID, "api.example.com", "version", "2", "db.example.com", "Health", "healthy"} {
+	for _, want := range []string{"api", "tcp", "8080", "web", web.StableID, "api.example.com", "version", "2", "db.example.com", "Health", "healthy", "tag:app, group:eng"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("services page lacks %q:\n%s", want, page)
 		}

@@ -511,10 +511,12 @@ private key stays on your device; the server stores only its public key.</p>
 (<code>/api/agent/v1/services</code>); this page is read-only. A service name
 resolves in MagicDNS to the advertising node, and reachability is still decided
 by the ACL rules — discovery is not authorization. Services with health
-reporting enabled are withdrawn from MagicDNS while they are unhealthy.</p>
+reporting enabled are withdrawn from MagicDNS while they are unhealthy, and
+<em>visibility</em> narrows which nodes can resolve the name (<code>*</code> is
+the whole organization).</p>
 {{if .Services}}
 <table>
-<thead><tr><th>Name</th><th>Protocol</th><th>Port</th><th>DNS name</th><th>Health</th><th>Node</th><th>Updated</th><th>Metadata</th></tr></thead>
+<thead><tr><th>Name</th><th>Protocol</th><th>Port</th><th>DNS name</th><th>Visibility</th><th>Health</th><th>Node</th><th>Updated</th><th>Metadata</th></tr></thead>
 <tbody>
 {{range .Services}}
 <tr>
@@ -522,6 +524,7 @@ reporting enabled are withdrawn from MagicDNS while they are unhealthy.</p>
 <td>{{.Protocol}}</td>
 <td>{{.Port}}</td>
 <td>{{if .DNSName}}<code>{{.DNSName}}</code>{{else}}—{{end}}</td>
+<td>{{join .Visibility}}</td>
 <td>{{if .Health}}{{.Health}}{{else}}—{{end}}</td>
 <td>{{.Hostname}} <code>{{.StableID}}</code></td>
 <td>{{fmtTime .Updated}}</td>

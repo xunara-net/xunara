@@ -19,7 +19,8 @@ func runServiceConformance(t *testing.T, newStore storeFactory) {
 
 		if err := s.ReplaceNodeServices(first.ID, []Service{
 			{Name: "metrics", Protocol: "tcp", Port: 9090},
-			{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"}},
+			{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"},
+				Visibility: []string{"group:eng", "tag:prod"}},
 		}); err != nil {
 			t.Fatalf("ReplaceNodeServices: %v", err)
 		}
@@ -33,6 +34,12 @@ func runServiceConformance(t *testing.T, newStore storeFactory) {
 		}
 		if all[0].Metadata["version"] != "2" || all[0].Created.IsZero() || all[0].Updated.IsZero() {
 			t.Errorf("api metadata/timestamps = %+v", all[0])
+		}
+		if !slices.Equal(all[0].Visibility, []string{"group:eng", "tag:prod"}) {
+			t.Errorf("api visibility = %v, want group:eng then tag:prod", all[0].Visibility)
+		}
+		if all[1].Visibility != nil {
+			t.Errorf("metrics visibility = %v, want nil (default discovery)", all[1].Visibility)
 		}
 		if all[1].Metadata != nil {
 			t.Errorf("metrics metadata = %v, want nil", all[1].Metadata)
@@ -325,9 +332,13 @@ func TestServiceCopyIsolation(t *testing.T) {
 
 	got := s.ListServices()[0]
 	got.Metadata["version"] = "tampered"
+	got.Visibility = append(got.Visibility, "*")
 	again := s.ListServices()[0]
 	if again.Metadata["version"] != "1" {
 		t.Errorf("metadata after tampering = %q, want 1", again.Metadata["version"])
+	}
+	if len(again.Visibility) != 0 {
+		t.Errorf("visibility after tampering = %v, want the stored (empty) value", again.Visibility)
 	}
 
 	if !slices.Equal([]string{again.Name}, []string{"api"}) {

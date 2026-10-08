@@ -1121,9 +1121,9 @@ Update}`（`AttrUpdate` = `map[string]any`，值可为 string / float64 / bool�
   `client/catalog`（Consul 映射/跳过/告警/凭据头/错误/超限）、
   `cmd/xunara-agent/services_test.go`（文件解析、校验、渲染、导入发布与
   dry-run）。
-- 明确不做（v1）：按 ACL 的可见性（与 MagicDNS 节点名一样组织内可见）、
-  跨组织共享、与上游 `svc:` VIP 互通（需要上游控制面语义，不猜 API）、
-  控制面代理流量。
+- 明确不做（v1）：~~按 ACL 的可见性~~（已由 M39 以"发布者声明选择器"交付，
+  spec §46）、跨组织共享、与上游 `svc:` VIP 互通（需要上游控制面语义，
+  不猜 API）、控制面代理流量。
 - ~~下一步（未做）：Kubernetes 服务导入~~ 已由 M20 交付（spec §27）；
   ~~Atlas 健康状态与自动摘除~~ 已由 M19 交付（spec §26）。
 
@@ -1809,6 +1809,33 @@ Flow Logs 的明确结论。规格见
   CA 校验握手时协商；控制面 netmap 无改动。
 - 测试：`veil/acme_test.go`（模式校验表、HostPolicy/ALPN wiring、播种缓存后
   不发网络请求直接出证书、manual TLS 端到端 `HEAD /derp/probe`）。
+
+---
+
+## M39 — Xunara Atlas 服务可见性（v2，已完成）
+
+目标：补齐 spec §22.7 的"服务名全组织可见"缺口。发布者可给服务声明
+`visibility` 选择器（ACL src 语法），MagicDNS 只对命中的节点发布该服务的
+A/AAAA 记录；ACL 仍是唯一授权来源（发现不等于授权）。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §46。
+
+- `state`（迁移 v16，独立表 `node_service_visibility`，可重放）：`Service.Visibility`
+  归一化列表（空 = 默认 `*`），内存/SQLite 语义一致，随 republish 重写、
+  删节点级联。
+- `policy/visibility.go`：`NormalizeServiceVisibility`（trim/去重/排序/条数与
+  长度上限/可打印）、`Engine.ValidateServiceVisibility`（对照策略文档校验
+  tag/group/host/autogroup）、`Engine.ServiceVisibility`（解析为节点集合；
+  未知选择器 fail-closed 为空集；`autogroup:self` 以发布者为基准）。
+- `control`：发布校验（未声明 tag/group → 400；无策略文档只接受默认）、
+  `serviceDNSRecordsFor(self)` 逐节点过滤 MagicDNS、`extraDNSRecordsFor(self)`
+  与 `dnsConfigFor(self)` 接入 full/update 两条 netmap 路径；视图（HTTP v2、
+  gRPC、Console、CLI）新增 `visibility`（默认渲染为 `["*"]`）。
+- 客户端：`protocol.Service`/`ServiceView.Visibility` + 镜像校验；
+  `xunara-agent services list` 与 `xunara services list/show` 渲染可见范围。
+- 兼容性：netmap 结构与官方客户端协议不变（DNSConfig 本来就是逐节点的）；
+  老数据读出默认为 `*`，行为与 v1 一致。
+- 测试：`policy/visibility_test.go`、`control/service_visibility_test.go`、
+  `client/protocol/validate_test.go`、state v15→v16 迁移、Console/gRPC 断言。
 
 ---
 

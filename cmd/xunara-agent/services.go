@@ -294,9 +294,12 @@ type serviceRow struct {
 	Protocol string
 	Port     uint32
 	DNSName  string
-	Health   string
-	Updated  time.Time
-	Metadata map[string]string
+	// Visibility lists the selectors that may discover the service; empty
+	// (or "*") means the whole organization.
+	Visibility []string
+	Health     string
+	Updated    time.Time
+	Metadata   map[string]string
 }
 
 // writeHealthHint tells the operator where a health-tracked service's
@@ -322,13 +325,14 @@ func writePublishedServices(w io.Writer, views []protocol.ServiceView) error {
 	rows := make([]serviceRow, 0, len(views))
 	for _, view := range views {
 		rows = append(rows, serviceRow{
-			Name:     view.Name,
-			Protocol: view.Protocol,
-			Port:     uint32(view.Port),
-			DNSName:  view.DNSName,
-			Health:   view.Health,
-			Updated:  view.Updated,
-			Metadata: view.Metadata,
+			Name:       view.Name,
+			Protocol:   view.Protocol,
+			Port:       uint32(view.Port),
+			DNSName:    view.DNSName,
+			Visibility: view.Visibility,
+			Health:     view.Health,
+			Updated:    view.Updated,
+			Metadata:   view.Metadata,
 		})
 	}
 	return writeServicesTable(w, rows, "No services are advertised by this node.")
@@ -338,7 +342,8 @@ func writePublishedServices(w io.Writer, views []protocol.ServiceView) error {
 func writeDeclaredServices(w io.Writer, services []protocol.Service) error {
 	rows := make([]serviceRow, 0, len(services))
 	for _, svc := range services {
-		row := serviceRow{Name: svc.Name, Protocol: svc.Protocol, Port: svc.Port, Metadata: svc.Metadata}
+		row := serviceRow{Name: svc.Name, Protocol: svc.Protocol, Port: svc.Port,
+			Visibility: svc.Visibility, Metadata: svc.Metadata}
 		if svc.Health {
 			row.Health = "tracked"
 		}
@@ -358,12 +363,16 @@ func writeServicesTable(w io.Writer, rows []serviceRow, empty string) error {
 
 	stored := false
 	tracked := false
+	restricted := false
 	for _, row := range rows {
 		if row.DNSName != "" || !row.Updated.IsZero() {
 			stored = true
 		}
 		if row.Health != "" {
 			tracked = true
+		}
+		if len(row.Visibility) > 0 && !(len(row.Visibility) == 1 && row.Visibility[0] == "*") {
+			restricted = true
 		}
 	}
 
@@ -375,6 +384,9 @@ func writeServicesTable(w io.Writer, rows []serviceRow, empty string) error {
 	if tracked {
 		header = append(header, "HEALTH")
 	}
+	if restricted {
+		header = append(header, "VISIBILITY")
+	}
 	fmt.Fprintln(tw, strings.Join(header, "\t"))
 	for _, row := range rows {
 		fields := []string{row.Name, row.Protocol, strconv.FormatUint(uint64(row.Port), 10)}
@@ -383,6 +395,9 @@ func writeServicesTable(w io.Writer, rows []serviceRow, empty string) error {
 		}
 		if tracked {
 			fields = append(fields, dashIfEmpty(row.Health))
+		}
+		if restricted {
+			fields = append(fields, visibilityCell(row.Visibility))
 		}
 		fmt.Fprintln(tw, strings.Join(fields, "\t"))
 	}
@@ -418,6 +433,15 @@ func dashIfEmpty(value string) string {
 		return "-"
 	}
 	return value
+}
+
+// visibilityCell renders a service's discovery scope: the v1 default (the
+// whole organization) reads as "*".
+func visibilityCell(visibility []string) string {
+	if len(visibility) == 0 {
+		return "*"
+	}
+	return strings.Join(visibility, ", ")
 }
 
 // dashIfZeroTime renders a time the local declaration does not know.

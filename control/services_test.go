@@ -448,7 +448,7 @@ func TestServiceDNSRecordsFromRegistry(t *testing.T) {
 	hs := newTestHTTPServer(t, s)
 	agent := enrollServiceAgent(t, s, hs, "web")
 
-	if got := s.extraDNSRecords(); len(got) != 0 {
+	if got := s.extraDNSRecordsFor(agent.node); len(got) != 0 {
 		t.Fatalf("records before publishing = %+v, want none", got)
 	}
 
@@ -456,7 +456,7 @@ func TestServiceDNSRecordsFromRegistry(t *testing.T) {
 		t.Fatalf("publish: %d (%s)", status, raw)
 	}
 
-	records := s.extraDNSRecords()
+	records := s.extraDNSRecordsFor(agent.node)
 	var v4, v6 *state.DNSRecord
 	for i := range records {
 		switch records[i].Type {
@@ -475,7 +475,7 @@ func TestServiceDNSRecordsFromRegistry(t *testing.T) {
 
 	// Without a MagicDNS domain there is no name to publish records under.
 	noDomain := newServerWithConfig(t, Config{})
-	if got := noDomain.serviceDNSRecords(); len(got) != 0 {
+	if got := noDomain.serviceDNSRecordsFor(agent.node); len(got) != 0 {
 		t.Errorf("records without a domain = %+v", got)
 	}
 
@@ -483,7 +483,7 @@ func TestServiceDNSRecordsFromRegistry(t *testing.T) {
 	if _, status, raw := publishServices(t, s, hs, agent, nil, nil); status != http.StatusOK {
 		t.Fatalf("withdraw: %d (%s)", status, raw)
 	}
-	if got := s.extraDNSRecords(); len(got) != 0 {
+	if got := s.extraDNSRecordsFor(agent.node); len(got) != 0 {
 		t.Errorf("records after withdrawing = %+v", got)
 	}
 }
@@ -522,7 +522,7 @@ func TestAgentServicesNativeClientRoundTrip(t *testing.T) {
 
 	// The service resolves through MagicDNS for official clients.
 	found := false
-	for _, rec := range s.extraDNSRecords() {
+	for _, rec := range s.extraDNSRecordsFor(agent.node) {
 		if rec.Name == "api.example.com" && rec.Value == agent.node.IPv4.String() {
 			found = true
 		}
@@ -557,7 +557,7 @@ func TestAgentServicesNativeClientRoundTrip(t *testing.T) {
 	if _, ok := s.store.GetServiceByName("api"); ok {
 		t.Error("withdrawn service is still stored")
 	}
-	if records := s.extraDNSRecords(); len(records) != 0 {
+	if records := s.extraDNSRecordsFor(agent.node); len(records) != 0 {
 		t.Errorf("records after withdrawing = %+v", records)
 	}
 }

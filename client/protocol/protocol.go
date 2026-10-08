@@ -137,6 +137,12 @@ type Service struct {
 	// It must not carry secrets: it is stored on the control plane and shown
 	// on its read surfaces.
 	Metadata map[string]string `json:"metadata,omitempty"`
+	// Visibility narrows which nodes may discover the service through
+	// MagicDNS: ACL source selectors (for example "group:eng", "tag:prod",
+	// "autogroup:self"), resolved against the node that publishes the service.
+	// Empty means the whole organization. It never grants access — ACL rules
+	// still decide who may connect.
+	Visibility []string `json:"visibility,omitempty"`
 	// Health opts this service into readiness reporting: the node must
 	// report it through [Client.ReportServiceHealth], and the control plane
 	// withdraws it from MagicDNS while it is not ready or its report
@@ -150,9 +156,12 @@ type ServiceView struct {
 	Protocol string            `json:"protocol"`
 	Port     uint16            `json:"port"`
 	Metadata map[string]string `json:"metadata,omitempty"`
-	NodeID   uint64            `json:"nodeId"`
-	StableID string            `json:"stableId"`
-	Hostname string            `json:"hostname"`
+	// Visibility lists the selectors that may discover the service; ["*"] is
+	// the default (the whole organization).
+	Visibility []string `json:"visibility"`
+	NodeID     uint64   `json:"nodeId"`
+	StableID   string   `json:"stableId"`
+	Hostname   string   `json:"hostname"`
 	// DNSName is the MagicDNS name the service is reachable under; empty when
 	// the deployment has no domain configured.
 	DNSName string `json:"dnsName,omitempty"`

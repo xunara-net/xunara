@@ -36,10 +36,10 @@ func reportServiceHealth(t *testing.T, hs *httptest.Server, agent enrolledServic
 }
 
 // serviceDNSNames lists the MagicDNS records the registry currently produces.
-func serviceDNSNames(t *testing.T, s *Server) []string {
+func serviceDNSNames(t *testing.T, s *Server, self state.Node) []string {
 	t.Helper()
 	var names []string
-	for _, record := range s.extraDNSRecords() {
+	for _, record := range s.extraDNSRecordsFor(self) {
 		if record.Type == "A" {
 			names = append(names, record.Name)
 		}
@@ -65,7 +65,7 @@ func TestServiceHealthLifecycle(t *testing.T) {
 
 	// Fail-closed: tracked but never reported means no DNS record, and the
 	// read surfaces say so.
-	if names := serviceDNSNames(t, s); len(names) != 1 || names[0] != "plain.example.com" {
+	if names := serviceDNSNames(t, s, agent.node); len(names) != 1 || names[0] != "plain.example.com" {
 		t.Fatalf("records before any report = %v, want only plain", names)
 	}
 	svc, ok := s.store.GetServiceByName("api")
@@ -97,7 +97,7 @@ func TestServiceHealthLifecycle(t *testing.T) {
 	if reported.Health != "healthy" || reported.HealthReportedAt.IsZero() {
 		t.Fatalf("reported view = %+v", reported)
 	}
-	names := serviceDNSNames(t, s)
+	names := serviceDNSNames(t, s, agent.node)
 	if len(names) != 2 || names[0] != "api.example.com" || names[1] != "plain.example.com" {
 		t.Fatalf("records after a ready report = %v", names)
 	}
@@ -127,7 +127,7 @@ func TestServiceHealthLifecycle(t *testing.T) {
 	if _, status, raw := reportServiceHealth(t, hs, agent, nil, nil); status != http.StatusOK {
 		t.Fatalf("empty report: %d (%s)", status, raw)
 	}
-	if names := serviceDNSNames(t, s); len(names) != 1 || names[0] != "plain.example.com" {
+	if names := serviceDNSNames(t, s, agent.node); len(names) != 1 || names[0] != "plain.example.com" {
 		t.Fatalf("records after an empty report = %v", names)
 	}
 	events = auditEvents(t, s)
@@ -143,7 +143,7 @@ func TestServiceHealthLifecycle(t *testing.T) {
 	}, nil); status != http.StatusOK {
 		t.Fatalf("republish: %d (%s)", status, raw)
 	}
-	if names := serviceDNSNames(t, s); len(names) != 1 || names[0] != "plain.example.com" {
+	if names := serviceDNSNames(t, s, agent.node); len(names) != 1 || names[0] != "plain.example.com" {
 		t.Fatalf("records after a republish = %v", names)
 	}
 
@@ -158,7 +158,7 @@ func TestServiceHealthLifecycle(t *testing.T) {
 	if svc, _ := s.store.GetServiceByName("api"); svc.Health || !svc.HealthReportedAt.IsZero() {
 		t.Errorf("health state after dropping tracking = %+v", svc)
 	}
-	if names := serviceDNSNames(t, s); len(names) != 2 {
+	if names := serviceDNSNames(t, s, agent.node); len(names) != 2 {
 		t.Fatalf("records after dropping tracking = %v", names)
 	}
 }
@@ -225,14 +225,14 @@ func TestServiceHealthExpiry(t *testing.T) {
 	if _, status, raw := reportServiceHealth(t, hs, agent, []agentServiceHealth{{Name: "api", Ready: true}}, nil); status != http.StatusOK {
 		t.Fatalf("report: %d (%s)", status, raw)
 	}
-	if names := serviceDNSNames(t, s); len(names) != 1 {
+	if names := serviceDNSNames(t, s, agent.node); len(names) != 1 {
 		t.Fatalf("records after a ready report = %v", names)
 	}
 
 	before := len(auditEvents(t, s))
 	s.reapServiceHealth(time.Now().UTC().Add(31 * time.Second))
 
-	if names := serviceDNSNames(t, s); len(names) != 0 {
+	if names := serviceDNSNames(t, s, agent.node); len(names) != 0 {
 		t.Fatalf("records after expiry = %v, want none", names)
 	}
 	svc, _ := s.store.GetServiceByName("api")
