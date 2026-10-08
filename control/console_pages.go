@@ -81,6 +81,7 @@ footer { text-align: center; color: #5b616e; font-size: .8rem; }
 <a href="/console/auth-keys"{{if eq .Nav "auth-keys"}} class="active"{{end}}>Auth keys</a>
 <a href="/console/agents"{{if eq .Nav "agents"}} class="active"{{end}}>Agents</a>
 <a href="/console/api-keys"{{if eq .Nav "api-keys"}} class="active"{{end}}>API keys</a>
+<a href="/console/shares"{{if eq .Nav "shares"}} class="active"{{end}}>Shares</a>
 <a href="/console/reach"{{if eq .Nav "reach"}} class="active"{{end}}>Reach</a>
 <a href="/console/flux"{{if eq .Nav "flux"}} class="active"{{end}}>Flux</a>
 <a href="/console/ssh-check"{{if eq .Nav "ssh-check"}} class="active"{{end}}>SSH checks</a>
@@ -115,6 +116,7 @@ var consoleTitles = map[string]string{
 	"auth-keys": "Auth keys",
 	"agents":    "Agents",
 	"api-keys":  "API keys",
+	"shares":    "Shares",
 	"reach":     "Reach",
 	"flux":      "Flux",
 	"ssh-check": "SSH checks",

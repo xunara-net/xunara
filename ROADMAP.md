@@ -1616,6 +1616,48 @@ write 角色 + CSRF），管理面没有任何写入口。
 
 ---
 
+## M32 — Xunara Share（跨组织机器共享，已完成）
+
+目标：把一台机器共享给**另一个组织**的某个用户，双方节点的网图只在相关节点
+之间出现合成对等体，不交换真实地址、节点 ID、用户 ID、tags 或策略。产品语义
+参考 MirageServer 的 MachineShare（邀请 → 接受/拒绝 → 吊销），协议只使用官方
+客户端既有的共享字段（`Node.Sharer`、`Hostinfo.ShareeNode`、
+`SelfNodeV4/V6MasqAddrForThisPeer`），不改兼容协议。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §38。
+
+- 平台级 SQLite `shares.db`（`-platform-state-dir` 下，与 `platform.db` 同级）
+  是本里程碑的启用开关：没有它 `/api/v2/shares` 与 Console 页都是 404/说明页，
+  `meta.sharingEnabled` 为 false。参与共享的组织必须在同一 Router 进程内。
+- 生命周期：`pending → accepted | rejected`，任一状态可 `revoked`（幂等）；
+  `(source_org, source_node, target_org, provider, subject)` 只在未终态时唯一。
+  目标身份键恒为 `(target_org, provider_id, subject)`，`local` provider 不可作为
+  目标；创建进源组织审计，接受/拒绝/吊销进目标组织审计。
+- `/api/v2/shares`：direction=outgoing|incoming（未知 400）；创建需 write
+  scope，accept/reject 只认目标身份（否则 404，不泄漏存在性），吊销源侧需
+  write 角色、目标用户可撤自己的；任一组织启用 TKA → 409。
+- 网图（§38.4）：接收方节点看到被共享机器的合成节点 ID（`1<<40` 起）、合成
+  用户档案（`1<<41` 起，LoginName 为不可路由的 `shared+…@xunara.invalid`）与
+  本组织地址空间里的 masq 地址（IPv4 `100.127.0.0/16`、IPv6
+  `fd7a:115c:a1e0:ffff::/64`，持久化、重启不丢、吊销后保留复用）；源侧节点的
+  网图对接收用户节点做同样处理，并置 `Hostinfo.ShareeNode=true`。地址分配器
+  跳过 masq 段，双向 `SelfNodeVxMasqAddrForThisPeer` 取对端在同一分配表里的
+  地址，官方客户端即可完成 SNAT/DNAT。共享节点在策略里是无 tag 成员，
+  `*`/`autogroup:member` 可匹配，`user:`/`group:` 不匹配。
+- Console `/console/shares`（nav "Shares"）：outgoing/incoming 两个表、创建表单
+  （机器 + 目标组织 + provider + subject）、accept/reject/revoke 按钮；创建在
+  write 角色 + CSRF 下，接受/拒绝是目标用户自己的决定（任意登录角色 + CSRF），
+  页面不含任何密钥材料。
+- 测试：`control/share_registry_test.go`（状态机、唯一性、目标身份查询、
+  重启持久化）、`control/api_v2_shares_test.go`（两端可见性、fail-closed、
+  未知 direction、非目标 accept 404、重复 409、吊销后可再共享、TKA/禁用）、
+  `control/shares_netmap_test.go`（合成 ID/地址稳定唯一、双向 masq 一致且不撞
+  本端真实地址、`ShareeNode`、第三方不可见、吊销后消失但命名空间复用、重启
+  不变、策略可见、sharer 与 owner 分离），`control/console_shares_test.go`
+  （创建/接受/吊销、CSRF、只读角色、禁用页），`state`/`identity` 的 masq 段
+  跳过与合成命名空间持久化。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。

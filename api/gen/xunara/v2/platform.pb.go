@@ -109,8 +109,12 @@ type Meta struct {
 	ReachEnabled          bool                   `protobuf:"varint,16,opt,name=reach_enabled,json=reachEnabled,proto3" json:"reach_enabled,omitempty"`
 	FluxEnabled           bool                   `protobuf:"varint,17,opt,name=flux_enabled,json=fluxEnabled,proto3" json:"flux_enabled,omitempty"`
 	PasskeysEnabled       bool                   `protobuf:"varint,18,opt,name=passkeys_enabled,json=passkeysEnabled,proto3" json:"passkeys_enabled,omitempty"`
-	unknownFields         protoimpl.UnknownFields
-	sizeCache             protoimpl.SizeCache
+	// sharing_enabled reports whether cross-organization machine sharing is
+	// available: the platform share registry is open and a router hosts the
+	// organizations (PROJECT_SPEC section 38.2).
+	SharingEnabled bool `protobuf:"varint,19,opt,name=sharing_enabled,json=sharingEnabled,proto3" json:"sharing_enabled,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Meta) Reset() {
@@ -265,6 +269,13 @@ func (x *Meta) GetFluxEnabled() bool {
 func (x *Meta) GetPasskeysEnabled() bool {
 	if x != nil {
 		return x.PasskeysEnabled
+	}
+	return false
+}
+
+func (x *Meta) GetSharingEnabled() bool {
+	if x != nil {
+		return x.SharingEnabled
 	}
 	return false
 }
@@ -4765,7 +4776,7 @@ var File_xunara_v2_platform_proto protoreflect.FileDescriptor
 const file_xunara_v2_platform_proto_rawDesc = "" +
 	"\n" +
 	"\x18xunara/v2/platform.proto\x12\txunara.v2\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x10\n" +
-	"\x0eGetMetaRequest\"\xf7\x05\n" +
+	"\x0eGetMetaRequest\"\xa0\x06\n" +
 	"\x04Meta\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x1d\n" +
 	"\n" +
@@ -4787,7 +4798,8 @@ const file_xunara_v2_platform_proto_rawDesc = "" +
 	"\x17identity_tokens_enabled\x18\x0f \x01(\bR\x15identityTokensEnabled\x12#\n" +
 	"\rreach_enabled\x18\x10 \x01(\bR\freachEnabled\x12!\n" +
 	"\fflux_enabled\x18\x11 \x01(\bR\vfluxEnabled\x12)\n" +
-	"\x10passkeys_enabled\x18\x12 \x01(\bR\x0fpasskeysEnabled\" \n" +
+	"\x10passkeys_enabled\x18\x12 \x01(\bR\x0fpasskeysEnabled\x12'\n" +
+	"\x0fsharing_enabled\x18\x13 \x01(\bR\x0esharingEnabled\" \n" +
 	"\x1eGetOrganizationIdentityRequest\"\xb7\x01\n" +
 	"\x14OrganizationIdentity\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +

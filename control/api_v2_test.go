@@ -61,7 +61,7 @@ func TestAPIV2Meta(t *testing.T) {
 	}
 	// Feature discovery defaults: nothing optional is enabled on a bare
 	// server, and a false must be reported, not omitted.
-	for _, field := range []string{"reachEnabled", "fluxEnabled", "passkeysEnabled", "webhooksEnabled"} {
+	for _, field := range []string{"reachEnabled", "fluxEnabled", "passkeysEnabled", "webhooksEnabled", "sharingEnabled"} {
 		if meta[field] != false {
 			t.Errorf("meta %s = %v, want false on a bare server", field, meta[field])
 		}

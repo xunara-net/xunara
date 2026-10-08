@@ -104,6 +104,21 @@ type Config struct {
 	// UnsignedPeerAPIOnly set, so clients confine them to the peer API
 	// instead of the tailnet. Empty when the tailnet is not locked.
 	UnsignedPeers map[state.NodeID]bool
+
+	// PeerShare carries the share-only fields of foreign peers (Xunara Share,
+	// spec section 38): the user who shared the node and the addresses the
+	// peer knows the viewing node as. Peers without an entry are local.
+	PeerShare map[state.NodeID]PeerShare
+}
+
+// PeerShare is the wire-visible share metadata of one peer.
+type PeerShare struct {
+	// Sharer is the user who shared the node, when different from its owner.
+	Sharer tailcfg.UserID
+	// SelfV4 and SelfV6 are the addresses this peer knows the viewing node
+	// as; the client masquerades its traffic to the peer from them.
+	SelfV4 netip.Addr
+	SelfV6 netip.Addr
 }
 
 // Full builds the first MapResponse of a session: everything a client needs to
@@ -241,6 +256,18 @@ func Node(n state.Node, self bool, online OnlineFunc, routes RouteTable, cfg Con
 	if cfg.NodeCaps != nil {
 		if caps := cfg.NodeCaps(n); len(caps) > 0 {
 			out.CapMap = caps
+		}
+	}
+
+	if share, ok := cfg.PeerShare[n.ID]; ok {
+		out.Sharer = share.Sharer
+		if share.SelfV4.IsValid() {
+			addr := share.SelfV4
+			out.SelfNodeV4MasqAddrForThisPeer = &addr
+		}
+		if share.SelfV6.IsValid() {
+			addr := share.SelfV6
+			out.SelfNodeV6MasqAddrForThisPeer = &addr
 		}
 	}
 

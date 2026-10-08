@@ -242,6 +242,17 @@ CREATE TABLE IF NOT EXISTS webauthn_ceremonies (
 );
 CREATE INDEX IF NOT EXISTS idx_webauthn_ceremonies_expires ON webauthn_ceremonies(expires_at);
 `,
+
+	// v11: the per-organization share namespace (section 38): synthetic user
+	// IDs for people in other organizations. The counters table is created
+	// defensively so the share allocator also works on a database that the
+	// state store has not touched yet.
+	`
+CREATE TABLE IF NOT EXISTS counters (
+	name  TEXT    PRIMARY KEY,
+	value INTEGER NOT NULL
+);
+` + identityShareMigration,
 }
 
 // SQLiteStore is a durable [Store] sharing the control plane's database.

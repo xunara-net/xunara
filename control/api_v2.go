@@ -73,6 +73,13 @@ func (s *Server) apiV2Router() http.Handler {
 	r.Post("/webhooks", s.handleAPIV2CreateWebhook)
 	r.Delete("/webhooks/{id}", s.handleAPIV2DeleteWebhook)
 
+	r.Get("/shares", s.handleAPIV2Shares)
+	r.Post("/shares", s.handleAPIV2CreateShare)
+	r.Get("/shares/{id}", s.handleAPIV2Share)
+	r.Post("/shares/{id}/accept", s.handleAPIV2AcceptShare)
+	r.Post("/shares/{id}/reject", s.handleAPIV2RejectShare)
+	r.Delete("/shares/{id}", s.handleAPIV2RevokeShare)
+
 	return r
 }
 
@@ -245,6 +252,7 @@ func (s *Server) handleAPIV2Meta(w http.ResponseWriter, r *http.Request) {
 		"reachEnabled":          s.cfg.ReachEnabled,
 		"fluxEnabled":           s.flux != nil,
 		"passkeysEnabled":       s.passkeys != nil,
+		"sharingEnabled":        s.sharingEnabled(),
 	})
 }
 

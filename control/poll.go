@@ -174,7 +174,12 @@ func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWri
 // While tailnet lock is enforced the filter must not name an unsigned peer as
 // a source; clients reject such a filter wholesale and block everything.
 func (s *Server) packetFilterFor(self state.Node) []tailcfg.FilterRule {
-	nodes := s.store.ListNodes()
+	return s.packetFilterForNodes(self, s.netmapNodes(self))
+}
+
+// packetFilterForNodes compiles the filter against an explicit node set, so
+// one netmap build resolves the share namespace once.
+func (s *Server) packetFilterForNodes(self state.Node, nodes []state.Node) []tailcfg.FilterRule {
 	engine := s.policy.Load()
 
 	var rules []tailcfg.FilterRule
@@ -191,9 +196,29 @@ func (s *Server) packetFilterFor(self state.Node) []tailcfg.FilterRule {
 	return restrictFilterToSignedPeers(rules, s.unsignedPeers(nodes), nodes)
 }
 
+// netmapNodes is the node set one netmap build sees: this organization's own
+// nodes plus the foreign peers Xunara Share exposes to self (spec section 38).
+func (s *Server) netmapNodes(self state.Node) []state.Node {
+	return s.netmapNodesFor(self, s.sharePeersFor(self))
+}
+
+// netmapNodesFor is [Server.netmapNodes] with an already-resolved share
+// addition, avoiding a second allocation pass per build.
+func (s *Server) netmapNodesFor(self state.Node, shares *shareNetmap) []state.Node {
+	nodes := s.store.ListNodes()
+	if shares != nil {
+		nodes = append(nodes, shares.nodes...)
+	}
+	return nodes
+}
+
 // fullMap builds the first netmap for a node: everything a client needs.
 func (s *Server) fullMap(self state.Node, req tailcfg.MapRequest) *tailcfg.MapResponse {
-	resp := mapper.Full(self, s.store.ListNodes(), s.mapperConfig(), s.isOnline, req.Version)
+	shares := s.sharePeersFor(self)
+	nodes := s.netmapNodesFor(self, shares)
+	cfg := s.mapperConfigFor(shares)
+	cfg.FilterFor = func(self state.Node) []tailcfg.FilterRule { return s.packetFilterForNodes(self, nodes) }
+	resp := mapper.Full(self, nodes, cfg, shares.onlineFunc(s.isOnline), req.Version)
 	if req.OmitPeers {
 		resp.Peers = nil
 	}
@@ -202,12 +227,20 @@ func (s *Server) fullMap(self state.Node, req tailcfg.MapRequest) *tailcfg.MapRe
 
 // updateMap builds a netmap update for a node: only the fields that can change.
 func (s *Server) updateMap(self state.Node) *tailcfg.MapResponse {
-	return mapper.Update(self, s.store.ListNodes(), s.mapperConfig(), s.isOnline)
+	shares := s.sharePeersFor(self)
+	nodes := s.netmapNodesFor(self, shares)
+	return mapper.Update(self, nodes, s.mapperConfigFor(shares), shares.onlineFunc(s.isOnline))
 }
 
 // mapperConfig snapshots the tailnet-wide configuration for one netmap build.
 func (s *Server) mapperConfig() mapper.Config {
-	return mapper.Config{
+	return s.mapperConfigFor(nil)
+}
+
+// mapperConfigFor is [mapperConfig] with the share addition of one netmap
+// build folded in. A nil addition is a purely local netmap.
+func (s *Server) mapperConfigFor(shares *shareNetmap) mapper.Config {
+	cfg := mapper.Config{
 		Domain:         s.cfg.Domain,
 		Resolvers:      s.resolvers,
 		Routes:         s.dnsRoutes,
@@ -222,6 +255,11 @@ func (s *Server) mapperConfig() mapper.Config {
 		TKAInfo:        s.tkaInfo(),
 		UnsignedPeers:  s.unsignedPeers(s.store.ListNodes()),
 	}
+	if shares != nil {
+		cfg.PeerShare = shares.peers
+		cfg.UserProfile = shares.profileFunc(s.UserProfile)
+	}
+	return cfg
 }
 
 // extraDNSRecords returns the records published through MagicDNS to every

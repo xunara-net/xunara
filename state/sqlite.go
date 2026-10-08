@@ -227,9 +227,13 @@ CREATE TABLE IF NOT EXISTS reach_chunks (
 	seq        INTEGER NOT NULL,
 	data       BLOB    NOT NULL,
 	created_at INTEGER NOT NULL,
-	PRIMARY KEY (session_id, stream, seq)
+PRIMARY KEY (session_id, stream, seq)
 );
 `,
+
+	// v15: the per-organization share namespace (section 38): synthetic node
+	// IDs and masquerade addresses for nodes shared from another organization.
+	sqliteShareMigration,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.
@@ -626,26 +630,40 @@ func (s *SQLiteStore) CreateNode(n *Node) error {
 	n.ID = NodeID(nextID)
 
 	if !n.IPv4.IsValid() {
-		offset, err := nextCounter(ctx, tx, counterNextIPv4Offset, 1)
-		if err != nil {
-			return err
+		// The reserved share ranges are skipped: a synthetic masquerade
+		// address must never equal a real node's address (section 38.4).
+		for {
+			offset, err := nextCounter(ctx, tx, counterNextIPv4Offset, 1)
+			if err != nil {
+				return err
+			}
+			addr, ok := addrAtOffset(defaultIPv4Prefix, uint32(offset))
+			if !ok {
+				return fmt.Errorf("state: IPv4 space exhausted")
+			}
+			if isShareMasqAddr(addr) {
+				continue
+			}
+			n.IPv4 = addr
+			break
 		}
-		addr, ok := addrAtOffset(defaultIPv4Prefix, uint32(offset))
-		if !ok {
-			return fmt.Errorf("state: IPv4 space exhausted")
-		}
-		n.IPv4 = addr
 	}
 	if !n.IPv6.IsValid() {
-		offset, err := nextCounter(ctx, tx, counterNextIPv6Offset, 1)
-		if err != nil {
-			return err
+		for {
+			offset, err := nextCounter(ctx, tx, counterNextIPv6Offset, 1)
+			if err != nil {
+				return err
+			}
+			addr, ok := addrAtOffset(defaultIPv6Prefix, uint32(offset))
+			if !ok {
+				return fmt.Errorf("state: IPv6 space exhausted")
+			}
+			if isShareMasqAddr(addr) {
+				continue
+			}
+			n.IPv6 = addr
+			break
 		}
-		addr, ok := addrAtOffset(defaultIPv6Prefix, uint32(offset))
-		if !ok {
-			return fmt.Errorf("state: IPv6 space exhausted")
-		}
-		n.IPv6 = addr
 	}
 
 	endpoints, err := encodeEndpoints(*n)
@@ -847,6 +865,9 @@ const (
 	counterNextNodeID     = "next_node_id"
 	counterNextIPv4Offset = "next_ipv4_offset"
 	counterNextIPv6Offset = "next_ipv6_offset"
+	counterNextShareNode  = "next_share_node"
+	// counterNextShareAddress indexes the reserved masquerade ranges.
+	counterNextShareAddress = "next_share_address"
 
 	// counterConfigRevision counts out-of-band configuration changes. It is
 	// durable so that a running server notices changes made by another process

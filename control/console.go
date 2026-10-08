@@ -78,6 +78,7 @@ func (s *Server) consoleRouter() http.Handler {
 	r.Get("/auth-keys", s.handleConsoleAuthKeys)
 	r.Get("/agents", s.handleConsoleAgents)
 	r.Get("/api-keys", s.handleConsoleAPIKeys)
+	r.Get("/shares", s.handleConsoleShares)
 	r.Get("/services", s.handleConsoleServices)
 	r.Get("/reach", s.handleConsoleReach)
 	r.Get("/reach/{id}", s.handleConsoleReachSession)
@@ -110,9 +111,18 @@ func (s *Server) consoleRouter() http.Handler {
 		r.Post("/agents/{id}/revoke", s.handleConsoleRevokeAgentToken)
 		r.Post("/api-keys", s.handleConsoleCreateAPIKey)
 		r.Post("/api-keys/{id}/revoke", s.handleConsoleRevokeAPIKey)
+		r.Post("/shares", s.handleConsoleCreateShare)
 		r.Post("/webhooks", s.handleConsoleCreateWebhook)
 		r.Post("/webhooks/{id}/delete", s.handleConsoleDeleteWebhook)
 	})
+
+	// Accepting or declining a share is the target identity's own decision,
+	// not tailnet administration (like passkeys, any signed-in role may act
+	// on its own rows); the share service enforces which rows those are. The
+	// handlers check session and CSRF themselves.
+	r.Post("/shares/{id}/accept", s.handleConsoleAcceptShare)
+	r.Post("/shares/{id}/reject", s.handleConsoleRejectShare)
+	r.Post("/shares/{id}/revoke", s.handleConsoleRevokeShare)
 
 	return r
 }

@@ -1693,3 +1693,131 @@ providers 是启动配置（§13/§15），本页只提示、不管理。
   不变。
 - 不做能力清单/版本协商端点：客户端按字段判断即可，新增可选面继续在 meta
   追加布尔字段。
+
+## 38. Xunara Share（跨组织机器共享，v1）
+
+目标：把一台机器（节点）共享给**另一个组织**里的某个用户，使该用户的节点与这台
+机器之间可以互相连接，而不把两个组织的地址空间、节点 ID、用户 ID 或策略互相
+暴露（AGENTS §5/§6/§12）。产品语义参考 MirageServer 的 MachineShare（邀请 →
+接受/拒绝 → 吊销），协议字段使用官方客户端既有的共享能力（`Node.Sharer`、
+`Hostinfo.ShareeNode`、`SelfNodeV4/V6MasqAddrForThisPeer`），不新增兼容协议。
+
+### 38.1 模型与身份
+
+```text
+Share = (id, source_org, source_node, target_org, provider, subject,
+         status, created_by, created_at, accepted_at, accepted_by, ...)
+status ∈ pending | accepted | rejected | revoked
+```
+
+- 目标身份键是 **(target_org, provider_id, subject)**（AGENTS §6）。provider/subject
+  只有在组织内才唯一（不同组织可以用同名 provider），因此目标组织必须在创建时
+  明确给出并校验存在；`local` provider 不可作为共享目标（它是每组织内置身份，
+  不是全局身份）。
+- 共享对象是一个节点；创建者是源组织内有 write 角色的用户，创建动作进入源组织
+  审计（`share.created`）。
+- 接受者必须是目标组织内、其 `external_identities` 含 `(provider, subject)` 的
+  已登录用户；接受后绑定 `(target_org, target_user)`，之后创建者不能再改目标。
+  接受/拒绝/吊销分别审计 `share.accepted` / `share.rejected` / `share.revoked`。
+- 终态：rejected、revoked。接受后再吊销合法；对终态重复动作幂等或 409（见 38.3）。
+
+### 38.2 持久化与启用
+
+- 平台级 SQLite `shares.db`（`-platform-state-dir` 下，与 `platform.db` 同级）；
+  打开它才启用共享（`meta.sharingEnabled`）。没有平台状态目录的部署不启用：
+  共享需要能在一个权威表里看到多个组织，不能用某个组织的本地表代替（AGENTS §9）。
+- 参与共享的组织必须在同一个 Router 进程内（v1）：v1 不做跨实例节点快照读取，
+  也不做跨实例通知；两个组织分属不同实例时共享不生效（文档明示）。
+- 每组织在**自己的**身份库里保存共享命名空间（38.4），与平台 `shares.db` 分开：
+  一个记录"谁共享了什么"，一个记录"本组织用哪些合成 ID/地址展示外来节点"。
+
+### 38.3 HTTP API 与 Console
+
+`/api/v2/shares`（read scope 读、write scope 写）：
+
+- `GET /api/v2/shares?direction=outgoing|incoming`（默认 outgoing）：outgoing 是
+  本组织创建的共享（任意状态）；incoming 是目标身份匹配调用者的共享。未知
+  direction `400`（fail-closed）。
+- `POST /api/v2/shares` `{node, targetOrganization, provider, subject}`：创建
+  pending 共享；`node` 接受节点 id 或 stable ID（未知 → 404）；目标组织不存在
+  → 404；provider 为 `local`、字段缺失、目标就是源组织 → 400；重复的
+  (source_node, target_org, provider, subject) 且未终态 → 409。
+- `GET /api/v2/shares/{id}`：两侧都可读（不属于自己的共享 → 404，不泄漏存在性）。
+- `POST /api/v2/shares/{id}/accept`、`/reject`：仅目标身份匹配者可调用（否则
+  404/403 按"不属于我"处理）；对非 pending 状态 `409`。
+- `DELETE /api/v2/shares/{id}`：源组织（write）或目标用户可调用；pending 直接
+  进入 revoked；accepted 后吊销立即生效（38.4 的暴露随之消失）；重复吊销幂等。
+
+gRPC 面 v1 不做（与 §36 同理：管理面走 HTTP/Console；自动化可用 API key 调
+v2）。Console `/console/shares`（nav "Shares"）：outgoing/incoming 两个表、
+创建表单（节点 + 目标组织 + provider + subject）、accept/reject/revoke 按钮，
+全部 write+CSRF，页面不显示任何密钥材料。
+
+### 38.4 网图暴露（masquerade）
+
+共享被接受后，两个组织的网图**只在相关节点之间**发生变化，且不泄漏真实地址与
+ID：
+
+- 目标组织的接收用户 U 的每个节点，网图里出现被共享节点 Y：地址是 Y 在**目标
+  组织地址空间**里的合成 masquerade 地址（IPv4 `100.127.0.0/16`、IPv6
+  `fd7a:115c:a1e0:ffff::/64` 内顺序分配，每个组织自己的表，重启不丢）；`Node.ID`
+  是目标组织的合成节点 ID，`Node.User` 是目标组织为"Y 的所有者/共享者"分配的
+  合成用户 ID；`UserProfiles` 提供对应合成档案（DisplayName 来自源组织，v1 不
+  暴露邮箱/头像）。`Node.StableID` 是"share:" 前缀的合成稳定 ID。
+- 源组织里 Y 的网图出现 U 的每个节点 X：地址是 X 在**源组织地址空间**里的合成
+  masquerade 地址；X 的 `Hostinfo.ShareeNode = true`（官方客户端据此在 `status`
+  默认隐藏）；`Node.Sharer`/`Node.User` 用源组织的合成用户 ID。
+- 双向的 `SelfNodeV4/V6MasqAddrForThisPeer` 都设置为对端在本组织网图里的 masq
+  地址，使官方客户端的 tstun/routemanager 完成 SNAT/DNAT（capver ≥ 104，Xunara
+  的最低支持版本 115，满足）。
+- 合成 ID 基数：节点 `1<<40`，用户 `1<<41`（顺序分配；避开本地小 ID 与
+  `TaggedDevicesUserID`）。节点地址分配器**跳过**上面两个 masq 段，防止与真实
+  节点地址冲突（状态库与身份库的分配器都要跳过）。
+- 不暴露：源组织的真实 IP、节点数字 ID、tags、CapMap、`KeySignature`/TKA 信息、
+  子网路由与 exit node（`AllowedIPs` 只有 masq 单地址）；MagicDNS 名用
+  `<hostname>.<source-org>.share.<目标组织 magic domain>`，避免与本地主机名冲突，
+  也不暴露源组织 magic domain。
+- 共享不改变任何"本地"节点：只有被共享节点与接收用户的节点互相出现在对方网图
+  里，第三方节点看不到任何变化。
+- 命名空间（合成 ID/地址）在吊销后保留以便重新接受时稳定复用；v1 不做回收。
+
+### 38.5 策略与 ACL
+
+- 接收方组织的 packet filter 决定"接收用户节点 ↔ 被共享节点"的放行；共享节点
+  在评估里是**无 tag 节点**（因此 `*`、`autogroup:member` 可匹配它），但没有
+  本地用户的登录名，`autogroup:self`、`user:`、`group:` 不匹配。源组织的策略对
+  源侧同样生效。默认（无策略文档）仍是 allow-all，与官方"无策略 tailnet"一致。
+- 共享不产生传递可达性：接收用户的其他节点、源组织的其他节点都不会因为共享出现
+  在彼此的网图里。
+- **TKA 边界**：任一组织启用 tailnet lock 时，创建/接受共享返回 409（v1 不支持
+  在锁定尾网里共享外来节点：外来节点没有本尾网的签名，客户端会把它当作 unsigned
+  并拒绝）。
+
+### 38.6 通知与失效
+
+- 共享创建/接受/拒绝/吊销后，两侧组织的 netmap watcher 都被唤醒（同进程内直
+  接调用），客户端无需重连即可看到对等体增减。
+- 被共享节点的状态变化（endpoints/hostinfo/在线状态/删除）同样唤醒目标组织里
+  有已接受共享的接收用户所在组织的 watcher；反向亦然。v1 是"尽力而为"的同进
+  程通知：跨实例不传播（38.2 已限定同 Router），客户端重连时总能拿到最新网图。
+- 节点删除：共享记录保留，网图里不再出现该节点（视同不可用）；Console 显示为
+  missing。
+
+### 38.7 明确不做（v1）
+
+- 跨 Router/多实例共享、共享给整个组织、邀请链接/token、邮件通知；
+- 子网路由/exit node/服务 VIP 的共享；per-port/per-路径范围；
+- tag 暴露与 `CapMap`（Taildrive、Funnel、Serve 等能力不传递）；
+- TKA 环境下的共享；共享审计/日志内容的跨租户读取；
+- 共享命名空间的回收/复用统计（38.4 的保留策略是刻意的）。
+
+### 38.8 测试
+
+- `control/share_registry_test.go`：状态机（pending→accepted/rejected、吊销
+  幂等、终态 409）、唯一性冲突、按目标身份查询、重启后仍在。
+- `control/api_v2_shares_test.go`：两端可见性、fail-closed 过滤、未知 direction
+  400、非目标身份 accept 404、重复创建 409、吊销后网图对等体消失。
+- `control/shares_netmap_test.go`：合成 ID/地址的稳定性与唯一性、masq 双向一致、
+  不泄漏真实 IP/tags/ID、`ShareeNode` 标记、第三方节点不受影响、吊销后消失、
+  重启后不变、TKA/单组织等拒绝路径。
+- `state`/`identity`：分配器跳过 masq 段。

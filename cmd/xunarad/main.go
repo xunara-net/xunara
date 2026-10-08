@@ -286,6 +286,7 @@ func runRouter(path, listen, grpcListen, platformTokenEnv, platformStateDir stri
 	}
 
 	var registry *control.OrgRegistry
+	var shares *control.ShareRegistry
 	if platformStateDir != "" {
 		if platformToken == "" {
 			logger.Error("platform-managed organizations need a platform token",
@@ -310,6 +311,17 @@ func runRouter(path, listen, grpcListen, platformTokenEnv, platformStateDir stri
 			logger.Error("opening the platform organization registry", "err", err)
 			os.Exit(1)
 		}
+		// The share registry is platform-scoped, like the organization table:
+		// one authoritative place to see every cross-organization share
+		// (PROJECT_SPEC section 38.2). Its presence is what enables sharing.
+		shares, err = control.OpenShareRegistry(context.Background(), control.ShareRegistryConfig{
+			Path: filepath.Join(platformStateDir, "shares.db"),
+		})
+		if err != nil {
+			_ = registry.Close()
+			logger.Error("opening the platform share registry", "err", err)
+			os.Exit(1)
+		}
 	}
 
 	router, err := control.NewRouter(control.RouterConfig{
@@ -318,6 +330,7 @@ func runRouter(path, listen, grpcListen, platformTokenEnv, platformStateDir stri
 		Orgs:               sites,
 		PlatformAdminToken: platformToken,
 		Registry:           registry,
+		Shares:             shares,
 		Logger:             logger,
 	})
 	if err != nil {
@@ -326,6 +339,9 @@ func runRouter(path, listen, grpcListen, platformTokenEnv, platformStateDir stri
 		}
 		if registry != nil {
 			_ = registry.Close()
+		}
+		if shares != nil {
+			_ = shares.Close()
 		}
 		logger.Error("initializing the organization router", "err", err)
 		os.Exit(1)

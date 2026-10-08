@@ -60,6 +60,9 @@ type RouterConfig struct {
 	// Managed organizations must declare domains, so enabling the registry
 	// requires every configured organization to declare domains too.
 	Registry *OrgRegistry
+	// Shares, when non-nil, enables Xunara Share: a machine can be shared with
+	// a user in another organization hosted by this router (spec section 38).
+	Shares *ShareRegistry
 	// Logger receives router logs. Defaults to slog.Default.
 	Logger *slog.Logger
 }
@@ -174,6 +177,9 @@ func (r *Router) register(site OrgSite, managed bool) error {
 	}
 
 	org := &routerOrg{site: site, handler: site.Server.Handler(), managed: managed}
+	if r.cfg.Shares != nil {
+		site.Server.enableSharing(r.cfg.Shares, r)
+	}
 	// Host routing is the authority on which organization a request belongs
 	// to, so the server learns its own identity from the site it serves
 	// (spec section 30).
@@ -442,6 +448,7 @@ func (r *Router) Close() error {
 	r.orgs = nil
 	r.fallback = nil
 	registry := r.cfg.Registry
+	shares := r.cfg.Shares
 	r.mu.Unlock()
 
 	var errs []error
@@ -453,6 +460,11 @@ func (r *Router) Close() error {
 	if registry != nil {
 		if err := registry.Close(); err != nil {
 			errs = append(errs, fmt.Errorf("platform registry: %w", err))
+		}
+	}
+	if shares != nil {
+		if err := shares.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("share registry: %w", err))
 		}
 	}
 	return errors.Join(errs...)

@@ -112,4 +112,5 @@ type Store interface {
 	AgentTokenStore
 	PasskeyStore
 	PasskeyCeremonyStore
+	ShareUserStore
 }

@@ -151,6 +151,10 @@ message Meta {
   bool reach_enabled = 16;
   bool flux_enabled = 17;
   bool passkeys_enabled = 18;
+  // sharing_enabled reports whether cross-organization machine sharing is
+  // available: the platform share registry is open and a router hosts the
+  // organizations (PROJECT_SPEC section 38.2).
+  bool sharing_enabled = 19;
 }
 
 message GetOrganizationIdentityRequest {}

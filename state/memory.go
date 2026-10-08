@@ -63,6 +63,10 @@ type MemoryStore struct {
 
 	ip4 *ipAllocator
 	ip6 *ipAllocator
+
+	// share is the synthetic-ID/masquerade namespace for shared-in nodes
+	// (section 38).
+	share *memoryShareStore
 }
 
 // NewMemoryStore returns an empty in-memory store.
@@ -85,7 +89,28 @@ func NewMemoryStore() *MemoryStore {
 		byMach:      make(map[key.MachinePublic][]NodeID),
 		ip4:         newIPAllocator(defaultIPv4Prefix),
 		ip6:         newIPAllocator(defaultIPv6Prefix),
+		share:       newMemoryShareStore(),
 	}
+}
+
+// EnsureShareNode implements [ShareStore].
+func (s *MemoryStore) EnsureShareNode(remoteOrg, remoteKey string) (NodeID, error) {
+	return s.share.EnsureShareNode(remoteOrg, remoteKey)
+}
+
+// ShareNode implements [ShareStore].
+func (s *MemoryStore) ShareNode(remoteOrg, remoteKey string) (NodeID, bool) {
+	return s.share.ShareNode(remoteOrg, remoteKey)
+}
+
+// EnsureShareAddress implements [ShareStore].
+func (s *MemoryStore) EnsureShareAddress(remoteOrg, remoteKey string) (netip.Addr, netip.Addr, error) {
+	return s.share.EnsureShareAddress(remoteOrg, remoteKey)
+}
+
+// ShareAddress implements [ShareStore].
+func (s *MemoryStore) ShareAddress(remoteOrg, remoteKey string) (netip.Addr, netip.Addr, bool) {
+	return s.share.ShareAddress(remoteOrg, remoteKey)
 }
 
 var _ Store = (*MemoryStore)(nil)
@@ -373,10 +398,15 @@ func newIPAllocator(p netip.Prefix) *ipAllocator {
 }
 
 func (a *ipAllocator) next() (netip.Addr, bool) {
-	next := a.last.Next()
-	if !next.IsValid() || !a.prefix.Contains(next) {
-		return netip.Addr{}, false
+	for {
+		next := a.last.Next()
+		if !next.IsValid() || !a.prefix.Contains(next) {
+			return netip.Addr{}, false
+		}
+		a.last = next
+		if isShareMasqAddr(next) {
+			continue
+		}
+		return next, true
 	}
-	a.last = next
-	return next, true
 }

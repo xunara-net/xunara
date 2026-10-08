@@ -125,7 +125,7 @@ func TestPlatformGRPCMeta(t *testing.T) {
 	if !meta.GetWebhooksEnabled() || !meta.GetDnsProviderConfigured() {
 		t.Errorf("feature flags = %+v", meta)
 	}
-	if meta.GetReachEnabled() || meta.GetFluxEnabled() || meta.GetPasskeysEnabled() {
+	if meta.GetReachEnabled() || meta.GetFluxEnabled() || meta.GetPasskeysEnabled() || meta.GetSharingEnabled() {
 		t.Errorf("optional features = %+v, want disabled", meta)
 	}
 }

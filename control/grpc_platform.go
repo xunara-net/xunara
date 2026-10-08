@@ -200,6 +200,7 @@ func (g *grpcPlatformServer) GetMeta(ctx context.Context, _ *xunarav2.GetMetaReq
 		ReachEnabled:          s.cfg.ReachEnabled,
 		FluxEnabled:           s.flux != nil,
 		PasskeysEnabled:       s.passkeys != nil,
+		SharingEnabled:        s.sharingEnabled(),
 	}, nil
 }
 

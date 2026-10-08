@@ -243,6 +243,12 @@ type Server struct {
 	// is generated on first use next to the server's other state.
 	webhookKey [32]byte
 
+	// shares is the platform-level cross-organization share registry, and
+	// shareDir resolves the other organizations of this router. Both are nil
+	// unless the deployment enables Xunara Share (spec section 38).
+	shares   *ShareRegistry
+	shareDir ShareDirectory
+
 	// derpMap is the DERP map served to this organization's clients after
 	// DERPPolicy is applied; nil when there is no map to advertise.
 	derpMap *tailcfg.DERPMap
