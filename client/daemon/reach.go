@@ -240,11 +240,12 @@ func (a *Agent) executeReach(ctx context.Context, keys protocol.Keys, session pr
 	go relay(protocol.ReachStdout, stdout)
 	go relay(protocol.ReachStderr, stderr)
 
-	waitErr := cmd.Wait()
-	stopWatch() // the command is gone; the watcher has nothing to stop
-
-	// Readers normally end when the process closes the pipes; a grandchild
-	// holding them open must not stall the result forever.
+	// os/exec's Wait closes the pipe ends it handed out, so the readers must
+	// drain to EOF first: calling Wait while a reader is still behind discards
+	// output the command already wrote (spec section 29: output is complete or
+	// explicitly truncated, never silently dropped). Readers normally end when
+	// the process closes the pipes; a grandchild holding them open must not
+	// stall the result forever, hence the grace period.
 	readersDone := make(chan struct{})
 	go func() {
 		select {
@@ -256,6 +257,9 @@ func (a *Agent) executeReach(ctx context.Context, keys protocol.Keys, session pr
 	}()
 	readers.Wait()
 	close(readersDone)
+
+	waitErr := cmd.Wait()
+	stopWatch() // the command is gone; the watcher has nothing to stop
 	if remoteEnd.Load() {
 		return
 	}

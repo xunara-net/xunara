@@ -126,14 +126,17 @@ func reachURL(hs *httptest.Server, id string, parts ...string) string {
 func TestReachEndToEnd(t *testing.T) {
 	s, hs, sender, target, bystander := startReach(t)
 
-	session := offerReach(t, hs, sender, target, []string{"df", "-h", "/"})
+	// The marker argument makes a substring hit in the audit trail
+	// unambiguous: a two-letter command like "df" can appear by chance inside
+	// a random hex session ID, which would be a false leak report.
+	session := offerReach(t, hs, sender, target, []string{"uname", "-a", "xunara-leak-probe"})
 	if session.State != string(state.ReachOffered) {
 		t.Fatalf("new session state = %q, want offered", session.State)
 	}
 	if session.Sender.StableID != sender.node.StableID || session.Target.StableID != target.node.StableID {
 		t.Fatalf("session participants = %+v / %+v", session.Sender, session.Target)
 	}
-	if len(session.Argv) != 3 || session.Argv[0] != "df" {
+	if len(session.Argv) != 3 || session.Argv[0] != "uname" {
 		t.Errorf("session argv = %q", session.Argv)
 	}
 	if session.TimeoutSec != 60 {
@@ -296,8 +299,9 @@ func TestReachEndToEnd(t *testing.T) {
 		}
 	}
 	for _, event := range auditEvents(t, s) {
-		if strings.Contains(event.Detail, "df") {
-			t.Errorf("%s audit detail leaks the command: %q", event.Action, event.Detail)
+		haystack := event.Action + " " + event.Actor + " " + event.Target + " " + event.Detail
+		if strings.Contains(haystack, "uname") || strings.Contains(haystack, "xunara-leak-probe") {
+			t.Errorf("%s audit event leaks the command: %q", event.Action, haystack)
 		}
 	}
 }
