@@ -2724,3 +2724,122 @@ Consul 的 Meta 键必须匹配 `^[a-zA-Z0-9_-]+$`（≤128 字节），值不�
   API 纯文本）、中文并列短语的分隔符，以及运行期生成文字（筛选框、主题按钮、
   登录脚本回落文案）的语言跟随。
 - 既有 Console/角色/登录/审批测试保持通过（默认英文输出字节不变）。
+
+## 52. 正式控制中心门面与本地账号体系（v2，M45）
+
+目标：让部署看起来、用起来都是一个**正式的服务**，而不是"打开 `/console` 就
+是 owner"的演示：访客先看到首页，人通过登录/注册进入，管理员通过一次性令牌
+初始化，控制台始终要求已登录会话。范围限定在身份与表现层：协议、`/api/v2`、
+handler 数据语义与既有存储结构不变。
+
+### 52.1 门面（`/`、登录、注册、初始化）
+
+- `GET /`：浏览器（`Accept: text/html`）得到首页——产品定位、`tailscale up
+  --login-server=<url>`、进入控制台/初始化/规范的入口、条款式特性卡片；
+  非浏览器调用（脚本、探针、客户端二进制）继续得到原来的 JSON 摘要
+  （`name`/`version`/`message`/`console`）。首页不建立会话、不下发 cookie。
+- `GET /login`：**只渲染登录表单**。任何 GET 都不再自动登录（旧行为等于把
+  tailnet 交给任何能打开 URL 的人）。已经登录的访客被重定向回 `return_to`。
+- 公共壳层（`control/public.go`）与 Console 共用设计令牌、语言与主题偏好；
+  无外部资源、无 CDN、`referrer: no-referrer`；禁用 JavaScript 时全部可用。
+- 公共文案同样走 §51 的翻译机制：`control/public_i18n_zh.go` 提供中文词典，
+  与生成的 Console 词典在 `consoleTranslations` 中合并（手写词条优先）。
+
+### 52.2 首次初始化（`GET/POST /setup`）
+
+- 判定条件：启用内建本地登录（`-allow-local-login` 或未配置外部 provider）且
+  **不存在任何本地密码**（`CountLocalCredentials() == 0`）。
+- 服务启动时在状态目录写入一次性令牌 `setup-token`（32 字节随机、`0600`），
+  日志只打印**文件路径**与 `/setup` 提示，绝不打印令牌。
+- `POST /setup` 依次校验：速率限制（每来源地址 10 次 / 10 分钟，计数在 store
+  中而非进程内存）→ 表单签名令牌（`control/forms.go`）→ **常数时间**比对一次性
+  令牌 → 密码策略 → 登录名唯一性。
+- 成功后：内建账号（`state.DefaultUserID`）改名为所填登录名、`Role=owner`、
+  写入 bcrypt 密码、**先删除令牌**再建立会话，审计
+  `admin.bootstrap` + `login.succeeded` + `session.created`，随后跳转
+  `/console/`。令牌一次性：删除后任何重放都失败，`/setup` 变为 302 `/login`。
+- 密码策略（`identity.CheckPassword`）：≥12 个字符（按 rune 计）、≤72 字节
+  （bcrypt 上限）、不得等于登录名、必须是合法 UTF-8。长度是唯一规则。
+
+### 52.3 本地密码登录（`POST /login`）
+
+- 表单携带 `_csrf`（HMAC 签名、绑定用途与 45 分钟窗口，签名密钥
+  `form-key`/`form.key` 随状态目录持久化，多实例可共享）。
+- 速率限制两桶：来源地址 20 次 / 10 分钟、登录名 10 次 / 10 分钟（小写归一）。
+- 失败回答统一为 `Wrong login name or password.`：未知登录名、无密码账号、错误
+  密码都得到同一句话、同一计时（`VerifyPasswordMissing` 对固定 dummy hash 做
+  一次 bcrypt 校验），不向匿名调用者确认账号是否存在；真实原因只写入审计。
+- 常量：`identity.LocalCredential` 以 **user ID** 为键（改名不会孤立或转移
+  密码）；密码哈希为自描述 bcrypt，便于将来按登录逐步迁移到 Argon2id。
+
+### 52.4 邀请注册（`GET/POST /signup`）
+
+- 没有外部身份提供方时，**唯一**的注册途径是管理员签发的邀请：不接受公开
+  自助注册。
+- 模型 `identity.RegistrationInvite`：ID、`token_hash`（只存 SHA-256）、角色、
+  备注、创建者、创建时间、过期时间、兑换者/时间；明文令牌形如
+  `xunara_invite_<base64url>`，只存在于管理员复制走的链接里。
+- 角色必须是 `member` 或 `admin`：邀请**不能**铸造 owner（提权是显式操作）。
+  `TTL<=0` 表示不过期（`expires_at` 用 0 哨兵，不写零值时间的 UnixNano）。
+- 兑换是原子的：`UPDATE ... WHERE id = ? AND used_at IS NULL`，并发提交同一
+  邀请只有一个成功（`TestRegistrationInviteRedeemIsAtomic`）。
+- `POST /signup` 依次校验：速率限制（20 次 / 小时）→ 表单令牌 → 邀请可用性
+  （未知/已用/过期分别拒绝）→ 登录名唯一 → 密码策略 → 两次输入一致；随后建
+  用户（角色取自邀请）→ 原子兑换（失败则回滚账号）→ 写密码 → 关联
+  `(local, 登录名)` 外部身份 → 审计 `user.registered` + `invite.redeemed`
+  → 建立会话并跳转 `/console/`。
+
+### 52.5 Console 邀请管理（`/console/users`）
+
+- Users 页面新增「Invitations」区块：列出角色、备注、创建时间、过期时间、
+  状态（open / redeemed+兑换者 / expired），并允许撤销未兑换的邀请。
+- 创建表单：角色（member/admin）、备注、有效期（24 小时 / 7 天 / 30 天 /
+  永不过期）。响应中**一次性**显示完整注册链接；列表与日志只保留邀请 ID，
+  重新加载页面后服务器无法再显示该链接。
+- 写操作走 `consoleWriteAccess`（admin/owner）+ CSRF；审计
+  `invite.created` / `invite.revoked`（记录 ID 与角色，绝不记录令牌）。
+
+### 52.6 安全边界
+
+- Secret 一律不走 URL query、不写日志：setup 令牌在 `POST` 表单体里提交，
+  邀请令牌只在管理员自己复制的链接里。
+- 表单签名密钥与状态目录同权限（`0600`）；`clientIP` 刻意忽略
+  `X-Forwarded-For`（否则共享地址后的人可以轮换请求头绕过限速）。
+- 控制台仍然要求会话：未登录访问 `/console/*` → 302
+  `/login?return_to=...`；`/api/v2` 仍走 API 密钥鉴权。
+- 会话存储在 store（跨实例、可吊销、可过期、有审计），不是 server-local map
+  （AGENTS §9）；身份分离不变：设备注册/审批只授权机器密钥，永不产生人类
+  身份（AGENTS §5）。
+
+### 52.7 数据模型
+
+- `identity` 新增两张表（随 `NewSQLiteStore` 的迁移列表追加，老库自动补表）：
+  `local_credentials(user_id PRIMARY KEY, password_hash, created_at, updated_at)`、
+  `registration_invites(id, token_hash UNIQUE, role, note, created_by, created_at,
+  expires_at, used_at, used_by)`。
+- `identity.Store` 接口新增 `LocalCredentialStore`、`RegistrationInviteStore`；
+  登录、初始化与注册只经过接口，不依赖具体实现。
+
+### 52.8 明确不做（v2）
+
+- 不做公开自助注册、不做邮箱验证/找回密码（无邮件基础设施）；忘记密码由
+  管理员重置或重新初始化处理。
+- 不引入外部 IdP 之外的新身份源；不改 Tailscale 协议字段、`/api/v2` 语义与
+  既有审计字段（新增审计动作除外）。
+- 不在 Console 里显示邀请明文（只在创建响应里出现一次）。
+
+### 52.9 测试
+
+- `control/public_test.go`：首页是 HTML 门面且不下发 cookie、`/` 对非浏览器
+  保持 JSON、公共页面中文渲染、初始化全流程（错令牌/正确令牌/幂等/审计/
+  令牌删除/随后可登录）、初始化限速、邀请注册（预填、密码不一致、成功、
+  重复使用、未知/过期邀请、审计、身份关联）、密码登录不泄露账号存在性、
+  缺少表单令牌被拒、Console 邀请管理（创建展示一次、列表不含明文、member
+  只读、撤销、已兑换不可撤销）。
+- `control/login_test.go`：登录页是表单（GET 不下发 cookie）、错误密码 401、
+  成功建立服务端会话、退出吊销、开放重定向收敛、已登录重定向。
+- `identity/password_test.go`、`identity/credential_test.go`、
+  `identity/invite_test.go`：密码策略（长度/rune/UTF-8/等于登录名）、
+  bcrypt 往返与自描述、等时失败、凭据 CRUD 与计数、邀请生命周期与角色约束、
+  过期/撤销、并发兑换唯一、`NewSecret` 熵与 URL 安全性。
+- 全量 `go test ./...`、`go vet ./...`、`go test -race ./control/ ./identity/`。

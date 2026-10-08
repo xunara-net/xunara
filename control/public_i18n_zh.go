@@ -1,0 +1,95 @@
+package control
+
+// Chinese copy for the pages outside the console: the landing page, sign in,
+// first-run setup, registration and the standalone action pages. It is kept in
+// its own file, apart from the console's generated table, so that regenerating
+// the console table cannot drop these strings; both are merged into the "zh"
+// dictionary at startup (see consoleTranslations).
+//
+// The keys are the English message ids the templates and handlers already use,
+// which is also why a test pins the exact wording: changing copy without
+// updating this table silently falls back to English.
+
+// consoleZHPublic maps trimmed text nodes and attribute values to Chinese.
+var consoleZHPublic = map[string]string{
+	"ACLs, grants, SSH checks and sharing are compiled from one policy document, and every change is audited.": "ACL、授权、SSH 审批与共享都由同一份策略文档编译产生，任何改动都会记入审计。",
+	"Email (optional)":                                            "邮箱（可选）",
+	"Access control and audit":                                    "访问控制与审计",
+	"Already have an account?":                                    "已有账号？",
+	"At least 12 characters; length beats punctuation.":           "至少 12 个字符；长度比复杂符号更有效。",
+	"Audit and access control":                                    "审计与访问控制",
+	"Choose a different password: it must not be the login name.": "请更换密码：不能与登录名相同。",
+	"Choose a login name (letters, digits, @ . _ - +).":           "请选择登录名（字母、数字以及 @ . _ - +）。",
+	"Control server":                                              "控制服务器",
+	"Create account and sign in":                                  "创建账号并登录",
+	"Create the administrator":                                    "创建管理员",
+	"Create your account":                                         "创建账号",
+	"First run: read the one-time token from the server's state directory and finish setup.": "首次运行：请从服务器状态目录读取一次性令牌，然后完成初始化。",
+	"Home": "首页",
+	"Human, machine and service identities never imply each other; external accounts key on (provider, subject).": "人、机器与服务身份互不推导；外部账号以 (provider, subject) 为唯一键。",
+	"Invitation code": "邀请码",
+	"Keep official clients working: TS2021, Noise, MagicDNS, ACLs, DERP, Serve and Funnel behave as upstream defines them. Multi-tenant, separated human and machine identity, and a full audit log are built in, with no external assets and no CDN.": "官方客户端始终可用：TS2021、Noise、MagicDNS、ACL、DERP、Serve 与 Funnel 的行为都遵循上游定义。内置多租户、人机身份分离与完整审计日志，不依赖外部资源与 CDN。",
+	"Multi-tenant":  "多租户",
+	"Native client": "原生客户端",
+	"No account yet? Ask an administrator for an invitation link.": "还没有账号？请向管理员索取邀请链接。",
+	"Official-client compatible":                                   "兼容官方客户端",
+	"One-time setup token":                                         "一次性初始化令牌",
+	"Password":                                                     "密码",
+	"Point a device here":                                          "把设备接入这里",
+	"Protocol compatibility":                                       "协议兼容",
+	"Read it on the server:":                                       "请在服务器上读取：",
+	"Read the specification":                                       "阅读规范",
+	"Registration approved":                                        "设备注册已批准",
+	"Registration denied":                                          "设备注册已拒绝",
+	"Registration failed":                                          "注册失败",
+	"Registration needs an invitation from an administrator. The invitation works once and carries the role it grants.": "注册需要管理员发出的邀请。邀请仅可使用一次，并携带它所授予的角色。",
+	"Registration rejected":                          "注册被拒绝",
+	"Registration unavailable":                       "注册不可用",
+	"Repeat the password":                            "重复密码",
+	"Self-hosted":                                    "自托管",
+	"Self-hosted Tailscale control plane":            "自托管 Tailscale 控制面",
+	"Separated identities":                           "身份分离",
+	"Set up the administrator":                       "初始化管理员",
+	"Setup failed":                                   "初始化失败",
+	"Setup finished":                                 "初始化完成",
+	"Setup rejected":                                 "初始化被拒绝",
+	"Sign in to the console":                         "登录控制台",
+	"Sign in to the console to manage this tailnet.": "登录控制台以管理此网络。",
+	"Sign in with the password you just set.":        "请用刚刚设置的密码登录。",
+	"That invitation code is not valid. Ask an administrator for a new link.":                          "邀请码无效。请向管理员索取新的邀请链接。",
+	"That invitation has already been used. Ask an administrator for a new link.":                      "邀请已被使用。请向管理员索取新的邀请链接。",
+	"That invitation has expired. Ask an administrator for a new link.":                                "邀请已过期。请向管理员索取新的邀请链接。",
+	"That login name is already taken.":                                                                "该登录名已被占用。",
+	"The account exists but its password could not be stored. Ask an administrator to reset it.":       "账号已创建，但密码保存失败。请联系管理员重置。",
+	"The administrator account is missing.":                                                            "管理员账号缺失。",
+	"The control plane follows upstream Tailscale first: clients are never patched to fit the server.": "控制面以 Tailscale 上游为第一参考：绝不为了让服务端工作而修改客户端。",
+	"The device asks for approval once; an administrator approves it in the console.":                  "设备只需申请一次，管理员在控制台中批准即可。",
+	"The one-time setup token is wrong. Read it from the server's state directory.":                    "一次性初始化令牌不正确。请在服务器的状态目录中读取。",
+	"The password is too long (at most 72 bytes).":                                                     "密码过长（最多 72 字节）。",
+	"The password must be at least 12 characters.":                                                     "密码至少需要 12 个字符。",
+	"The two passwords do not match.":                                                                  "两次输入的密码不一致。",
+	"This deployment has no administrator yet.":                                                        "本部署尚未设置管理员。",
+	"This deployment has no administrator yet. The one-time token is written to the state directory when the server starts; it is removed as soon as this form is submitted.": "本部署尚未设置管理员。一次性令牌在服务启动时写入状态目录，提交本表单后立即删除。",
+	"This device registration was already decided. You can close this window and return to the device.":                                                                       "该设备注册已经处理完成。你可以关闭此窗口并返回设备。",
+	"This identity provider cannot complete a browser sign-in.":                                                                                                               "该身份提供方无法完成浏览器登录。",
+	"This server creates accounts through an identity provider.":                                                                                                              "此服务器通过身份提供方创建账号。",
+	"This server signs users in through an identity provider.":                                                                                                                "此服务器通过身份提供方登录。",
+	"Too many attempts": "尝试次数过多",
+	"Too many registration attempts from this address. Try again later.": "该地址的注册尝试过于频繁，请稍后重试。",
+	"Too many setup attempts from this address. Try again later.":        "该地址的初始化尝试过于频繁，请稍后重试。",
+	"Too many sign-in attempts. Wait a few minutes and try again.":       "登录尝试过于频繁，请等待几分钟后重试。",
+	"Version":                       "版本",
+	"Wrong login name or password.": "登录名或密码错误。",
+	"control plane":                 "控制面",
+	"or":                            "或",
+	"or continue with":              "或使用以下方式继续",
+	"xunara-agent speaks the control plane's own protocol, so non-Tailscale hosts can join without touching TS2021.": "xunara-agent 使用控制面自有协议，因此非 Tailscale 主机无需接触 TS2021 即可接入。",
+}
+
+// consoleZHPublicBlock maps the inner markup of a <p> to Chinese, for prose
+// that contains inline links.
+var consoleZHPublicBlock = map[string]string{
+	"<a class=\"pbtn wide\" href=\"/setup\">Set up the administrator</a>": "<a class=\"pbtn wide\" href=\"/setup\">初始化管理员</a>",
+	"<a href=\"/login\">Back to sign-in</a>":                              "<a href=\"/login\">返回登录</a>",
+	"Already have an account? <a href=\"/login\">Sign in</a>.":            "已有账号？<a href=\"/login\">登录</a>。",
+}

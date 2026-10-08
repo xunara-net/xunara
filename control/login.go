@@ -22,40 +22,49 @@ type providerView struct {
 
 // handleLogin implements GET /login.
 //
-// It starts an AuthTransaction and either redirects to the provider or, for a
-// provider that authenticates server-side (the built-in local provider),
-// completes the login immediately.
+// It renders the sign-in page. An explicit ?provider=<id> starts that external
+// provider's flow instead. The built-in local provider never authenticates on
+// a GET: doing so would hand the tailnet to whoever can reach the URL, so
+// local sign-in is a POST that has to present a password.
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	returnTo := safeReturnTo(r.URL.Query().Get("return_to"))
 
-	ids := s.providers.IDs()
-	if len(ids) == 0 && s.passkeys == nil {
-		s.renderError(w, r, http.StatusServiceUnavailable, "Sign-in unavailable",
-			"No identity provider is configured on this server.")
+	if providerID := r.URL.Query().Get("provider"); providerID != "" && providerID != identity.LocalProviderID {
+		s.startExternalLogin(w, r, providerID, returnTo)
+		return
+	}
+	// Someone who is already signed in does not need the form again.
+	if _, ok := s.currentSession(r); ok {
+		http.Redirect(w, r, returnTo, http.StatusFound)
 		return
 	}
 
-	// An explicit provider must exist: falling back to another provider would
-	// silently send the user somewhere they did not choose. A single provider
-	// is pre-selected, except when passkey sign-in must be offered too:
-	// choosing for the user would hide the passkey button.
-	providerID := r.URL.Query().Get("provider")
-	if providerID == "" && len(ids) == 1 && s.passkeys == nil {
-		providerID = ids[0]
-	}
-	if providerID == "" {
-		views := make([]providerView, 0, len(ids))
-		for _, id := range ids {
-			views = append(views, providerView{
-				ID:   id,
-				Name: s.providerName(id),
-				URL:  "/login?provider=" + url.QueryEscape(id) + "&return_to=" + url.QueryEscape(returnTo),
-			})
+	views := make([]providerView, 0, len(s.providers.IDs()))
+	for _, id := range s.providers.IDs() {
+		if id == identity.LocalProviderID {
+			continue
 		}
-		s.renderLoginPage(w, r, views, s.passkeys != nil)
-		return
+		views = append(views, providerView{
+			ID:   id,
+			Name: s.providerName(id),
+			URL:  "/login?provider=" + url.QueryEscape(id) + "&return_to=" + url.QueryEscape(returnTo),
+		})
 	}
 
+	data := map[string]any{
+		"Title":      "Sign in",
+		"Providers":  views,
+		"Passkey":    s.passkeys != nil,
+		"LocalLogin": s.localLogin,
+		"Setup":      s.setupRequired(),
+		"FormToken":  s.newFormToken(formPurposeLogin),
+		"ReturnTo":   returnTo,
+	}
+	s.renderPublicPage(w, r, signInPageTemplate, data)
+}
+
+// startExternalLogin starts an OIDC authorization for one provider.
+func (s *Server) startExternalLogin(w http.ResponseWriter, r *http.Request, providerID, returnTo string) {
 	provider, ok := s.providers.Get(providerID)
 	if !ok {
 		s.renderError(w, r, http.StatusBadRequest, "Unknown provider",
@@ -83,15 +92,121 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 			"The identity provider could not be reached. Please try again later.")
 		return
 	}
-
 	if authReq.URL == "" {
-		// The provider authenticates server-side (local login): no redirect.
-		s.finishLogin(w, r, tx, provider, nil)
+		// Only the local provider completes server-side, and it is not
+		// offered here; refusing is safer than falling through.
+		s.audit("system", identity.AuditLoginFailed, "provider:"+providerID, "provider cannot start a browser flow")
+		s.renderError(w, r, http.StatusBadRequest, "Sign-in rejected",
+			"This identity provider cannot complete a browser sign-in.")
 		return
 	}
 
 	s.setAuthCookie(w, tx.ID, browserSecret, tx.ExpiresAt)
 	http.Redirect(w, r, authReq.URL, http.StatusFound)
+}
+
+// Password sign-in rate limits. The counters live in the store, not in
+// process memory, so every instance of the control plane enforces the same
+// budget (AGENTS.md section 9).
+const (
+	loginAddressLimit  = 20
+	loginAddressWindow = 10 * time.Minute
+	loginNameLimit     = 10
+	loginNameWindow    = 10 * time.Minute
+)
+
+// handlePasswordLogin implements POST /login for locally managed accounts.
+//
+// The answer is the same whether the login name is unknown, has no password,
+// or the password is wrong: the endpoint must not confirm which accounts
+// exist. The work done is the same too (see [identity.VerifyPasswordMissing]).
+func (s *Server) handlePasswordLogin(w http.ResponseWriter, r *http.Request) {
+	if !s.localLogin {
+		s.renderError(w, r, http.StatusNotFound, "Sign-in unavailable",
+			"This server signs users in through an identity provider.")
+		return
+	}
+	if s.setupRequired() {
+		http.Redirect(w, r, "/setup", http.StatusFound)
+		return
+	}
+
+	returnTo := safeReturnTo(r.PostFormValue("return_to"))
+	login := strings.TrimSpace(r.PostFormValue("login"))
+	password := r.PostFormValue("password")
+	now := time.Now()
+
+	reject := func(status int, title, message, detail string) {
+		s.audit("system", identity.AuditLoginFailed, "provider:"+identity.LocalProviderID, detail)
+		s.renderError(w, r, status, title, message)
+	}
+
+	if !s.checkFormToken(formPurposeLogin, r.PostFormValue("_csrf"), now) {
+		reject(http.StatusForbidden, "Request rejected",
+			"The form token is invalid. Reload the page and try again.", "invalid form token")
+		return
+	}
+
+	// Two buckets: one lets a shared address through for a while, the other
+	// stops a single account from being hammered from many addresses.
+	for _, limit := range []struct {
+		scope  string
+		limit  int
+		window time.Duration
+	}{
+		{"login-ip:" + clientIP(r), loginAddressLimit, loginAddressWindow},
+		{"login-name:" + strings.ToLower(login), loginNameLimit, loginNameWindow},
+	} {
+		allowed, retryAfter, err := s.store.AllowRate(limit.scope, limit.limit, limit.window, now)
+		if err != nil {
+			s.log.Error("rate limiting sign-in", "err", err)
+			break
+		}
+		if !allowed {
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", int(retryAfter.Seconds())+1))
+			reject(http.StatusTooManyRequests, "Too many attempts",
+				"Too many sign-in attempts. Wait a few minutes and try again.", "rate limited")
+			return
+		}
+	}
+
+	user, ok := s.identity.GetUserByLoginName(login)
+	if !ok || login == "" {
+		identity.VerifyPasswordMissing(password)
+		reject(http.StatusUnauthorized, "Sign-in failed", "Wrong login name or password.", "unknown login name")
+		return
+	}
+	credential, hasCredential := s.identity.GetLocalCredential(user.ID)
+	if !hasCredential {
+		// Same answer as an unknown login name: whether an account exists
+		// and whether it has a password are not facts this endpoint hands
+		// to an anonymous caller. The audit log records the real reason.
+		identity.VerifyPasswordMissing(password)
+		reject(http.StatusUnauthorized, "Sign-in failed", "Wrong login name or password.", "account has no password")
+		return
+	}
+	if !identity.VerifyPassword(credential.PasswordHash, password) {
+		reject(http.StatusUnauthorized, "Sign-in failed", "Wrong login name or password.",
+			"wrong password for "+user.LoginName)
+		return
+	}
+
+	session, token, err := s.identity.CreateSession(identity.NewSessionOptions{
+		UserID:     user.ID,
+		AuthMethod: identity.LocalProviderID,
+		TTL:        s.sessionTTL,
+	})
+	if err != nil {
+		s.log.Error("creating session", "user", int(user.ID), "err", err)
+		s.renderError(w, r, http.StatusInternalServerError, "Sign-in failed", "Please try again.")
+		return
+	}
+
+	actor := fmt.Sprintf("user:%d", user.ID)
+	s.audit(actor, identity.AuditLoginSucceeded, "provider:"+identity.LocalProviderID, "authenticated "+user.LoginName)
+	s.audit(actor, identity.AuditSessionCreated, "session:"+session.ID, "auth method "+identity.LocalProviderID)
+	s.setSessionCookie(w, token, session.ExpiresAt)
+	http.Redirect(w, r, returnTo, http.StatusFound)
 }
 
 // handleCallback implements GET /oidc/callback/{providerID}.

@@ -39,10 +39,23 @@ type consoleDict struct {
 
 // consoleTranslations holds one dictionary per language keyed by message id.
 var consoleTranslations = map[string]consoleDict{"zh": {
-	text:   consoleZH,
-	block:  consoleZHBlock,
+	text:   mergeText(consoleZH, consoleZHPublic),
+	block:  mergeText(consoleZHBlock, consoleZHPublicBlock),
 	prefix: consoleZHPrefix,
 }}
+
+// mergeText combines two message tables. Later entries win, which lets the
+// hand-written public-page copy refine a generated console string without
+// editing the generated file.
+func mergeText(tables ...map[string]string) map[string]string {
+	merged := make(map[string]string)
+	for _, table := range tables {
+		for key, value := range table {
+			merged[key] = value
+		}
+	}
+	return merged
+}
 
 // consoleLangFromRequest resolves the UI language: the preference cookie the
 // operator set in the console wins, otherwise the browser's Accept-Language

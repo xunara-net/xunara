@@ -111,6 +111,8 @@ func (s *Server) consoleRouter() http.Handler {
 		r.Post("/devices/{id}/approve", s.handleConsoleDevice(true))
 		r.Post("/devices/{id}/deny", s.handleConsoleDevice(false))
 		r.Post("/users/{id}", s.handleConsoleUpdateUser)
+		r.Post("/invites", s.handleConsoleCreateInvite)
+		r.Post("/invites/{id}/delete", s.handleConsoleRevokeInvite)
 		r.Post("/dns/{id}/delete", s.handleConsoleDeleteDNS)
 		r.Post("/auth-keys", s.handleConsoleCreateAuthKey)
 		r.Post("/auth-keys/{id}/delete", s.handleConsoleDeleteAuthKey)
@@ -447,12 +449,7 @@ func (s *Server) handleConsoleUsers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	users := s.identity.ListUsers()
-	views := make([]apiUser, 0, len(users))
-	for _, u := range users {
-		views = append(views, s.apiUserView(u))
-	}
-	data["Users"] = views
+	s.consoleUsersPageData(data)
 	s.renderConsole(w, consoleUsersTemplate, data)
 }
 
@@ -526,14 +523,141 @@ func (s *Server) handleConsoleUpdateUser(w http.ResponseWriter, r *http.Request)
 	s.handleConsoleUsersNotice(w, data)
 }
 
-// handleConsoleUsersNotice re-renders the user list after an update.
-func (s *Server) handleConsoleUsersNotice(w http.ResponseWriter, data map[string]any) {
+// consoleInvite is a registration invitation as shown on the console. The
+// token itself is never part of the list: it exists in the link the create
+// handler shows once, and is stored only as a hash.
+type consoleInvite struct {
+	ID      string
+	Role    string
+	Note    string
+	Created time.Time
+	Expires time.Time
+	// Redeemed, Expired and Open describe what can still be done with it.
+	Redeemed bool
+	Expired  bool
+	Open     bool
+	UsedBy   string
+}
+
+// consoleInviteViews renders the invitations without their tokens.
+func (s *Server) consoleInviteViews() []consoleInvite {
+	invites := s.identity.ListRegistrationInvites()
+	now := time.Now()
+	views := make([]consoleInvite, 0, len(invites))
+	for _, invite := range invites {
+		view := consoleInvite{
+			ID:       invite.ID,
+			Role:     string(invite.Role),
+			Note:     invite.Note,
+			Created:  invite.CreatedAt,
+			Expires:  invite.ExpiresAt,
+			Redeemed: invite.Redeemed(),
+			Expired:  invite.Expired(now),
+		}
+		view.Open = !view.Redeemed && !view.Expired
+		if view.Redeemed {
+			view.UsedBy = s.UserProfile(invite.UsedBy).LoginName
+		}
+		views = append(views, view)
+	}
+	return views
+}
+
+// consoleUsersPageData fills the user list page: the accounts and the
+// invitations that can still create one.
+func (s *Server) consoleUsersPageData(data map[string]any) {
 	users := s.identity.ListUsers()
 	views := make([]apiUser, 0, len(users))
 	for _, u := range users {
 		views = append(views, s.apiUserView(u))
 	}
 	data["Users"] = views
+	data["Invites"] = s.consoleInviteViews()
+}
+
+// handleConsoleCreateInvite implements POST /console/invites: mint a
+// single-use registration invitation. The plaintext link is part of this
+// response only; the server keeps nothing but its hash.
+func (s *Server) handleConsoleCreateInvite(w http.ResponseWriter, r *http.Request) {
+	session, data, ok := s.consoleSession(w, r, "users")
+	if !ok {
+		return
+	}
+	if !s.consoleCheckCSRF(w, r) {
+		return
+	}
+
+	role, err := identity.ParseRole(strings.TrimSpace(r.PostFormValue("role")))
+	if err != nil || role == identity.RoleOwner {
+		// An owner is promoted deliberately, never handed out in a link.
+		s.renderError(w, r, http.StatusBadRequest, "Invitation rejected",
+			"Choose the member or admin role; invitations cannot grant the owner role.")
+		return
+	}
+
+	var ttl time.Duration
+	hours, err := strconv.Atoi(strings.TrimSpace(r.PostFormValue("ttl")))
+	if err != nil || hours < 0 || hours > 24*365 {
+		s.renderError(w, r, http.StatusBadRequest, "Invitation rejected", "Choose how long the invitation stays valid.")
+		return
+	}
+	ttl = time.Duration(hours) * time.Hour
+
+	invite, token, err := s.identity.CreateRegistrationInvite(identity.NewRegistrationInviteOptions{
+		Role:      role,
+		Note:      strings.TrimSpace(r.PostFormValue("note")),
+		CreatedBy: fmt.Sprintf("user:%d", session.UserID),
+		TTL:       ttl,
+	})
+	if err != nil {
+		s.log.Error("creating registration invite", "err", err)
+		s.renderError(w, r, http.StatusInternalServerError, "Invitation failed", "Please try again.")
+		return
+	}
+
+	s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditInviteCreated,
+		"invite:"+invite.ID, "role "+string(invite.Role))
+	data["Notice"] = "Invitation created."
+	data["NewInviteLink"] = strings.TrimRight(s.cfg.ServerURL, "/") + "/signup?invite=" + url.QueryEscape(token)
+	s.consoleUsersPageData(data)
+	s.renderConsole(w, consoleUsersTemplate, data)
+}
+
+// handleConsoleRevokeInvite implements POST /console/invites/{id}/delete.
+func (s *Server) handleConsoleRevokeInvite(w http.ResponseWriter, r *http.Request) {
+	session, data, ok := s.consoleSession(w, r, "users")
+	if !ok {
+		return
+	}
+	if !s.consoleCheckCSRF(w, r) {
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	err := s.identity.RevokeRegistrationInvite(id)
+	switch {
+	case errors.Is(err, identity.ErrInviteNotFound):
+		s.renderError(w, r, http.StatusNotFound, "Unknown invitation", "This invitation does not exist.")
+		return
+	case errors.Is(err, identity.ErrInviteUsed):
+		s.renderError(w, r, http.StatusConflict, "Invitation already used",
+			"This invitation was redeemed; it is kept as a record.")
+		return
+	case err != nil:
+		s.log.Error("revoking registration invite", "invite", id, "err", err)
+		s.renderError(w, r, http.StatusInternalServerError, "Revoke failed", "Please try again.")
+		return
+	}
+
+	s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditInviteRevoked, "invite:"+id, "revoked through the console")
+	data["Notice"] = "Invitation revoked."
+	s.consoleUsersPageData(data)
+	s.renderConsole(w, consoleUsersTemplate, data)
+}
+
+// handleConsoleUsersNotice re-renders the user list after an update.
+func (s *Server) handleConsoleUsersNotice(w http.ResponseWriter, data map[string]any) {
+	s.consoleUsersPageData(data)
 	s.renderConsole(w, consoleUsersTemplate, data)
 }
 

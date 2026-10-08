@@ -8,46 +8,6 @@ import (
 	"strings"
 )
 
-// pageHead is shared by every page: the console's design tokens, no external
-// assets, a strict referrer policy.
-const pageHead = `<!doctype html>
-<html lang="{{.Lang}}" data-accent="{{.Accent}}">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
-<title>{{.Title}} — Xunara</title>
-<style>` + siteTokens + `
-body { font-family: var(--font); margin: 0; background: var(--bg); color: var(--fg); line-height: 1.5;
-       min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 1.5rem; }
-main { width: 100%; max-width: 30rem; background: var(--surface); border: 1px solid var(--border);
-       padding: 2rem; border-radius: calc(var(--radius) + 4px); box-shadow: var(--shadow); }
-h1 { font-size: 1.3rem; margin: 0 0 .5rem; letter-spacing: -.01em; }
-p { margin: .5rem 0; }
-.provider { display: block; margin: .6rem 0; padding: .7rem 1rem; background: var(--accent);
-            color: var(--accent-fg); text-decoration: none; border-radius: var(--radius-sm);
-            text-align: center; font-weight: 600; }
-.provider:hover { filter: brightness(1.06); }
-dl { display: grid; grid-template-columns: max-content 1fr; gap: .4rem 1rem; }
-dt { color: var(--muted); }
-dd { margin: 0; }
-.actions { margin-top: 1.5rem; display: flex; gap: .75rem; flex-wrap: wrap; }
-a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-button { font: inherit; font-weight: 600; padding: .65rem 1.1rem; border-radius: var(--radius-sm);
-         border: 1px solid transparent; cursor: pointer; background: var(--accent); color: var(--accent-fg); }
-.approve { background: var(--ok); color: var(--accent-fg); }
-.deny { background: transparent; color: var(--warn); border-color: var(--warn); }
-footer { margin-top: 2rem; color: var(--muted); font-size: .8rem; }
-code { font-family: var(--mono); font-size: .85em; background: var(--surface-2); border: 1px solid var(--border);
-       padding: .05rem .3rem; border-radius: 5px; }
-.status { min-height: 1.2em; }
-</style>
-</head>
-<body><main>
-`
-
-var pageFoot = template.Must(template.New("foot").Parse(`<footer>Xunara {{.Version}}</footer></main></body></html>`))
-
 // pageTemplate parses one standalone page. T is registered here so the parser
 // accepts the message ids in inline scripts; renderPage rebinds it per request
 // so each page is rendered in the operator's language.
@@ -56,43 +16,16 @@ func pageTemplate(name, body string) *template.Template {
 }
 
 var (
-	loginPageTemplate = pageTemplate("login", pageHead+`
-<h1>Sign in</h1>
-<p>Choose an identity provider to continue.</p>
-{{range .Providers}}<a class="provider" href="{{.URL}}">{{.Name}}</a>{{end}}
-{{if .Passkey}}
-<p><button id="passkey-signin" type="button">Sign in with a passkey</button></p>
-<p id="passkey-status" class="status" role="status"></p>
-{{end}}
-`+`{{if .Passkey}}<script>`+passkeyBrowserJS+`
-(function () {
-  const button = document.getElementById("passkey-signin");
-  const status = document.getElementById("passkey-status");
-  button.addEventListener("click", async function () {
-    button.disabled = true;
-    status.textContent = "";
-    try {
-      const begin = await passkeyPost("/passkey/login/begin", {});
-      const credential = await navigator.credentials.get({ publicKey: decodeRequestOptions(begin.options.publicKey) });
-      const returnTo = new URLSearchParams(window.location.search).get("return_to");
-      const url = "/passkey/login/finish" + (returnTo ? "?return_to=" + encodeURIComponent(returnTo) : "");
-      const finish = await passkeyPost(url, encodeAssertion(credential));
-      window.location = finish.redirect || "/";
-    } catch (err) {
-      status.textContent = err.message || {{T "Passkey sign-in failed."}};
-      button.disabled = false;
-    }
-  });
-})();
-</script>{{end}}`+`</main></body></html>`)
-
-	errorPageTemplate = pageTemplate("error", pageHead+`
+	errorPageTemplate = pageTemplate("error", publicHead+`<main id="main" class="narrow">
+<div class="card">
 <h1>{{.Title}}</h1>
 <p>{{.Message}}</p>
 <p><a href="/login">Back to sign-in</a></p>
-`+`</main></body></html>`)
+`+`</div>
+</main>`+publicFoot)
 
-	approvePageTemplate = pageTemplate("approve", pageHead+`
+	approvePageTemplate = pageTemplate("approve", publicHead+`<main id="main" class="narrow">
+<div class="card">
 <h1>Device approval</h1>
 <p>A device is asking to join the tailnet. Approving authorizes the machine keys
 below; it does not make the device a human identity.</p>
@@ -118,15 +51,18 @@ below; it does not make the device a human identity.</p>
 {{else}}
 <p>Your role is read-only; ask an admin or owner to approve this device.</p>
 {{end}}
-`+`</main></body></html>`)
+`+`</div>
+</main>`+publicFoot)
 
-	decidedPageTemplate = pageTemplate("decided", pageHead+`
+	decidedPageTemplate = pageTemplate("decided", publicHead+`<main id="main" class="narrow">
+<div class="card">
 <h1>Registration {{.State}}</h1>
-<p>This device registration was already {{.State}}. You can close this window and
-return to the device.</p>
-`+`</main></body></html>`)
+<p>This device registration was already decided. You can close this window and return to the device.</p>
+`+`</div>
+</main>`+publicFoot)
 
-	sshCheckPageTemplate = pageTemplate("sshcheck", pageHead+`
+	sshCheckPageTemplate = pageTemplate("sshcheck", publicHead+`<main id="main" class="narrow">
+<div class="card">
 <h1>SSH check</h1>
 <p>A Tailscale SSH connection is waiting for a decision. Approving lets it
 proceed; the decision is recorded in the audit log.</p>
@@ -154,16 +90,9 @@ proceed; the decision is recorded in the audit log.</p>
 {{else}}
 <p>Your role is read-only; ask an admin or owner to decide this connection.</p>
 {{end}}
-`+`</main></body></html>`)
+`+`</div>
+</main>`+publicFoot)
 )
-
-// renderLoginPage lists the configured providers, and the passkey button when
-// passkey sign-in is enabled.
-func (s *Server) renderLoginPage(w http.ResponseWriter, r *http.Request, providers []providerView, passkey bool) {
-	s.renderPage(w, r, loginPageTemplate, map[string]any{
-		"Title": "Sign in", "Providers": providers, "Passkey": passkey,
-	})
-}
 
 // renderPage renders one standalone page (sign-in, errors, approvals) in the
 // language and accent the operator selected in the console. The output is
@@ -173,6 +102,14 @@ func (s *Server) renderPage(w http.ResponseWriter, r *http.Request, tmpl *templa
 	data["Lang"], data["Accent"] = lang, accent
 	if title, ok := data["Title"].(string); ok {
 		data["Title"] = translateTitle(lang, title)
+	}
+	// Every public page shows the build it is running; pages that carry their
+	// own value keep it.
+	if _, ok := data["Version"]; !ok {
+		data["Version"] = Version
+	}
+	if _, ok := data["ServerURL"]; !ok {
+		data["ServerURL"] = s.cfg.ServerURL
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// The template is cloned per request so the T helper (used by inline

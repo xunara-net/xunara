@@ -88,11 +88,11 @@ func readBody(t *testing.T, resp *http.Response) []byte {
 }
 
 // passkeyLocalLogin signs in through the built-in local provider (the sign-in
-// page is a chooser once passkey sign-in is enabled, so the provider is
-// explicit).
+// page is a chooser once passkey sign-in is enabled, so the password form is
+// submitted explicitly).
 func passkeyLocalLogin(t *testing.T, client *http.Client, baseURL, returnTo string) {
 	t.Helper()
-	resp := getRequest(t, client, baseURL+"/login?provider="+identity.LocalProviderID+"&return_to="+url.QueryEscape(returnTo), nil)
+	resp := submitLocalLogin(t, client, baseURL, returnTo)
 	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != returnTo {
 		t.Fatalf("local login = %d %q, want 302 %q", resp.StatusCode, resp.Header.Get("Location"), returnTo)
 	}
@@ -166,14 +166,14 @@ func TestPasskeyRegisterAndLoginFlow(t *testing.T) {
 
 	client := newPasskeyClient(t)
 
-	// With passkey sign-in enabled the single provider is no longer
-	// auto-selected: the page offers both.
+	// With passkey sign-in enabled the page offers both the password form
+	// and the passkey button.
 	resp := getRequest(t, client, hs.URL+"/login", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("GET /login = %d, want 200", resp.StatusCode)
 	}
 	page := bodyString(t, resp)
-	if !strings.Contains(page, "Sign in with a passkey") || !strings.Contains(page, "provider="+identity.LocalProviderID) {
+	if !strings.Contains(page, "Sign in with a passkey") || !strings.Contains(page, `name="password"`) {
 		t.Fatalf("sign-in page does not offer both methods:\n%s", page)
 	}
 	if !strings.Contains(page, "navigator.credentials.get") {

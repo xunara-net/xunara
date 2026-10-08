@@ -252,7 +252,33 @@ CREATE TABLE IF NOT EXISTS counters (
 	name  TEXT    PRIMARY KEY,
 	value INTEGER NOT NULL
 );
-` + identityShareMigration,
+` + identityShareMigration + `
+
+-- Local sign-in credentials. One row per user that can sign in with a
+-- password; the hash never leaves the store, and the row is keyed by user ID
+-- so renaming a user cannot orphan or steal a password.
+CREATE TABLE IF NOT EXISTS local_credentials (
+	user_id       INTEGER PRIMARY KEY,
+	password_hash BLOB    NOT NULL,
+	created_at    INTEGER NOT NULL,
+	updated_at    INTEGER NOT NULL
+);
+
+-- Single-use registration invites. Only the hash is stored: the plaintext
+-- token exists in the link the inviter copied and nowhere else.
+CREATE TABLE IF NOT EXISTS registration_invites (
+	id         TEXT    PRIMARY KEY,
+	token_hash TEXT    NOT NULL UNIQUE,
+	role       TEXT    NOT NULL,
+	note       TEXT    NOT NULL DEFAULT '',
+	created_by TEXT    NOT NULL DEFAULT '',
+	created_at INTEGER NOT NULL,
+	expires_at INTEGER NOT NULL,
+	used_at    INTEGER,
+	used_by    INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_registration_invites_created ON registration_invites(created_at);
+`,
 }
 
 // SQLiteStore is a durable [Store] sharing the control plane's database.

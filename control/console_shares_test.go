@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/xunara/xunara/identity"
+	"github.com/xunara/xunara/state"
 )
 
 // consoleAtHost performs a console request addressed to an explicit host, so
@@ -45,9 +46,19 @@ func consoleAtHost(t *testing.T, client *http.Client, method string, hs *httptes
 func loginLocalAtHost(t *testing.T, client *http.Client, hs *httptest.Server, host, returnTo string) *http.Cookie {
 	t.Helper()
 
-	resp := consoleAtHost(t, client, http.MethodGet, hs, host, "/login?return_to="+url.QueryEscape(returnTo), nil, nil)
+	page := consoleAtHost(t, client, http.MethodGet, hs, host, "/login?return_to="+url.QueryEscape(returnTo), nil, nil)
+	if page.StatusCode != http.StatusOK {
+		t.Fatalf("GET /login (host %s) status = %d, want 200", host, page.StatusCode)
+	}
+	form := url.Values{
+		"_csrf":     {hiddenValue(t, bodyString(t, page), "_csrf")},
+		"login":     {state.DefaultUserProfile(state.DefaultUserID).LoginName},
+		"password":  {testLocalPassword},
+		"return_to": {returnTo},
+	}
+	resp := consoleAtHost(t, client, http.MethodPost, hs, host, "/login", form, nil)
 	if resp.StatusCode != http.StatusFound {
-		t.Fatalf("GET /login (host %s) status = %d, want 302", host, resp.StatusCode)
+		t.Fatalf("POST /login (host %s) status = %d, want 302", host, resp.StatusCode)
 	}
 	return cookieNamed(t, resp, sessionCookieName)
 }

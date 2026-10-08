@@ -90,9 +90,9 @@ func bodyString(t *testing.T, resp *http.Response) string {
 func loginLocal(t *testing.T, client *http.Client, baseURL, returnTo string) *http.Cookie {
 	t.Helper()
 
-	resp := getRequest(t, client, baseURL+"/login?return_to="+url.QueryEscape(returnTo), nil)
+	resp := submitLocalLogin(t, client, baseURL, returnTo)
 	if resp.StatusCode != http.StatusFound {
-		t.Fatalf("GET /login status = %d, want 302", resp.StatusCode)
+		t.Fatalf("POST /login status = %d, want 302", resp.StatusCode)
 	}
 	if loc := resp.Header.Get("Location"); loc != returnTo {
 		t.Fatalf("login redirect = %q, want %q", loc, returnTo)
@@ -100,12 +100,100 @@ func loginLocal(t *testing.T, client *http.Client, baseURL, returnTo string) *ht
 	return cookieNamed(t, resp, sessionCookieName)
 }
 
+// testLocalPassword is the password the built-in account gets in tests. A
+// production deployment starts without one and asks for it at /setup; tests
+// seed it so the password sign-in flow can be exercised.
+const testLocalPassword = "xunara-test-password-2026"
+
+// seedTestCredential gives the built-in local account a password, so a test
+// server behaves like a deployment that has been set up.
+func seedTestCredential(s *Server) error {
+	hash, err := identity.HashPassword(testLocalPassword)
+	if err != nil {
+		return err
+	}
+	if err := s.Identity().SetLocalCredential(&identity.LocalCredential{
+		UserID:       state.DefaultUserID,
+		PasswordHash: hash,
+	}); err != nil {
+		return err
+	}
+	// Setup is finished the moment a password exists; a token left over from
+	// construction would arm an endpoint that can no longer be used.
+	return s.clearSetupToken()
+}
+
+// hiddenValue returns the value of a hidden input in a rendered page.
+func hiddenValue(t *testing.T, page, name string) string {
+	t.Helper()
+
+	marker := `name="` + name + `" value="`
+	i := strings.Index(page, marker)
+	if i < 0 {
+		t.Fatalf("page has no hidden input %q:\n%.800s", name, page)
+	}
+	rest := page[i+len(marker):]
+	j := strings.Index(rest, `"`)
+	if j < 0 {
+		t.Fatalf("malformed hidden input %q in page", name)
+	}
+	return rest[:j]
+}
+
+// submitLocalLogin renders the sign-in form, fills it in with the built-in
+// account's password and posts it, returning the (unfollowed) response.
+func submitLocalLogin(t *testing.T, client *http.Client, baseURL, returnTo string) *http.Response {
+	t.Helper()
+
+	page := getRequest(t, client, baseURL+"/login?return_to="+url.QueryEscape(returnTo), nil)
+	if page.StatusCode != http.StatusOK {
+		t.Fatalf("GET /login status = %d, want 200", page.StatusCode)
+	}
+	form := url.Values{
+		"_csrf":     {hiddenValue(t, bodyString(t, page), "_csrf")},
+		"login":     {state.DefaultUserProfile(state.DefaultUserID).LoginName},
+		"password":  {testLocalPassword},
+		"return_to": {returnTo},
+	}
+	return postForm(t, client, baseURL+"/login", form, nil)
+}
+
 func TestLocalLoginCreatesServerSideSession(t *testing.T) {
 	s := newTestServer(t)
 	hs := newTestHTTPServer(t, s)
 	client := noRedirectClient()
 
-	resp := getRequest(t, client, hs.URL+"/login", nil)
+	// The sign-in page is a form, not an automatic login: a GET must never
+	// hand out a session, or anyone who can reach the URL owns the tailnet.
+	page := getRequest(t, client, hs.URL+"/login", nil)
+	if page.StatusCode != http.StatusOK {
+		t.Fatalf("GET /login = %d, want 200", page.StatusCode)
+	}
+	if page.Header.Get("Set-Cookie") != "" {
+		t.Error("GET /login handed out a cookie")
+	}
+	body := bodyString(t, page)
+	for _, want := range []string{`name="login"`, `name="password"`, `name="_csrf"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("sign-in page lacks %q", want)
+		}
+	}
+
+	// A wrong password is refused, with the same wording an unknown account
+	// gets.
+	form := url.Values{
+		"_csrf":    {hiddenValue(t, body, "_csrf")},
+		"login":    {state.DefaultUserProfile(state.DefaultUserID).LoginName},
+		"password": {"definitely-not-the-password"},
+	}
+	if bad := postForm(t, client, hs.URL+"/login", form, nil); bad.StatusCode != http.StatusUnauthorized {
+		t.Errorf("wrong password status = %d, want 401", bad.StatusCode)
+	}
+	if !auditActionSet(t, s)[identity.AuditLoginFailed] {
+		t.Error("failed sign-in was not audited")
+	}
+
+	resp := submitLocalLogin(t, client, hs.URL, "/")
 	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/" {
 		t.Fatalf("login = %d %q, want 302 /", resp.StatusCode, resp.Header.Get("Location"))
 	}
@@ -161,12 +249,24 @@ func TestLoginRefusesUnknownProviderAndBadReturnTo(t *testing.T) {
 		t.Errorf("unknown provider status = %d, want 400", resp.StatusCode)
 	}
 
-	// Open-redirect attempts all collapse to "/".
+	// Open-redirect attempts all collapse to "/": the form carries the
+	// sanitized path, so posting it can never leave the site.
 	for _, bad := range []string{"https://evil.example/x", "//evil.example", "javascript:alert(1)", "/\\evil"} {
 		resp := getRequest(t, client, hs.URL+"/login?return_to="+url.QueryEscape(bad), nil)
-		if loc := resp.Header.Get("Location"); loc != "/" {
-			t.Errorf("return_to %q redirected to %q, want /", bad, loc)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("return_to %q status = %d, want 200", bad, resp.StatusCode)
 		}
+		if got := hiddenValue(t, bodyString(t, resp), "return_to"); got != "/" {
+			t.Errorf("return_to %q rendered as %q, want /", bad, got)
+		}
+	}
+
+	// A signed-in visitor does not get the form again.
+	cookie := loginLocal(t, client, hs.URL, "/console/")
+	resp = getRequest(t, client, hs.URL+"/login?return_to=/console/machines", cookie)
+	if resp.StatusCode != http.StatusFound || resp.Header.Get("Location") != "/console/machines" {
+		t.Errorf("signed-in GET /login = %d %q, want 302 /console/machines",
+			resp.StatusCode, resp.Header.Get("Location"))
 	}
 }
 

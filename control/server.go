@@ -214,6 +214,12 @@ type Server struct {
 	sessionTTL    time.Duration
 	authTTL       time.Duration
 
+	// localLogin reports whether the built-in password sign-in is offered,
+	// and formKey signs the CSRF tokens of the anonymous forms (sign in,
+	// first-run setup, registration).
+	localLogin bool
+	formKey    []byte
+
 	// approveMu serialises device approvals so an approval is applied exactly
 	// once even under concurrent requests.
 	approveMu sync.Mutex
@@ -344,9 +350,12 @@ func New(cfg Config) (*Server, error) {
 	redirects := make(map[string]string)
 
 	// The built-in local provider is the single-user mode's login method; it
-	// is only offered by default when no external provider exists, because it
-	// authenticates anyone who can reach the login page.
-	if len(cfg.OIDCProviders) == 0 && len(cfg.Providers) == 0 || cfg.AllowLocalLogin {
+	// is offered by default when no external provider exists. It never
+	// authenticates anyone by itself: the password is checked against the
+	// local credential store, and a deployment without one has to be set up
+	// first (see initSetupToken).
+	localLogin := len(cfg.OIDCProviders) == 0 && len(cfg.Providers) == 0 || cfg.AllowLocalLogin
+	if localLogin {
 		local := identity.LocalLogin{}
 		providers.Register(local)
 	}
@@ -429,6 +438,12 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 
+	formKey, err := loadOrCreateFormKey(cfg.StateDir)
+	if err != nil {
+		store.Close()
+		return nil, fmt.Errorf("control: loading the form signing key: %w", err)
+	}
+
 	srv := &Server{
 		cfg:               cfg,
 		log:               cfg.Logger,
@@ -444,6 +459,8 @@ func New(cfg Config) (*Server, error) {
 		secureCookies:     strings.HasPrefix(strings.ToLower(cfg.ServerURL), "https://"),
 		sessionTTL:        sessionTTL,
 		authTTL:           identity.DefaultAuthTransactionTTL,
+		localLogin:        localLogin,
+		formKey:           formKey,
 		resolvers:         resolvers,
 		dnsRoutes:         dnsRoutes,
 		certDomains:       certDomains,
@@ -461,6 +478,8 @@ func New(cfg Config) (*Server, error) {
 	if passkeys != nil {
 		cfg.Logger.Info("passkey sign-in enabled", "rp_id", cfg.Passkeys.RPID)
 	}
+	// Arm the first-run setup token before anything can serve a request.
+	srv.initSetupToken()
 	if flux != nil {
 		cfg.Logger.Info("flux file transfer enabled",
 			"dir", flux.dir, "max_size", flux.maxSize, "ttl", flux.ttl)
@@ -708,6 +727,11 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/.well-known/jwks.json", s.handleJWKS)
 	r.Get("/.well-known/openid-configuration", s.handleOpenIDConfiguration)
 	r.Get("/login", s.handleLogin)
+	r.Post("/login", s.handlePasswordLogin)
+	r.Get("/setup", s.handleSetupPage)
+	r.Post("/setup", s.handleSetupSubmit)
+	r.Get("/signup", s.handleSignupPage)
+	r.Post("/signup", s.handleSignupSubmit)
 	r.Post("/logout", s.handleLogout)
 	if s.passkeys != nil {
 		r.Post("/passkey/login/begin", s.handlePasskeyLoginBegin)
@@ -847,11 +871,21 @@ func (s *Server) handleVersion(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *Server) handleRoot(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{
-		"name":    "Xunara",
-		"version": Version,
-		"message": "Tailscale-compatible control plane. Point clients at this URL with `tailscale up --login-server=<url>`.",
-		"console": "/console/",
+// handleRoot implements GET /. A browser gets the landing page: what this
+// deployment is, how to sign in, and the command that points a device at it.
+// Callers that do not ask for HTML (scripts, health probes) keep the short
+// machine-readable description, so the endpoint stays useful to both.
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if !strings.Contains(r.Header.Get("Accept"), "text/html") {
+		writeJSON(w, http.StatusOK, map[string]string{
+			"name":    "Xunara",
+			"version": Version,
+			"message": "Tailscale-compatible control plane. Point clients at this URL with `tailscale up --login-server=<url>`.",
+			"console": "/console/",
+		})
+		return
+	}
+	s.renderPublicPage(w, r, landingPageTemplate, map[string]any{
+		"Title": "Home",
 	})
 }

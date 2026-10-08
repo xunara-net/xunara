@@ -419,6 +419,11 @@ func newServerWithoutIssuer(t *testing.T) *Server {
 		t.Fatalf("New: %v", err)
 	}
 	t.Cleanup(func() { s.Close() })
+	// The console needs a signed-in operator; this helper builds the server
+	// without the test defaults, so seed the account itself.
+	if err := seedTestCredential(s); err != nil {
+		t.Fatalf("seeding the test credential: %v", err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	s.Start(ctx)

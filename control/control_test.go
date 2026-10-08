@@ -55,6 +55,13 @@ func newServerWithConfig(t *testing.T, cfg Config) *Server {
 	}
 	t.Cleanup(func() { s.Close() })
 
+	// A production server starts without an administrator and asks for one
+	// at /setup. Tests that are not about that flow get a ready account, so
+	// they can sign in the way an operator does: with a password.
+	if err := seedTestCredential(s); err != nil {
+		t.Fatalf("seeding the test credential: %v", err)
+	}
+
 	// Tests serve Handler directly instead of calling Serve, so the background
 	// workers (janitor, config watcher) have to be started explicitly.
 	ctx, cancel := context.WithCancel(context.Background())

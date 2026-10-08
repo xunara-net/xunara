@@ -315,7 +315,7 @@ func TestErrorPageLocalized(t *testing.T) {
 	hs := newTestHTTPServer(t, s)
 
 	body := bodyString(t, getRequestWithLanguage(t, noRedirectClient(), hs.URL+"/login", "zh-CN,zh;q=0.9"))
-	for _, want := range []string{"<h1>登录</h1>", "选择身份提供方以继续。", `<html lang="zh"`} {
+	for _, want := range []string{"<h1>登录</h1>", "登录控制台以管理此网络。", "密码", `<html lang="zh"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("Chinese sign-in page does not contain %q:\n%s", want, body)
 		}

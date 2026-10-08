@@ -34,6 +34,21 @@ func newSecret() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
+// NewSecret returns a fresh URL-safe secret with n bytes of entropy. It is
+// exported for the few callers outside this package that need the same quality
+// of randomness without re-deriving the encoding rules (the control plane's
+// one-time setup token, for example).
+func NewSecret(n int) (string, error) {
+	if n <= 0 {
+		return "", fmt.Errorf("identity: secret size must be positive, got %d", n)
+	}
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("identity: generating a secret: %w", err)
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
 // HashSecret returns the hex SHA-256 of a bearer secret, the form that is
 // stored: a leaked database must not hand out working tokens. Secrets that
 // must be reconstructed later (an OAuth state, a PKCE verifier) are stored

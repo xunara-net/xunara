@@ -1955,6 +1955,32 @@ handler 数据语义与存储不动）。规格见
   且单元格保留最小宽度，表格内标识符不折行；内联脚本生成的文字（筛选框、
   确认框、主题按钮说明、登录脚本回落文案）改由 `T` 渲染，中英各自成句。
 
+## M45 — 正式控制中心门面与账号体系（v2，已完成）
+
+目标：把部署从「打开 `/console` 即 owner」的演示状态改为正式服务：首页 → 登录/
+注册 → 控制台；管理员用一次性令牌初始化。范围限定身份与表现层（协议、
+`/api/v2`、handler 数据语义与既有存储结构不动）。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §52。
+
+- 门面：`GET /` 对浏览器渲染首页（定位、`tailscale up --login-server=<url>`、
+  入口），对非浏览器保持原 JSON 摘要；首页不建立会话、不下发 cookie。
+- 初始化：`GET/POST /setup`；启动时把一次性令牌写入状态目录 `setup-token`
+  （0600，日志只打路径）；常数时间比对 + 表单签名令牌 + 限速；成功后内建账号
+  改名为所填登录名、`role=owner`、写入 bcrypt 密码、删除令牌、审计
+  `admin.bootstrap`，随后跳转控制台。
+- 登录：`GET /login` 只渲染表单（不再 GET 自动登录）；`POST /login` 走
+  store 限速（地址/登录名两桶）、统一失败文案与等时校验，密码为自描述 bcrypt，
+  凭据以 user ID 为键。
+- 注册：仅限邀请（`xunara_invite_…`，只存哈希、单次、可过期、角色限
+  member/admin），`GET/POST /signup` 原子兑换（并发唯一）并回滚失败账号。
+- Console：Users 页面新增 Invitations 区块（创建/列表/撤销，注册链接只显示
+  一次），写操作走 admin/owner + CSRF，审计 `invite.created`/`invite.revoked`/
+  `invite.redeemed`。
+- 中文文案：公共页面词条独立成 `control/public_i18n_zh.go` 并与 Console 词典
+  合并（手写优先），新增 Console 词条按字母序补入既有词典。
+- 测试：新增 `control/public_test.go` 与 `identity/{password,credential,invite}_test.go`；
+  全量 `go test ./...`、`go vet ./...`、`go test -race ./control/ ./identity/`。
+
 ---
 
 ## 后续计划（用户指定的排序）

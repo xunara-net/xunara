@@ -9,7 +9,7 @@ tailscale up --login-server=https://control.example.com
 
 ## 状态
 
-v1/v2 规格范围（M1–M44）已全部实现：`go test ./...` 与关键包的 `go test -race`
+v1/v2 规格范围（M1–M45）已全部实现：`go test ./...` 与关键包的 `go test -race`
 通过。规格 [PROJECT_SPEC.md](Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md)、
 进度 [ROADMAP.md](ROADMAP.md)、开发约束 [AGENTS.md](AGENTS.md)。
 
@@ -17,8 +17,9 @@ v1/v2 规格范围（M1–M44）已全部实现：`go test ./...` 与关键包�
 
 - **协议兼容**：TS2021 / Noise、`/machine/*` 内层端点、MapRequest/MapResponse
   （含流式长轮询与 zstd）、DERP、node key 轮换、Tailnet Lock（TKA）。
-- **身份**：本地账号 / OIDC / Passkey（WebAuthn）；多租户；人类 / 机器 / 服务
-  身份分离；Session 支持吊销、过期、轮换，可多实例部署。
+- **身份**：本地账号（首次初始化 + 密码登录 + 邀请注册）/ OIDC / Passkey
+  （WebAuthn）；多租户；人类 / 机器 / 服务身份分离；Session 支持吊销、过期、
+  轮换，可多实例部署。
 - **网络**：MagicDNS、ACL / Grants / nodeAttrs、子网路由与 Exit Node 审批、
   Tailscale SSH（含 check 审批）、设备授权与预认证密钥。
 - **扩展**：Atlas 服务发现（健康摘除、Consul/K8s 导入并可携带可见性/共享
@@ -26,6 +27,8 @@ v1/v2 规格范围（M1–M44）已全部实现：`go test ./...` 与关键包�
   MagicDNS 可见范围、按 ACL 自动收敛的可见性、跨组织服务名投影）、Flux
   端到端加密文件投递、Reach 远程命令（目标显式审批）、Share 跨组织机器共享、
   Workload Identity。
+- **门面**：`/` 首页 → `/login` / `/signup` / `/setup` → `/console`；未登录访问
+  控制台一律跳登录，首次部署用状态目录里的一次性令牌创建管理员。
 - **运维**：Web Console（22 页，中英双语、蓝/墨绿双配色、本地时区、
   响应式/暗色模式/可访问性/渐进增强）、
   HTTP `/api/v2` + gRPC、Webhooks（签名 + 重试）、

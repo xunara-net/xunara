@@ -193,6 +193,19 @@ const (
 	AuditShareAccepted      = "share.accepted"
 	AuditShareRejected      = "share.rejected"
 	AuditShareRevoked       = "share.revoked"
+	// AuditAdminBootstrap records the first-run setup that gave the built-in
+	// administrator its password. The detail names the login, never the
+	// password or its hash.
+	AuditAdminBootstrap = "admin.bootstrap"
+	// AuditInviteCreated and AuditInviteRevoked track registration invites by
+	// ID; the token itself is never stored or logged.
+	AuditInviteCreated = "invite.created"
+	AuditInviteRevoked = "invite.revoked"
+	// AuditInviteRedeemed records an invite being spent, by invite ID and
+	// the account it created.
+	AuditInviteRedeemed = "invite.redeemed"
+	// AuditUserRegistered records an account created by redeeming an invite.
+	AuditUserRegistered = "user.registered"
 	// AuditNodeExpiryShortened records a node shortening its own key expiry
 	// (upstream LocalBackend.SetExpirySooner). Extensions are rejected, so the
 	// expiry in this record is always sooner than the previous one.

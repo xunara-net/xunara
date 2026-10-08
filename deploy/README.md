@@ -50,6 +50,29 @@ sudo systemctl daemon-reload && sudo systemctl restart xunarad
 Secret 只写进 `/etc/xunara/xunarad.env`（OIDC client secret、平台 token、webhook
 签名密钥、DNS webhook token）。这些变量由 `*-env` 标志读取，不会出现在 `ps` 里。
 
+## 首次初始化（必做）
+
+全新的部署**没有**管理员密码：打开 `/console` 只会被送到登录页。第一次必须用
+服务自己写出的一次性令牌创建管理员：
+
+```sh
+sudo cat /var/lib/xunara/setup-token     # 32 字节随机，0600，日志里只有路径
+```
+
+浏览器打开 `http://<host>:9090/`（首页 → 「初始化管理员」，或直接 `/setup`），
+填入该令牌、登录名与密码（至少 12 个字符）。提交成功后令牌文件立即删除，
+`/setup` 变为跳转登录页，账号成为 `owner`，审计记录 `admin.bootstrap`。
+
+之后：
+
+- 登录：`/login`（登录名 + 密码；GET 永远不会自动登录）；
+- 邀请注册：控制台「Users → Invitations」创建邀请，把生成的
+  `/signup?invite=...` 链接发给对方；链接只显示一次，服务器只存哈希。
+
+若令牌文件被删掉或忘记密码且没有其他管理员：停服，删除
+`/var/lib/xunara/local_credentials` 中对应的行（或整张表）后重启，服务会重新
+写出一枚新的 `setup-token`。
+
 ## 状态、备份与升级注意
 
 - 状态全在 `/var/lib/xunara`：节点、用户、Session、预认证密钥、审计、策略快照，
@@ -121,4 +144,5 @@ sudo systemctl start xunarad
 ```
 
 跨版本升级后确认：`systemctl status xunarad`、`journalctl -u xunarad -n 50`、
-`curl -fsS http://127.0.0.1:9090/health`、控制台能打开 `/console`。
+`curl -fsS http://127.0.0.1:9090/health`、首页能打开 `/`、`/console` 未登录时
+跳转到 `/login`。
