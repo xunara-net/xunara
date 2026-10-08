@@ -206,10 +206,23 @@ func (c *Catalog) Get(id string) (Plan, bool) {
 	return p, ok
 }
 
+// UnlimitedPlan is the plan of a deployment that sells nothing: every quota is
+// disabled. It is what a control plane without a catalog runs under, so a
+// self-hosted installation keeps behaving exactly as before (AGENTS.md
+// section 16).
+func UnlimitedPlan() Plan {
+	return Plan{
+		ID: "unlimited", Name: "Unlimited",
+		MaxDevices: Unlimited, MaxUsers: Unlimited, MaxRoutes: Unlimited, MaxAuthKeys: Unlimited,
+		AllowCustomCIDR: true, AllowExitNode: true, AllowSubnetRouter: true, AllowAPI: true,
+		AllowACL: true, AllowGrants: true, AllowCustomDNS: true, AllowAuditLog: true, AllowMultiMember: true,
+	}
+}
+
 // Default returns the plan a tenant starts on: the first one in the catalog.
 func (c *Catalog) Default() Plan {
 	if c == nil || len(c.order) == 0 {
-		return Plan{ID: "unlimited", Name: "Unlimited", MaxDevices: Unlimited, MaxUsers: Unlimited, MaxRoutes: Unlimited, MaxAuthKeys: Unlimited}
+		return UnlimitedPlan()
 	}
 	return c.plans[c.order[0]]
 }
