@@ -2048,3 +2048,21 @@ Compatibility impact
 Security impact
 Tests
 ```
+
+## M48 — 多租户商业化平台（套餐 / 网段 / 平台控制台 / 用户中心）
+
+- `plan/`：套餐目录（设备/成员/路由/密钥配额 + 九项能力开关），
+  支持运行时新增与覆盖；无套餐的部署即 UnlimitedPlan。
+- `netspace/`：网段校验（保留段、/16–/28、主机位规范化）与租户段池分配
+  （确定性、跳过保留与已占用块）。
+- `control.PlanRegistry`：租户→套餐与网段分配，池内自动分配、冲突检测、
+  降级自动回退；`plans.db` 独立版本化迁移。
+- 强制点：注册（交互式与预授权）、设备审批、成员邀请/登录、预授权密钥、
+  API 密钥、审计日志页、路由与出口节点审批 —— 第 11 台设备返回
+  `DEVICE_LIMIT_REACHED`（403 / RegisterResponse.Error）。
+- 按租户网段：`state.SetAddressPrefixes`（内存 + SQLite，跳过已用地址，
+  改段不重编既有设备）。
+- 平台 API v1 与平台控制台 `/admin`（独立入口、独立会话与 CSRF）：
+  总览、租户、用户、套餐编辑器。
+- 用户中心 `/console/plan`：当前套餐、用量、网段与能力清单。
+- `xunarad -plans <file>` / `-network-pool <cidr>`；自托管默认关闭。

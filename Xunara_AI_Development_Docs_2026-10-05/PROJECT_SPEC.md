@@ -2917,3 +2917,20 @@ SHA-256 指纹，官方客户端据此替代 CA 校验。除指纹机制外不�
 - 端到端：本地 Veil（自签名）+ xunarad（`-derp-map`）+ 两个官方
   `tailscaled` 1.102.2 客户端，`BackendState=Running`、`Health` 为空、互为对端
   且 ping 通。
+
+## 54. 套餐、网段与平台控制台（M48）
+
+- 套餐是数据：`plan.Plan`（价格/周期/设备/成员/路由/密钥配额 + 能力开关），
+  目录内置 free/pro/business，部署用 `-plans` 覆盖，运营者可在平台控制台
+  直接新增或改写；无目录即 UnlimitedPlan（自托管默认不变）。
+- 分配是平台事实：`control.PlanRegistry` 记录每租户的 plan_id 与 network_prefix；
+  未分配回落到目录默认，套餐下架不影响既有租户（回落到默认）。
+- 强制在资源创建处：设备（注册与审批）、成员（邀请与 OIDC 首登）、
+  预授权密钥、API 密钥、审计日志读取、路由/出口节点审批；消息以稳定码开头
+  （DEVICE_LIMIT_REACHED 等），中英双语。
+- 网段：`netspace` 负责合法性（保留段、/16–/28）与租户间冲突检测；
+  池内自动分配（默认 100.100.0.0/16 切 /24），付费套餐可自定义；
+  `state.SetAddressPrefixes` 只影响新设备，既有设备地址不变。
+- 身份面分离：租户控制台 `/console`（会话 + CSRF）与平台控制台 `/admin`
+  （平台令牌登录、独立会话表 admin_sessions、每会话 CSRF）互不通用。
+- 平台 API：`/api/platform/v1/plans`、`/organizations/{id}/plan`。
