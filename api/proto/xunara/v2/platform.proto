@@ -128,6 +128,10 @@ service PlatformService {
 
 message GetMetaRequest {}
 
+// Meta mirrors GET /api/v2/meta. The boolean fields report whether an
+// optional capability is enabled; they never carry secrets or endpoint
+// detail. webhooks_enabled means at least one receiver would accept
+// deliveries (configured or enabled managed endpoint).
 message Meta {
   string version = 1;
   string server_url = 2;
@@ -144,6 +148,9 @@ message Meta {
   string derp_policy = 13;
   uint32 derp_regions_served = 14;
   bool identity_tokens_enabled = 15;
+  bool reach_enabled = 16;
+  bool flux_enabled = 17;
+  bool passkeys_enabled = 18;
 }
 
 message GetOrganizationIdentityRequest {}

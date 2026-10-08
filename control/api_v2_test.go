@@ -3,6 +3,7 @@ package control
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/xunara/xunara/identity"
 	"github.com/xunara/xunara/idtoken"
 	"github.com/xunara/xunara/state"
+	"github.com/xunara/xunara/webhook"
 )
 
 // seedAPIMachine creates a node directly in the store.
@@ -57,11 +59,71 @@ func TestAPIV2Meta(t *testing.T) {
 	if _, ok := meta["agentProtocolVersion"]; !ok {
 		t.Error("meta lacks the agent protocol version")
 	}
+	// Feature discovery defaults: nothing optional is enabled on a bare
+	// server, and a false must be reported, not omitted.
+	for _, field := range []string{"reachEnabled", "fluxEnabled", "passkeysEnabled", "webhooksEnabled"} {
+		if meta[field] != false {
+			t.Errorf("meta %s = %v, want false on a bare server", field, meta[field])
+		}
+	}
 	// No key material or secrets in the discovery document.
 	for _, forbidden := range []string{"noiseKey", "machineKey", "secret", "token"} {
 		if _, ok := meta[forbidden]; ok {
 			t.Errorf("meta leaks %q", forbidden)
 		}
+	}
+}
+
+// TestAPIV2MetaFeatureFlags checks that the discovery document reflects the
+// optional features and, for webhooks, the endpoints created at runtime.
+func TestAPIV2MetaFeatureFlags(t *testing.T) {
+	s := newServerWithConfig(t, Config{
+		ReachEnabled: true,
+		Flux:         &FluxConfig{},
+		Passkeys:     testPasskeyConfig(),
+	})
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	_, readToken := seedAPIKey(t, s, identity.ScopeRead)
+	_, writeToken := seedAPIKey(t, s)
+
+	// A local receiver: the dispatcher delivers real audit events to enabled
+	// endpoints, and a test must not talk to the outside world.
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(receiver.Close)
+
+	meta := decodeAPI(t, apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/meta", readToken, nil))
+	if meta["reachEnabled"] != true || meta["fluxEnabled"] != true || meta["passkeysEnabled"] != true {
+		t.Errorf("enabled features = %v", meta)
+	}
+	if meta["webhooksEnabled"] != false {
+		t.Errorf("webhooksEnabled without a receiver = %v, want false", meta["webhooksEnabled"])
+	}
+
+	// A paused managed endpoint is configured but does not deliver, so it
+	// must not advertise webhook delivery.
+	if _, err := s.storeManagedWebhook(webhook.Endpoint{ID: "paused", URL: "https://hooks.example.com/p", Secret: "s3cret"}, false); err != nil {
+		t.Fatalf("storeManagedWebhook: %v", err)
+	}
+	meta = decodeAPI(t, apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/meta", readToken, nil))
+	if meta["webhooksEnabled"] != false {
+		t.Errorf("webhooksEnabled with only a paused endpoint = %v, want false", meta["webhooksEnabled"])
+	}
+
+	// Creating one through the API flips the flag without a restart.
+	resp := apiRequest(t, client, http.MethodPost, hs.URL+"/api/v2/webhooks", writeToken, apiWebhookCreateRequest{
+		ID:     "ops",
+		URL:    receiver.URL,
+		Secret: "s3cret",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d", resp.StatusCode)
+	}
+	meta = decodeAPI(t, apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/meta", readToken, nil))
+	if meta["webhooksEnabled"] != true {
+		t.Errorf("webhooksEnabled after creating an endpoint = %v, want true", meta["webhooksEnabled"])
 	}
 }
 

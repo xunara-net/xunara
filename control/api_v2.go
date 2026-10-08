@@ -235,14 +235,33 @@ func (s *Server) handleAPIV2Meta(w http.ResponseWriter, r *http.Request) {
 		"maxPageSize":           apiV2MaxPageSize,
 		"identityProviders":     s.providers.IDs(),
 		"agentProtocolVersion":  agentProtocolVersion,
-		"webhooksEnabled":       len(s.cfg.Webhooks) > 0,
+		"webhooksEnabled":       s.webhooksEnabled(),
 		"dnsProviderConfigured": s.cfg.DNSProvider != nil,
 		"certDomains":           s.certDomains,
 		"derpMapConfigured":     s.cfg.DERPMap != nil,
 		"derpPolicy":            string(s.cfg.DERPPolicy.Mode),
 		"derpRegionsServed":     s.derpRegionsServed(),
 		"identityTokensEnabled": s.tokens != nil,
+		"reachEnabled":          s.cfg.ReachEnabled,
+		"fluxEnabled":           s.flux != nil,
+		"passkeysEnabled":       s.passkeys != nil,
 	})
+}
+
+// webhooksEnabled reports whether any receiver would receive deliveries:
+// an endpoint from the deployment configuration, or an enabled managed
+// endpoint (Console/API). A paused managed endpoint is configured but does
+// not deliver, so it does not count (spec 37.1).
+func (s *Server) webhooksEnabled() bool {
+	if len(s.cfg.Webhooks) > 0 {
+		return true
+	}
+	for _, managed := range s.identity.ListWebhookEndpoints() {
+		if managed.Enabled {
+			return true
+		}
+	}
+	return false
 }
 
 // derpRegionsServed counts the DERP regions this organization advertises.

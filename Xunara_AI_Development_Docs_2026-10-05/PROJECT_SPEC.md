@@ -1661,3 +1661,35 @@ providers 是启动配置（§13/§15），本页只提示、不管理。
   （`authorizeScope`），Console 创建因此不会产生超出创建者角色的凭据。
 - 明确不做（v1）：编辑已有 key（scope/TTL 不可变，只能吊销重建）、显示或
   导出 token、OAuth provider 增删改（启动配置）、按 key 的用量统计。
+
+## 37. 能力发现补齐（/api/v2/meta，v1）
+
+目标：`/api/v2/meta` 是客户端与自动化"调用前发现可选能力"的端点（§27–§36 的
+每个管理面都依赖它）；每个已交付的可选面都必须在 meta 里可见，且语义与真实
+行为一致。本版本补齐遗漏字段并修正 `webhooksEnabled` 的失真语义。
+
+### 37.1 字段
+
+现有字段不变，新增三个布尔：
+
+- `reachEnabled`：Xunara Reach 远程命令面（§31）启用（`cfg.ReachEnabled`）。
+- `fluxEnabled`：Xunara Flux 文件传输面（§33）启用（Flux 服务已构建）。
+- `passkeysEnabled`：passkey（WebAuthn）登录与凭据管理启用（passkey 服务
+  已构建；`cfg.Passkeys` 只是配置来源）。
+
+`webhooksEnabled` 语义修正：改为"存在会投递的接收端点"——启动配置了端点
+（`cfg.Webhooks`），**或**存在任一 `Enabled` 的托管端点（Console/API 创建）。
+此前只看启动配置，运行时创建的端点在 meta 里不可见；暂停（`Enabled=false`）
+的托管端点不投递，因此不计入。meta 只回答"是否启用"，不列端点明细。
+
+### 37.2 一致性
+
+- gRPC `PlatformService.GetMeta` 返回同一组字段与同一判据（proto 重新生成：
+  `reach_enabled`/`flux_enabled`/`passkeys_enabled`）。
+- 任何字段都不得携带 secret（AGENTS.md §8）；既有字段
+  （version/serverUrl/domain/capabilityVersion/minCapabilityVersion/maxPageSize/
+  identityProviders/agentProtocolVersion/dnsProviderConfigured/certDomains/
+  derpMapConfigured/derpPolicy/derpRegionsServed/identityTokensEnabled）语义
+  不变。
+- 不做能力清单/版本协商端点：客户端按字段判断即可，新增可选面继续在 meta
+  追加布尔字段。

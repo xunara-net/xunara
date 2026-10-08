@@ -190,13 +190,16 @@ func (g *grpcPlatformServer) GetMeta(ctx context.Context, _ *xunarav2.GetMetaReq
 		MaxPageSize:           uint32(apiV2MaxPageSize),
 		IdentityProviders:     s.providers.IDs(),
 		AgentProtocolVersion:  uint32(agentProtocolVersion),
-		WebhooksEnabled:       len(s.cfg.Webhooks) > 0,
+		WebhooksEnabled:       s.webhooksEnabled(),
 		DnsProviderConfigured: s.cfg.DNSProvider != nil,
 		CertDomains:           slices.Clone(s.certDomains),
 		DerpMapConfigured:     s.cfg.DERPMap != nil,
 		DerpPolicy:            string(s.cfg.DERPPolicy.Mode),
 		DerpRegionsServed:     uint32(s.derpRegionsServed()),
 		IdentityTokensEnabled: s.tokens != nil,
+		ReachEnabled:          s.cfg.ReachEnabled,
+		FluxEnabled:           s.flux != nil,
+		PasskeysEnabled:       s.passkeys != nil,
 	}, nil
 }
 

@@ -85,6 +85,10 @@ func (*GetMetaRequest) Descriptor() ([]byte, []int) {
 	return file_xunara_v2_platform_proto_rawDescGZIP(), []int{0}
 }
 
+// Meta mirrors GET /api/v2/meta. The boolean fields report whether an
+// optional capability is enabled; they never carry secrets or endpoint
+// detail. webhooks_enabled means at least one receiver would accept
+// deliveries (configured or enabled managed endpoint).
 type Meta struct {
 	state                 protoimpl.MessageState `protogen:"open.v1"`
 	Version               string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
@@ -102,6 +106,9 @@ type Meta struct {
 	DerpPolicy            string                 `protobuf:"bytes,13,opt,name=derp_policy,json=derpPolicy,proto3" json:"derp_policy,omitempty"`
 	DerpRegionsServed     uint32                 `protobuf:"varint,14,opt,name=derp_regions_served,json=derpRegionsServed,proto3" json:"derp_regions_served,omitempty"`
 	IdentityTokensEnabled bool                   `protobuf:"varint,15,opt,name=identity_tokens_enabled,json=identityTokensEnabled,proto3" json:"identity_tokens_enabled,omitempty"`
+	ReachEnabled          bool                   `protobuf:"varint,16,opt,name=reach_enabled,json=reachEnabled,proto3" json:"reach_enabled,omitempty"`
+	FluxEnabled           bool                   `protobuf:"varint,17,opt,name=flux_enabled,json=fluxEnabled,proto3" json:"flux_enabled,omitempty"`
+	PasskeysEnabled       bool                   `protobuf:"varint,18,opt,name=passkeys_enabled,json=passkeysEnabled,proto3" json:"passkeys_enabled,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -237,6 +244,27 @@ func (x *Meta) GetDerpRegionsServed() uint32 {
 func (x *Meta) GetIdentityTokensEnabled() bool {
 	if x != nil {
 		return x.IdentityTokensEnabled
+	}
+	return false
+}
+
+func (x *Meta) GetReachEnabled() bool {
+	if x != nil {
+		return x.ReachEnabled
+	}
+	return false
+}
+
+func (x *Meta) GetFluxEnabled() bool {
+	if x != nil {
+		return x.FluxEnabled
+	}
+	return false
+}
+
+func (x *Meta) GetPasskeysEnabled() bool {
+	if x != nil {
+		return x.PasskeysEnabled
 	}
 	return false
 }
@@ -4737,7 +4765,7 @@ var File_xunara_v2_platform_proto protoreflect.FileDescriptor
 const file_xunara_v2_platform_proto_rawDesc = "" +
 	"\n" +
 	"\x18xunara/v2/platform.proto\x12\txunara.v2\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1cgoogle/protobuf/struct.proto\"\x10\n" +
-	"\x0eGetMetaRequest\"\x84\x05\n" +
+	"\x0eGetMetaRequest\"\xf7\x05\n" +
 	"\x04Meta\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x1d\n" +
 	"\n" +
@@ -4756,7 +4784,10 @@ const file_xunara_v2_platform_proto_rawDesc = "" +
 	"\vderp_policy\x18\r \x01(\tR\n" +
 	"derpPolicy\x12.\n" +
 	"\x13derp_regions_served\x18\x0e \x01(\rR\x11derpRegionsServed\x126\n" +
-	"\x17identity_tokens_enabled\x18\x0f \x01(\bR\x15identityTokensEnabled\" \n" +
+	"\x17identity_tokens_enabled\x18\x0f \x01(\bR\x15identityTokensEnabled\x12#\n" +
+	"\rreach_enabled\x18\x10 \x01(\bR\freachEnabled\x12!\n" +
+	"\fflux_enabled\x18\x11 \x01(\bR\vfluxEnabled\x12)\n" +
+	"\x10passkeys_enabled\x18\x12 \x01(\bR\x0fpasskeysEnabled\" \n" +
 	"\x1eGetOrganizationIdentityRequest\"\xb7\x01\n" +
 	"\x14OrganizationIdentity\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +

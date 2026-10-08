@@ -3,6 +3,8 @@ package control
 import (
 	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -122,6 +124,58 @@ func TestPlatformGRPCMeta(t *testing.T) {
 	}
 	if !meta.GetWebhooksEnabled() || !meta.GetDnsProviderConfigured() {
 		t.Errorf("feature flags = %+v", meta)
+	}
+	if meta.GetReachEnabled() || meta.GetFluxEnabled() || meta.GetPasskeysEnabled() {
+		t.Errorf("optional features = %+v, want disabled", meta)
+	}
+}
+
+// TestPlatformGRPCMetaFeatureFlags checks that gRPC meta mirrors the HTTP
+// discovery document for the optional features and managed webhooks.
+func TestPlatformGRPCMetaFeatureFlags(t *testing.T) {
+	s := newServerWithConfig(t, Config{
+		ReachEnabled: true,
+		Flux:         &FluxConfig{},
+		Passkeys:     testPasskeyConfig(),
+	})
+	client := startGRPCTestServer(t, s.RegisterPlatformGRPC)
+	_, token := seedAPIKey(t, s, identity.ScopeRead)
+
+	// A local receiver: the dispatcher delivers real audit events to enabled
+	// endpoints, and a test must not talk to the outside world.
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(receiver.Close)
+
+	if _, err := s.storeManagedWebhook(webhook.Endpoint{ID: "ops", URL: receiver.URL, Secret: "s3cret"}, true); err != nil {
+		t.Fatalf("storeManagedWebhook: %v", err)
+	}
+
+	meta, err := client.GetMeta(grpcCtx(token), &xunarav2.GetMetaRequest{})
+	if err != nil {
+		t.Fatalf("GetMeta: %v", err)
+	}
+	if !meta.GetReachEnabled() || !meta.GetFluxEnabled() || !meta.GetPasskeysEnabled() {
+		t.Errorf("optional features = %+v, want enabled", meta)
+	}
+	if !meta.GetWebhooksEnabled() {
+		t.Errorf("webhooksEnabled with a managed endpoint = false, want true")
+	}
+
+	// The paused endpoint must not count.
+	if _, err := s.storeManagedWebhook(webhook.Endpoint{ID: "paused", URL: "https://hooks.example.com/p", Secret: "s3cret"}, false); err != nil {
+		t.Fatalf("storeManagedWebhook: %v", err)
+	}
+	if err := s.deleteManagedWebhook("ops"); err != nil {
+		t.Fatalf("deleteManagedWebhook: %v", err)
+	}
+	meta, err = client.GetMeta(grpcCtx(token), &xunarav2.GetMetaRequest{})
+	if err != nil {
+		t.Fatalf("GetMeta: %v", err)
+	}
+	if meta.GetWebhooksEnabled() {
+		t.Errorf("webhooksEnabled with only a paused endpoint = true, want false")
 	}
 }
 

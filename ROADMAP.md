@@ -1594,6 +1594,28 @@ write 角色 + CSRF），管理面没有任何写入口。
 
 ---
 
+## M31 — 能力发现补齐（/api/v2/meta，已完成）
+
+目标：`/api/v2/meta` 是"调用前发现可选能力"的端点（§27–§36 的每个管理面
+都以它为准），补齐已交付能力中遗漏的字段，并修正 `webhooksEnabled` 的失真
+语义。规格见 `Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §37。
+
+- 新增 `reachEnabled`（§31，`cfg.ReachEnabled`）、`fluxEnabled`（§33，Flux
+  服务已构建）、`passkeysEnabled`（passkey 登录，服务已构建）；gRPC
+  `PlatformService.GetMeta` 同步（proto 重新生成 `reach_enabled`/
+  `flux_enabled`/`passkeys_enabled`）。
+- `webhooksEnabled` 修正为"存在会投递的接收端点"：启动配置的端点，或任一
+  `Enabled` 的托管端点（Console/API 创建）。此前只看启动配置，运行时创建的
+  端点在 meta 里不可见；暂停的托管端点不投递、不计入。判据抽成
+  `Server.webhooksEnabled()`，HTTP 与 gRPC 共用。
+- meta 仍只回答"是否启用"：不列端点明细、不携带 secret；既有字段语义不变。
+- 测试：`control/api_v2_test.go`（裸服务器四项 false；开启 Reach/Flux/
+  Passkeys 后 true；暂停托管端点不翻转；经 `/api/v2/webhooks` 创建端点后
+  无需重启即 true）；`control/grpc_platform_test.go`（配置端点场景可选面
+  false；开启后三项 true；托管端点 true、暂停后 false）。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。
