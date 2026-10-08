@@ -136,6 +136,7 @@ func runAgent(ctx context.Context, args []string) error {
 	stateDir := fs.String("state-dir", defaultStateDir(), "directory holding agent.json")
 	interval := fs.Duration("interval", 30*time.Second, "heartbeat/netmap interval")
 	servicesInterval := fs.Duration("services-interval", 5*time.Minute, "how often to re-publish the service declaration")
+	healthInterval := fs.Duration("services-health-interval", 30*time.Second, "how often to report health-tracked service readiness")
 	logLevel := fs.String("log-level", "info", "log level: debug|info|warn|error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -159,6 +160,7 @@ func runAgent(ctx context.Context, args []string) error {
 	// publish` next to a running agent takes effect without a restart.
 	agent.StateDir = *stateDir
 	agent.ServicesInterval = *servicesInterval
+	agent.HealthInterval = *healthInterval
 
 	if !state.Enrolled() {
 		return errors.New("this agent has not been approved yet; run `xunara-agent enroll` again after approving the device")
@@ -221,6 +223,7 @@ func usage() {
 usage:
   xunara-agent enroll -server <url> [-auth-key-file f] [-state-dir d] [-hostname h]
   xunara-agent run    [-state-dir d] [-interval 30s] [-services-interval 5m]
+                      [-services-health-interval 30s]
   xunara-agent status [-state-dir d] [-json]
   xunara-agent services publish -file <file> [-state-dir d]
   xunara-agent services import -from consul [-consul-addr addr] [-dry-run] [-state-dir d]
@@ -236,7 +239,10 @@ The pre-auth key is read from the environment variable `+authKeyEnv+` or from
 -auth-key-file; it is never accepted as a flag.
 
 The services declaration file is
-  {"services": [{"name": "api", "protocol": "tcp", "port": 443}]}
+  {"services": [{"name": "api", "protocol": "tcp", "port": 443, "health": true}]}
+Services with "health": true are withdrawn from MagicDNS until
+<state-dir>/services-health.json reports them ready:
+  {"services": [{"name": "api", "ready": true}]}
 Import reads the Consul ACL token from the environment variable
 `+consulTokenEnv+`; it is never accepted as a flag.
 

@@ -1185,11 +1185,18 @@ type Service struct {
 	Hostname  string                 `protobuf:"bytes,7,opt,name=hostname,proto3" json:"hostname,omitempty"`
 	// dns_name is the MagicDNS name the service resolves under; empty when the
 	// deployment has no domain configured.
-	DnsName       string                 `protobuf:"bytes,8,opt,name=dns_name,json=dnsName,proto3" json:"dns_name,omitempty"`
-	Created       *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=created,proto3" json:"created,omitempty"`
-	Updated       *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=updated,proto3" json:"updated,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	DnsName string                 `protobuf:"bytes,8,opt,name=dns_name,json=dnsName,proto3" json:"dns_name,omitempty"`
+	Created *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=created,proto3" json:"created,omitempty"`
+	Updated *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=updated,proto3" json:"updated,omitempty"`
+	// health is "healthy" or "unhealthy" for services whose declaration opted
+	// into readiness reporting; it is empty for untracked services, which are
+	// always discoverable. Unhealthy services are withdrawn from MagicDNS.
+	Health string `protobuf:"bytes,11,opt,name=health,proto3" json:"health,omitempty"`
+	// health_reported_at is when the node last reported readiness; unset when
+	// it never did.
+	HealthReportedAt *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=health_reported_at,json=healthReportedAt,proto3" json:"health_reported_at,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Service) Reset() {
@@ -1288,6 +1295,20 @@ func (x *Service) GetCreated() *timestamppb.Timestamp {
 func (x *Service) GetUpdated() *timestamppb.Timestamp {
 	if x != nil {
 		return x.Updated
+	}
+	return nil
+}
+
+func (x *Service) GetHealth() string {
+	if x != nil {
+		return x.Health
+	}
+	return ""
+}
+
+func (x *Service) GetHealthReportedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.HealthReportedAt
 	}
 	return nil
 }
@@ -2679,7 +2700,7 @@ const file_xunara_v2_platform_proto_rawDesc = "" +
 	"\x04name\x18\x04 \x01(\tR\x04name\"n\n" +
 	"\x14ListServicesResponse\x12.\n" +
 	"\bservices\x18\x01 \x03(\v2\x12.xunara.v2.ServiceR\bservices\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xa7\x03\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\x89\x04\n" +
 	"\aService\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprotocol\x18\x02 \x01(\tR\bprotocol\x12\x12\n" +
@@ -2692,7 +2713,9 @@ const file_xunara_v2_platform_proto_rawDesc = "" +
 	"\bdns_name\x18\b \x01(\tR\adnsName\x124\n" +
 	"\acreated\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\acreated\x124\n" +
 	"\aupdated\x18\n" +
-	" \x01(\v2\x1a.google.protobuf.TimestampR\aupdated\x1a;\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\aupdated\x12\x16\n" +
+	"\x06health\x18\v \x01(\tR\x06health\x12H\n" +
+	"\x12health_reported_at\x18\f \x01(\v2\x1a.google.protobuf.TimestampR\x10healthReportedAt\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xaa\x01\n" +
@@ -2881,53 +2904,54 @@ var file_xunara_v2_platform_proto_depIdxs = []int32{
 	38, // 9: xunara.v2.Service.metadata:type_name -> xunara.v2.Service.MetadataEntry
 	40, // 10: xunara.v2.Service.created:type_name -> google.protobuf.Timestamp
 	40, // 11: xunara.v2.Service.updated:type_name -> google.protobuf.Timestamp
-	40, // 12: xunara.v2.AuditEvent.time:type_name -> google.protobuf.Timestamp
-	16, // 13: xunara.v2.ListAuditResponse.events:type_name -> xunara.v2.AuditEvent
-	40, // 14: xunara.v2.Webhook.created_at:type_name -> google.protobuf.Timestamp
-	40, // 15: xunara.v2.Webhook.updated_at:type_name -> google.protobuf.Timestamp
-	19, // 16: xunara.v2.ListWebhooksResponse.webhooks:type_name -> xunara.v2.Webhook
-	25, // 17: xunara.v2.Organization.stats:type_name -> xunara.v2.OrganizationStats
-	24, // 18: xunara.v2.ListOrganizationsResponse.organizations:type_name -> xunara.v2.Organization
-	30, // 19: xunara.v2.UpdateOrganizationRequest.domains:type_name -> xunara.v2.StringList
-	40, // 20: xunara.v2.PlatformAuditEvent.time:type_name -> google.protobuf.Timestamp
-	34, // 21: xunara.v2.ListPlatformAuditResponse.events:type_name -> xunara.v2.PlatformAuditEvent
-	39, // 22: xunara.v2.ListPlatformAuditResponse.cursors:type_name -> xunara.v2.ListPlatformAuditResponse.CursorsEntry
-	41, // 23: xunara.v2.MachineDeviceAttrs.AttrsEntry.value:type_name -> google.protobuf.Value
-	0,  // 24: xunara.v2.PlatformService.GetMeta:input_type -> xunara.v2.GetMetaRequest
-	2,  // 25: xunara.v2.PlatformService.GetTailnetLock:input_type -> xunara.v2.GetTailnetLockRequest
-	5,  // 26: xunara.v2.PlatformService.GetIDTokenIssuer:input_type -> xunara.v2.GetIDTokenIssuerRequest
-	9,  // 27: xunara.v2.PlatformService.GetMachineDeviceAttrs:input_type -> xunara.v2.GetMachineDeviceAttrsRequest
-	11, // 28: xunara.v2.PlatformService.ListMachines:input_type -> xunara.v2.ListMachinesRequest
-	13, // 29: xunara.v2.PlatformService.ListServices:input_type -> xunara.v2.ListServicesRequest
-	17, // 30: xunara.v2.PlatformService.ListAudit:input_type -> xunara.v2.ListAuditRequest
-	20, // 31: xunara.v2.PlatformService.ListWebhooks:input_type -> xunara.v2.ListWebhooksRequest
-	22, // 32: xunara.v2.PlatformService.RevokeAgentToken:input_type -> xunara.v2.RevokeAgentTokenRequest
-	26, // 33: xunara.v2.PlatformAdminService.ListOrganizations:input_type -> xunara.v2.ListOrganizationsRequest
-	28, // 34: xunara.v2.PlatformAdminService.GetOrganization:input_type -> xunara.v2.GetOrganizationRequest
-	29, // 35: xunara.v2.PlatformAdminService.CreateOrganization:input_type -> xunara.v2.CreateOrganizationRequest
-	31, // 36: xunara.v2.PlatformAdminService.UpdateOrganization:input_type -> xunara.v2.UpdateOrganizationRequest
-	32, // 37: xunara.v2.PlatformAdminService.DeleteOrganization:input_type -> xunara.v2.DeleteOrganizationRequest
-	35, // 38: xunara.v2.PlatformAdminService.ListAudit:input_type -> xunara.v2.ListPlatformAuditRequest
-	1,  // 39: xunara.v2.PlatformService.GetMeta:output_type -> xunara.v2.Meta
-	3,  // 40: xunara.v2.PlatformService.GetTailnetLock:output_type -> xunara.v2.TailnetLockStatus
-	6,  // 41: xunara.v2.PlatformService.GetIDTokenIssuer:output_type -> xunara.v2.IDTokenIssuerStatus
-	10, // 42: xunara.v2.PlatformService.GetMachineDeviceAttrs:output_type -> xunara.v2.MachineDeviceAttrs
-	12, // 43: xunara.v2.PlatformService.ListMachines:output_type -> xunara.v2.ListMachinesResponse
-	14, // 44: xunara.v2.PlatformService.ListServices:output_type -> xunara.v2.ListServicesResponse
-	18, // 45: xunara.v2.PlatformService.ListAudit:output_type -> xunara.v2.ListAuditResponse
-	21, // 46: xunara.v2.PlatformService.ListWebhooks:output_type -> xunara.v2.ListWebhooksResponse
-	23, // 47: xunara.v2.PlatformService.RevokeAgentToken:output_type -> xunara.v2.RevokeAgentTokenResponse
-	27, // 48: xunara.v2.PlatformAdminService.ListOrganizations:output_type -> xunara.v2.ListOrganizationsResponse
-	24, // 49: xunara.v2.PlatformAdminService.GetOrganization:output_type -> xunara.v2.Organization
-	24, // 50: xunara.v2.PlatformAdminService.CreateOrganization:output_type -> xunara.v2.Organization
-	24, // 51: xunara.v2.PlatformAdminService.UpdateOrganization:output_type -> xunara.v2.Organization
-	33, // 52: xunara.v2.PlatformAdminService.DeleteOrganization:output_type -> xunara.v2.DeleteOrganizationResponse
-	36, // 53: xunara.v2.PlatformAdminService.ListAudit:output_type -> xunara.v2.ListPlatformAuditResponse
-	39, // [39:54] is the sub-list for method output_type
-	24, // [24:39] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	40, // 12: xunara.v2.Service.health_reported_at:type_name -> google.protobuf.Timestamp
+	40, // 13: xunara.v2.AuditEvent.time:type_name -> google.protobuf.Timestamp
+	16, // 14: xunara.v2.ListAuditResponse.events:type_name -> xunara.v2.AuditEvent
+	40, // 15: xunara.v2.Webhook.created_at:type_name -> google.protobuf.Timestamp
+	40, // 16: xunara.v2.Webhook.updated_at:type_name -> google.protobuf.Timestamp
+	19, // 17: xunara.v2.ListWebhooksResponse.webhooks:type_name -> xunara.v2.Webhook
+	25, // 18: xunara.v2.Organization.stats:type_name -> xunara.v2.OrganizationStats
+	24, // 19: xunara.v2.ListOrganizationsResponse.organizations:type_name -> xunara.v2.Organization
+	30, // 20: xunara.v2.UpdateOrganizationRequest.domains:type_name -> xunara.v2.StringList
+	40, // 21: xunara.v2.PlatformAuditEvent.time:type_name -> google.protobuf.Timestamp
+	34, // 22: xunara.v2.ListPlatformAuditResponse.events:type_name -> xunara.v2.PlatformAuditEvent
+	39, // 23: xunara.v2.ListPlatformAuditResponse.cursors:type_name -> xunara.v2.ListPlatformAuditResponse.CursorsEntry
+	41, // 24: xunara.v2.MachineDeviceAttrs.AttrsEntry.value:type_name -> google.protobuf.Value
+	0,  // 25: xunara.v2.PlatformService.GetMeta:input_type -> xunara.v2.GetMetaRequest
+	2,  // 26: xunara.v2.PlatformService.GetTailnetLock:input_type -> xunara.v2.GetTailnetLockRequest
+	5,  // 27: xunara.v2.PlatformService.GetIDTokenIssuer:input_type -> xunara.v2.GetIDTokenIssuerRequest
+	9,  // 28: xunara.v2.PlatformService.GetMachineDeviceAttrs:input_type -> xunara.v2.GetMachineDeviceAttrsRequest
+	11, // 29: xunara.v2.PlatformService.ListMachines:input_type -> xunara.v2.ListMachinesRequest
+	13, // 30: xunara.v2.PlatformService.ListServices:input_type -> xunara.v2.ListServicesRequest
+	17, // 31: xunara.v2.PlatformService.ListAudit:input_type -> xunara.v2.ListAuditRequest
+	20, // 32: xunara.v2.PlatformService.ListWebhooks:input_type -> xunara.v2.ListWebhooksRequest
+	22, // 33: xunara.v2.PlatformService.RevokeAgentToken:input_type -> xunara.v2.RevokeAgentTokenRequest
+	26, // 34: xunara.v2.PlatformAdminService.ListOrganizations:input_type -> xunara.v2.ListOrganizationsRequest
+	28, // 35: xunara.v2.PlatformAdminService.GetOrganization:input_type -> xunara.v2.GetOrganizationRequest
+	29, // 36: xunara.v2.PlatformAdminService.CreateOrganization:input_type -> xunara.v2.CreateOrganizationRequest
+	31, // 37: xunara.v2.PlatformAdminService.UpdateOrganization:input_type -> xunara.v2.UpdateOrganizationRequest
+	32, // 38: xunara.v2.PlatformAdminService.DeleteOrganization:input_type -> xunara.v2.DeleteOrganizationRequest
+	35, // 39: xunara.v2.PlatformAdminService.ListAudit:input_type -> xunara.v2.ListPlatformAuditRequest
+	1,  // 40: xunara.v2.PlatformService.GetMeta:output_type -> xunara.v2.Meta
+	3,  // 41: xunara.v2.PlatformService.GetTailnetLock:output_type -> xunara.v2.TailnetLockStatus
+	6,  // 42: xunara.v2.PlatformService.GetIDTokenIssuer:output_type -> xunara.v2.IDTokenIssuerStatus
+	10, // 43: xunara.v2.PlatformService.GetMachineDeviceAttrs:output_type -> xunara.v2.MachineDeviceAttrs
+	12, // 44: xunara.v2.PlatformService.ListMachines:output_type -> xunara.v2.ListMachinesResponse
+	14, // 45: xunara.v2.PlatformService.ListServices:output_type -> xunara.v2.ListServicesResponse
+	18, // 46: xunara.v2.PlatformService.ListAudit:output_type -> xunara.v2.ListAuditResponse
+	21, // 47: xunara.v2.PlatformService.ListWebhooks:output_type -> xunara.v2.ListWebhooksResponse
+	23, // 48: xunara.v2.PlatformService.RevokeAgentToken:output_type -> xunara.v2.RevokeAgentTokenResponse
+	27, // 49: xunara.v2.PlatformAdminService.ListOrganizations:output_type -> xunara.v2.ListOrganizationsResponse
+	24, // 50: xunara.v2.PlatformAdminService.GetOrganization:output_type -> xunara.v2.Organization
+	24, // 51: xunara.v2.PlatformAdminService.CreateOrganization:output_type -> xunara.v2.Organization
+	24, // 52: xunara.v2.PlatformAdminService.UpdateOrganization:output_type -> xunara.v2.Organization
+	33, // 53: xunara.v2.PlatformAdminService.DeleteOrganization:output_type -> xunara.v2.DeleteOrganizationResponse
+	36, // 54: xunara.v2.PlatformAdminService.ListAudit:output_type -> xunara.v2.ListPlatformAuditResponse
+	40, // [40:55] is the sub-list for method output_type
+	25, // [25:40] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_xunara_v2_platform_proto_init() }

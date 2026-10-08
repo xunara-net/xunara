@@ -68,6 +68,8 @@ func main() {
 			"HTTPS endpoint that receives audit events (enables webhook delivery)")
 		webhookSecretEnv = flag.String("webhook-secret-env", "XUNARA_WEBHOOK_SECRET",
 			"environment variable holding the webhook HMAC signing secret")
+		serviceHealthTTL = flag.Duration("services-health-ttl", control.DefaultServiceHealthTTL,
+			"how long a service readiness report stays valid before the service is withdrawn from discovery")
 		webhookEvents = flag.String("webhook-events", "",
 			"comma-separated audit action globs to deliver (default all events)")
 	)
@@ -187,6 +189,7 @@ func main() {
 		Passkeys:            passkeyCfg,
 		CertDomains:         certDomains,
 		DNSProvider:         dnsProvider,
+		ServiceHealthTTL:    *serviceHealthTTL,
 		Webhooks:            webhooks,
 		Logger:              logger,
 	})
@@ -213,6 +216,7 @@ var orgScopedFlags = []string{
 	"oidc-issuer", "oidc-id", "oidc-client-id", "oidc-redirect-url", "oidc-scopes",
 	"allow-local-login", "cert-domain",
 	"passkey", "passkey-rpid", "passkey-origin", "passkey-display-name",
+	"services-health-ttl",
 	"dns-webhook-url", "dns-webhook-token-env",
 	"dns-cloudflare-zone", "dns-cloudflare-token-env",
 	"webhook-url", "webhook-secret-env", "webhook-events",

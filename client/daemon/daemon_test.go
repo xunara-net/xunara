@@ -34,6 +34,11 @@ type fakeAgentServer struct {
 	svcEmpty    int
 	svcLast     []protocol.Service
 	svcLastAuth string
+
+	healthCode  int
+	healthCount int
+	healthLast  []protocol.ServiceHealth
+	healthAuth  string
 }
 
 func (f *fakeAgentServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
@@ -85,6 +90,23 @@ func (f *fakeAgentServer) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"services":[]}`))
+	case "/api/agent/v1/services/health":
+		f.healthCount++
+		f.healthAuth = req.Header.Get("Authorization")
+		var body struct {
+			Services []protocol.ServiceHealth `json:"services"`
+		}
+		if err := json.Unmarshal(raw, &body); err != nil {
+			http.Error(w, "bad body", http.StatusBadRequest)
+			return
+		}
+		f.healthLast = body.Services
+		if f.healthCode != 0 {
+			http.Error(w, "nope", f.healthCode)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"services":[]}`))
 	default:
 		http.NotFound(w, req)
 	}
@@ -102,6 +124,14 @@ func (f *fakeAgentServer) serviceState() (publishes, empty int, last []protocol.
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.svcCount, f.svcEmpty, append([]protocol.Service(nil), f.svcLast...)
+}
+
+// healthState returns how many readiness reports arrived and a copy of the
+// most recent one.
+func (f *fakeAgentServer) healthState() (reports int, last []protocol.ServiceHealth, auth string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.healthCount, append([]protocol.ServiceHealth(nil), f.healthLast...), f.healthAuth
 }
 
 // TestEnrollPersistsState checks the enrollment round trip and the on-disk

@@ -13,6 +13,8 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -138,6 +140,7 @@ func publishDeclaration(ctx context.Context, stateDir string, services []protoco
 	if err := daemon.SaveServices(stateDir, services); err != nil {
 		return err
 	}
+	writeHealthHint(services)
 	return writePublishedServices(os.Stdout, views)
 }
 
@@ -252,14 +255,34 @@ func readServicesFile(path string) ([]protocol.Service, error) {
 }
 
 // serviceRow is the common render shape of a stored service and a declared
-// one; DNSName and Updated are only known for stored services.
+// one; DNSName, Updated and the reported Health are only known for stored
+// services (a declaration only records that health is tracked).
 type serviceRow struct {
 	Name     string
 	Protocol string
 	Port     uint32
 	DNSName  string
+	Health   string
 	Updated  time.Time
 	Metadata map[string]string
+}
+
+// writeHealthHint tells the operator where a health-tracked service's
+// readiness comes from. Without the file the service stays withdrawn from
+// discovery, so the message is guidance, not a warning.
+func writeHealthHint(services []protocol.Service) {
+	names := make([]string, 0, len(services))
+	for _, svc := range services {
+		if svc.Health {
+			names = append(names, svc.Name)
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	sort.Strings(names)
+	fmt.Fprintf(os.Stderr, "xunara-agent: %s report readiness in <state-dir>/%s; `run` sends the report every -services-health-interval and the control plane withdraws unreported services\n",
+		strings.Join(names, ", "), daemon.ServiceHealthFileName)
 }
 
 // writePublishedServices renders the set the server stored after a publish.
@@ -271,6 +294,7 @@ func writePublishedServices(w io.Writer, views []protocol.ServiceView) error {
 			Protocol: view.Protocol,
 			Port:     uint32(view.Port),
 			DNSName:  view.DNSName,
+			Health:   view.Health,
 			Updated:  view.Updated,
 			Metadata: view.Metadata,
 		})
@@ -282,7 +306,11 @@ func writePublishedServices(w io.Writer, views []protocol.ServiceView) error {
 func writeDeclaredServices(w io.Writer, services []protocol.Service) error {
 	rows := make([]serviceRow, 0, len(services))
 	for _, svc := range services {
-		rows = append(rows, serviceRow{Name: svc.Name, Protocol: svc.Protocol, Port: svc.Port, Metadata: svc.Metadata})
+		row := serviceRow{Name: svc.Name, Protocol: svc.Protocol, Port: svc.Port, Metadata: svc.Metadata}
+		if svc.Health {
+			row.Health = "tracked"
+		}
+		rows = append(rows, row)
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
 	return writeServicesTable(w, rows, "No services are declared on this agent.")
@@ -297,26 +325,34 @@ func writeServicesTable(w io.Writer, rows []serviceRow, empty string) error {
 	}
 
 	stored := false
+	tracked := false
 	for _, row := range rows {
 		if row.DNSName != "" || !row.Updated.IsZero() {
 			stored = true
-			break
+		}
+		if row.Health != "" {
+			tracked = true
 		}
 	}
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	header := []string{"NAME", "PROTO", "PORT"}
 	if stored {
-		fmt.Fprintln(tw, "NAME\tPROTO\tPORT\tDNS NAME\tUPDATED")
-	} else {
-		fmt.Fprintln(tw, "NAME\tPROTO\tPORT")
+		header = append(header, "DNS NAME", "UPDATED")
 	}
+	if tracked {
+		header = append(header, "HEALTH")
+	}
+	fmt.Fprintln(tw, strings.Join(header, "\t"))
 	for _, row := range rows {
+		fields := []string{row.Name, row.Protocol, strconv.FormatUint(uint64(row.Port), 10)}
 		if stored {
-			fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", row.Name, row.Protocol, row.Port,
-				dashIfEmpty(row.DNSName), dashIfZeroTime(row.Updated))
-			continue
+			fields = append(fields, dashIfEmpty(row.DNSName), dashIfZeroTime(row.Updated))
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\n", row.Name, row.Protocol, row.Port)
+		if tracked {
+			fields = append(fields, dashIfEmpty(row.Health))
+		}
+		fmt.Fprintln(tw, strings.Join(fields, "\t"))
 	}
 	if err := tw.Flush(); err != nil {
 		return err

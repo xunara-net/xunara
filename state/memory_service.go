@@ -1,6 +1,7 @@
 package state
 
 import (
+	"fmt"
 	"slices"
 	"time"
 )
@@ -15,10 +16,10 @@ func (s *MemoryStore) ReplaceNodeServices(id NodeID, services []Service) error {
 	}
 
 	now := time.Now().UTC()
-	existing := make(map[string]time.Time)
+	existing := make(map[string]Service)
 	for name, svc := range s.services {
 		if svc.NodeID == id {
-			existing[name] = svc.Created
+			existing[name] = svc
 		}
 	}
 
@@ -33,7 +34,14 @@ func (s *MemoryStore) ReplaceNodeServices(id NodeID, services []Service) error {
 			return errServiceNameTaken(svc.Name)
 		}
 		if prev, ok := existing[svc.Name]; ok {
-			svc.Created = prev
+			svc.Created = prev.Created
+			if svc.Health && prev.Health {
+				// Still tracked under the same name: keep the standing
+				// report so a periodic republish cannot flap discovery.
+				svc.Healthy = prev.Healthy
+				svc.HealthReportedAt = prev.HealthReportedAt
+				svc.HealthUntil = prev.HealthUntil
+			}
 		}
 		if svc.Created.IsZero() {
 			svc.Created = now
@@ -134,4 +142,73 @@ func copyService(svc Service) Service {
 		}
 	}
 	return out
+}
+
+// ReportServiceHealth implements [ServiceStore].
+func (s *MemoryStore) ReportServiceHealth(id NodeID, reports []ServiceHealthReport, ttl time.Duration) ([]ServiceHealthChange, error) {
+	if ttl <= 0 {
+		return nil, fmt.Errorf("state: service health TTL must be positive")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, ok := s.byID[id]; !ok {
+		return nil, errUnknownNode(id)
+	}
+
+	ready := make(map[string]bool, len(reports))
+	for _, report := range reports {
+		svc, ok := s.services[report.Name]
+		if !ok || svc.NodeID != id || !svc.Health {
+			return nil, errServiceHealthUnknown(report.Name)
+		}
+		if _, duplicate := ready[report.Name]; duplicate {
+			return nil, fmt.Errorf("state: duplicate health report for service %q", report.Name)
+		}
+		ready[report.Name] = report.Ready
+	}
+
+	now := time.Now().UTC()
+	until := now.Add(ttl)
+	var changes []ServiceHealthChange
+	for name, svc := range s.services {
+		if svc.NodeID != id || !svc.Health {
+			continue
+		}
+		want := ready[name]
+		if svc.Healthy != want {
+			changes = append(changes, ServiceHealthChange{
+				NodeID: id, Name: name, Protocol: svc.Protocol, Port: svc.Port,
+				Healthy: want, Reason: ServiceHealthReasonReported,
+			})
+		}
+		svc.Healthy = want
+		svc.HealthReportedAt = now
+		svc.HealthUntil = until
+		s.services[name] = svc
+	}
+	sortHealthChanges(changes)
+	return changes, nil
+}
+
+// ExpireServiceHealth implements [ServiceStore].
+func (s *MemoryStore) ExpireServiceHealth(now time.Time) ([]ServiceHealthChange, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var changes []ServiceHealthChange
+	for name, svc := range s.services {
+		if !svc.Health || !svc.Healthy || svc.HealthUntil.IsZero() || !svc.HealthUntil.Before(now) {
+			continue
+		}
+		changes = append(changes, ServiceHealthChange{
+			NodeID: svc.NodeID, Name: name, Protocol: svc.Protocol, Port: svc.Port,
+			Reason: ServiceHealthReasonExpired,
+		})
+		svc.Healthy = false
+		svc.HealthUntil = time.Time{}
+		s.services[name] = svc
+	}
+	sortHealthChanges(changes)
+	return changes, nil
 }

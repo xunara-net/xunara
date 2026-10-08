@@ -233,6 +233,13 @@ message Service {
   string dns_name = 8;
   google.protobuf.Timestamp created = 9;
   google.protobuf.Timestamp updated = 10;
+  // health is "healthy" or "unhealthy" for services whose declaration opted
+  // into readiness reporting; it is empty for untracked services, which are
+  // always discoverable. Unhealthy services are withdrawn from MagicDNS.
+  string health = 11;
+  // health_reported_at is when the node last reported readiness; unset when
+  // it never did.
+  google.protobuf.Timestamp health_reported_at = 12;
 }
 
 message AuditEvent {

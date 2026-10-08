@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -732,12 +733,16 @@ func TestConsoleServicesPage(t *testing.T) {
 	seedAPIMachine(t, s, "quiet", nil)
 	if err := s.store.ReplaceNodeServices(web.ID, []state.Service{
 		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"}},
+		{Name: "db", Protocol: "tcp", Port: 5432, Health: true},
 	}); err != nil {
 		t.Fatalf("ReplaceNodeServices: %v", err)
 	}
+	if _, err := s.store.ReportServiceHealth(web.ID, []state.ServiceHealthReport{{Name: "db", Ready: true}}, time.Minute); err != nil {
+		t.Fatalf("ReportServiceHealth: %v", err)
+	}
 
 	page := bodyString(t, getRequest(t, client, hs.URL+"/console/services", cookie))
-	for _, want := range []string{"api", "tcp", "8080", "web", web.StableID, "api.example.com", "version", "2"} {
+	for _, want := range []string{"api", "tcp", "8080", "web", web.StableID, "api.example.com", "version", "2", "db.example.com", "Health", "healthy"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("services page lacks %q:\n%s", want, page)
 		}
@@ -765,7 +770,7 @@ func TestConsoleServicesPage(t *testing.T) {
 		t.Fatalf("machines page has no row for %s", hostname)
 		return ""
 	}
-	if row := find("web"); !strings.Contains(row, "<td>1</td>") {
+	if row := find("web"); !strings.Contains(row, "<td>2</td>") {
 		t.Errorf("web row lacks the service count:\n%s", row)
 	}
 	if row := find("quiet"); !strings.Contains(row, ">—<") {

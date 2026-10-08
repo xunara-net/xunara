@@ -1122,10 +1122,11 @@ Update}`（`AttrUpdate` = `map[string]any`，值可为 string / float64 / bool�
   `cmd/xunara-agent/services_test.go`（文件解析、校验、渲染、导入发布与
   dry-run）。
 - 明确不做（v1）：按 ACL 的可见性（与 MagicDNS 节点名一样组织内可见）、
-  健康检查/自动摘除、跨组织共享、与上游 `svc:` VIP 互通（需要上游控制面
-  语义，不猜 API）、控制面代理流量。
+  跨组织共享、与上游 `svc:` VIP 互通（需要上游控制面语义，不猜 API）、
+  控制面代理流量。
 - 下一步（未做）：Kubernetes 服务导入（Service → "本节点提供"需要
-  EndpointSlice/Pod 语义，先补 spec 再实现）；Atlas 健康状态与自动摘除。
+  EndpointSlice/Pod 语义，先补 spec 再实现）；~~Atlas 健康状态与自动摘除~~
+  已由 M19 交付（spec §26）。
 
 ---
 
@@ -1188,6 +1189,48 @@ authorization 分离（AGENTS §5/§10）。规格见
 - 明确不做（v1）：与官方客户端 Taildrop 互通、断点续传/分片、目录递归、
   杀毒/DLP、控制面明文可见、ACL 细粒度授权（v1 以收件人显式接受为授权；
   ACL 集成留待后续 spec）。
+
+---
+
+## M19 — Xunara Atlas 服务健康与自动摘除（v1，已完成）
+
+目标：节点声明"服务是否就绪"，控制面把未就绪或失联的服务从 MagicDNS
+**发现**中自动摘除，就绪后自动恢复。声明仍由节点唯一写入（§22.2）；控制面
+不探测、不代理、不故障转移；健康只影响发现，不是安全边界——连接授权始终由
+既有 ACL/grants 决定。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §26（先写 spec 再实现）。
+
+- `state`（迁移 v12）：`node_service_health`（node_id 外键 `ON DELETE CASCADE`，
+  name，healthy，reported_at，until，主键 `(node_id, name)`）+ 过期索引。
+  `ServiceStore`：`ReportServiceHealth`（事务内校验节点存在、名字必须是本节点
+  已声明且 `health=true`、重复报错；上报是完整集合，未列出者置 not ready；
+  返回**转变清单**）、`ExpireServiceHealth`（healthy 且 `until < now` → 摘除）。
+  内存与 SQLite 同步实现，共享一致性套件 + v11→v12 迁移测试；重新发布声明
+  保留同名且仍启用健康的服务的状态（刷新不让 DNS 抖动），关闭健康或改名清空。
+- 数据面：`POST /api/agent/v1/services/health`（agent token + machine/node key
+  复述；整批原子，未知/未跟踪/重复/超 32 条 → 400 且状态不变）。转变时审计
+  `service.healthy`/`service.unhealthy`（target=节点，detail 为
+  `<name>/<proto>:<port>` + reason reported/report expired，只在转变时写），
+  并唤醒 netmap 流。
+- 摘除：`extraDNSRecords()` 跳过生效 unhealthy 的服务；janitor 用独立 15s
+  扫描（与 1 分钟整体节奏解耦）处理过期上报，只动启用健康且当前 healthy 的行。
+- TTL：`control.Config.ServiceHealthTTL`（默认 90s，30s–15m，越界启动失败）；
+  `xunarad -services-health-ttl` 与组织配置 `service_health_ttl` 接线。
+- 节点侧：声明中 `"health": true`；就绪来自 `<state-dir>/services-health.json`
+  （缺失 = 全部 not ready，fail-closed）；`xunara-agent run` 每
+  `-services-health-interval`（默认 30s）发送完整上报；文件里未声明或未启用
+  健康的名字忽略并告警，解析失败本周期不上报（服务最迟在 TTL 后摘除）。
+- 管理面：HTTP `/api/v2/services`、gRPC `ListServices`、Console Services 页、
+  CLI `xunara services list|show` 增加 `health`/`healthReportedAt`（不跟踪的
+  服务省略）；仍然只读。
+- 测试：`state` 一致性套件（上报/重发不抖动/过期）；`control/service_health_test.go`
+  （生命周期与审计 actor、校验失败状态不变、TTL 过期摘除、HTTP/gRPC/原生客户端
+  读面）；`control/console_test.go`（Health 列）；`client/protocol`（请求形状与
+  错误映射）、`client/daemon/health_test.go`（文件格式、上报构造、循环上报与
+  403 停止）；`cmd/xunara/services_test.go`、`cmd/xunara-agent/services_test.go`
+  （列/提示）、`cmd/xunarad/orgconfig_test.go`（TTL 解析与越界拒绝）。
+- 明确不做（v1）：主动探测（控制面到不了尾网地址）、故障转移/负载均衡、健康
+  历史/评分、按 ACL 的可见性、Consul 导入自动启用健康、控制面代理流量。
 
 ---
 

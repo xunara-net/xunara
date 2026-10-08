@@ -62,7 +62,7 @@ func writeServicesList(w io.Writer, store state.Store) error {
 	// The MagicDNS name depends on the deployment's configured domain, which
 	// the state directory does not record; the platform API reports it.
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tPROTO\tPORT\tNODE")
+	fmt.Fprintln(tw, "NAME\tPROTO\tPORT\tHEALTH\tNODE")
 	for _, svc := range services {
 		publisher := fmt.Sprintf("node %d", svc.NodeID)
 		if node, ok := store.GetNodeByID(svc.NodeID); ok {
@@ -71,9 +71,19 @@ func writeServicesList(w io.Writer, store state.Store) error {
 				publisher = node.Hostname + " (" + node.StableID + ")"
 			}
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\n", svc.Name, svc.Protocol, svc.Port, publisher)
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\n", svc.Name, svc.Protocol, svc.Port,
+			serviceHealthCell(svc), publisher)
 	}
 	return tw.Flush()
+}
+
+// serviceHealthCell renders a service's health for the list: untracked
+// services are always discoverable, so a dash says "not applicable".
+func serviceHealthCell(svc state.Service) string {
+	if svc.EffectiveHealth() == state.ServiceHealthUntracked {
+		return "-"
+	}
+	return string(svc.EffectiveHealth())
 }
 
 // errServiceNotFound reports an unknown service name.
@@ -120,6 +130,12 @@ func writeServicesShow(w io.Writer, store state.Store, name string) error {
 	fmt.Fprintf(tw, "PROTOCOL\t%s\n", svc.Protocol)
 	fmt.Fprintf(tw, "PORT\t%d\n", svc.Port)
 	fmt.Fprintf(tw, "NODE\t%s (%s)\n", node.Hostname, node.StableID)
+	if svc.Health {
+		fmt.Fprintf(tw, "HEALTH\t%s\n", svc.EffectiveHealth())
+		if !svc.HealthReportedAt.IsZero() {
+			fmt.Fprintf(tw, "HEALTH REPORTED\t%s\n", svc.HealthReportedAt.Format("2006-01-02 15:04:05 MST"))
+		}
+	}
 	fmt.Fprintf(tw, "CREATED\t%s\n", svc.Created.Format("2006-01-02 15:04:05 MST"))
 	fmt.Fprintf(tw, "UPDATED\t%s\n", svc.Updated.Format("2006-01-02 15:04:05 MST"))
 	tw.Flush()

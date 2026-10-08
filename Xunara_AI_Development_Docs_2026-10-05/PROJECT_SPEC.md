@@ -661,6 +661,8 @@ Service = (node_id, name, protocol, port, metadata?)
   窗口（一次请求内）以最后一次写入为准，重跑命令即可收敛。
 - 删除节点 → 服务级联删除；节点过期不自动删除服务（管理员仍能看到"过期
   节点持有某服务名"，便于排障；过期节点不参与 netmap）。
+- 服务就绪（§26）是节点自己写的**遥测**，与声明同源、同在 `/api/agent/v1`
+  的 agent token + key 复述规则下，因此不削弱"节点是唯一写入者"。
 
 ### 22.3 命名与 DNS
 
@@ -698,6 +700,9 @@ Agent  xunara-agent services publish|list|clear
                                          # run 定期重读 <state-dir>/services.json 重发
 ```
 
+启用健康跟踪（§26）的服务，以上只读面附带 `health` 与 `healthReportedAt`；
+不跟踪的服务省略这两个字段。
+
 ### 22.6 审计
 
 ```text
@@ -707,7 +712,7 @@ node.services_updated   # target=节点，detail=服务名列表（含协议/端
 ### 22.7 后续（不在 v1）
 
 - 按 ACL/grants 的可见性（当前与 MagicDNS 节点名一样全组织可见）；
-- 服务就绪/健康状态与自动摘除；
+- ~~服务就绪/健康状态与自动摘除~~：已由 §26（M19）交付；
 - 跨组织服务共享（Sharing）；
 - 与 `svc:`（Tailscale Services VIP）互通——需要上游控制面语义，不猜 API。
 
@@ -978,3 +983,89 @@ POST /api/agent/v1/flux/transfers/{id}/fail          收件人 {reason?}（解�
 - 审计：`flux.transfer_offered/accepted/denied/uploaded/completed/failed/
   cancelled/expired`，detail 只写 id、名字、大小与静态 reason，绝不写密文或
   密钥材料。
+
+## 26. Xunara Atlas 健康状态与自动摘除（v1）
+
+目标：节点可以声明"这个服务现在是否就绪"，控制面据此把未就绪或失联的服务
+从 MagicDNS 发现中**自动摘除**，就绪后自动恢复。服务的声明（名字/协议/端口）
+仍然只由节点自己写（§22.2）；控制面不做探测、不做代理、不做故障转移。
+
+边界（v1 明确不做）：
+
+- 控制面绝不主动连接服务端点（它到不了尾网地址，也拒绝成为代理层）；
+- 不做负载均衡、故障转移、健康历史或评分；
+- 健康只影响**发现**（MagicDNS 记录与只读视图），不影响 ACL：摘除 DNS
+  记录不是安全边界，连接授权始终由既有 ACL/grants 决定；
+- 不改 TS2021 / Noise / netmap 结构（AGENTS §4）：摘除只体现为 A/AAAA
+  记录消失；
+- Consul 导入（§23）不自动启用健康（导入器不做健康过滤）。
+
+### 26.1 模型
+
+- 声明中的每个服务可选 `"health": true`（默认 false）。false = 不跟踪，
+  行为与 §22 v1 完全一致：永远出现在 DNS 与列表里。
+- 启用健康后，服务的**生效健康**只有两种：`healthy` / `unhealthy`。
+  生效 healthy 当且仅当节点最近一次上报说 `ready=true`，且距该次上报不超过
+  TTL。从未上报 = unhealthy（fail-closed：不进入 DNS）。
+- 上报是**完整集合**：节点每次上报其全部启用健康的服务；未列出的启用健康
+  服务立即视为 not ready。
+- TTL 默认 90s（`DefaultServiceHealthTTL`，可配 30s–15m）。节点停止上报
+  （agent 退出、网络断开）超过 TTL，其启用健康的服务全部自动摘除。
+- 重新发布声明时，同名且仍启用健康的服务保留当前健康状态（定期重发不会
+  让 DNS 记录抖动）；关闭健康或改名则清空健康状态。
+
+### 26.2 HTTP 端点（Agent 协议）
+
+```text
+POST /api/agent/v1/services/health   {services: [{name, ready}]}
+```
+
+- 认证与 `/services` 相同（agent token + machine/node key 复述）。
+- 整批原子：任一 name 未声明、未启用健康、重复或超过 32 条 → 400，不部分
+  应用。
+- 响应与发布相同：该节点当前存储的服务集合（含 `health` 与
+  `healthReportedAt`）。
+- 每次上报把全部启用健康的服务写成 `healthy=<ready>`、`health_until=now+TTL`，
+  未列出者 `healthy=false`。
+
+### 26.3 摘除与恢复
+
+- 生效 unhealthy 的启用健康服务不产生 MagicDNS A/AAAA 记录；恢复 healthy
+  后记录回来。
+- 状态转变（上报、过期）都会持久化到存储并唤醒 netmap 流，客户端在下一帧
+  看到记录变化；janitor 每 15s 扫描一次过期上报（与 1 分钟的整体 janitor
+  节奏解耦），只影响启用健康且当前 healthy 的行。
+- 节点删除级联删除服务行（§22.2 不变）。
+
+### 26.4 审计
+
+```text
+service.healthy      # target=节点，detail="<name>/<proto>:<port> is ready (reported)"
+service.unhealthy    # 同上，原因 reported / report expired
+```
+
+只在**转变**时写：重复上报 true 不产生审计（与 §22.2 的 no-op 抑制一致）。
+
+### 26.5 管理面
+
+- `GET /api/v2/services`、gRPC `PlatformService.ListServices`、Console
+  Services 页、CLI `xunara services list|show` 增加 `health`
+  （`healthy`/`unhealthy`；不跟踪的服务省略）与 `healthReportedAt`。
+- 管理面仍然只读（AGENTS §10）。
+
+### 26.6 节点侧（agent）
+
+- 声明中 `"health": true` 的服务，其就绪状态来自
+  `<state-dir>/services-health.json`：
+
+```json
+{"services": [{"name": "api", "ready": true}]}
+```
+
+- `xunara-agent run` 每 `-services-health-interval`（默认 30s）把声明中全部
+  启用健康的服务作为完整上报发出：文件中缺失或 `ready=false` 的即 not ready；
+  文件不存在 = 全部 not ready（fail-closed，服务被摘除）。
+- 文件里未声明或未启用健康的名字忽略并告警（删除服务后遗留的旧行不应让
+  整批上报失败）；文件解析失败 → 本周期不上报并告警（服务最迟在 TTL 后
+  摘除）。
+- TTL 与上报间隔是部署契约：TTL 应 ≥ 3× 间隔；默认值（90s / 30s）满足。

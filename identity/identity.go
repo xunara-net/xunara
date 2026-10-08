@@ -197,6 +197,13 @@ const (
 	// advertises (Xunara Atlas). The detail lists names, protocols and ports,
 	// never metadata values.
 	AuditServicesUpdated = "node.services_updated"
+	// AuditServiceHealthy and AuditServiceUnhealthy record a health-tracked
+	// service becoming discoverable or being withdrawn from discovery
+	// (section 26). They are written on transitions only, so a node repeating
+	// "ready" does not spam the log; the detail names the service and the
+	// static reason (reported / report expired), never metadata.
+	AuditServiceHealthy   = "service.healthy"
+	AuditServiceUnhealthy = "service.unhealthy"
 	// AuditPasskeyRegistered and AuditPasskeyDeleted record a user adding or
 	// removing a WebAuthn credential. The detail names the user-chosen label,
 	// never the credential ID, public key or challenge.

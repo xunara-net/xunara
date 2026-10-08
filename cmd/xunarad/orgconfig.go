@@ -42,6 +42,7 @@ type orgConfig struct {
 	LatestClientVersion string              `json:"client_version"`
 	ClientVersionURL    string              `json:"client_version_url"`
 	NodeKeyExpiry       string              `json:"node_key_expiry"`
+	ServiceHealthTTL    string              `json:"service_health_ttl"`
 	CertDomains         []string            `json:"cert_domains"`
 	DNS                 *orgDNSConfig       `json:"dns"`
 	OIDC                *orgOIDCConfig      `json:"oidc"`
@@ -178,6 +179,11 @@ func (o orgConfig) controlConfig(logger *slog.Logger) (control.Config, error) {
 		return control.Config{}, err
 	}
 
+	serviceHealthTTL, err := parseServiceHealthTTL(o.ServiceHealthTTL)
+	if err != nil {
+		return control.Config{}, err
+	}
+
 	var dnsProvider control.DNSProvider
 	if o.DNS != nil {
 		webhookTokenEnv := o.DNS.WebhookTokenEnv
@@ -241,6 +247,7 @@ func (o orgConfig) controlConfig(logger *slog.Logger) (control.Config, error) {
 		LatestClientVersion: o.LatestClientVersion,
 		ClientVersionURL:    o.ClientVersionURL,
 		NodeKeyExpiry:       nodeKeyExpiry,
+		ServiceHealthTTL:    serviceHealthTTL,
 		CertDomains:         o.CertDomains,
 		DNSProvider:         dnsProvider,
 		OIDCProviders:       oidcProviders,
@@ -253,6 +260,21 @@ func (o orgConfig) controlConfig(logger *slog.Logger) (control.Config, error) {
 		Passkeys: derivePasskeyConfig(o.ServerURL),
 		Logger:   logger,
 	}, nil
+}
+
+// parseServiceHealthTTL parses an organization's health-report TTL. The zero
+// value keeps the server default; the range check happens in control.New, so
+// the error names the deployment rather than this file.
+func parseServiceHealthTTL(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	ttl, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("invalid service_health_ttl %q", raw)
+	}
+	return ttl, nil
 }
 
 // parseNodeKeyExpiry accepts a Go duration ("4320h") or a day count ("180d").

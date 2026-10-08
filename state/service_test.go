@@ -154,6 +154,142 @@ func runServiceConformance(t *testing.T, newStore storeFactory) {
 			t.Errorf("the freed name could not be reused: %v", err)
 		}
 	})
+
+	t.Run("health reporting", func(t *testing.T) {
+		s := newStore(t)
+		node := createTestNode(t, s, "health")
+		if err := s.ReplaceNodeServices(node.ID, []Service{
+			{Name: "api", Protocol: "tcp", Port: 8080, Health: true},
+			{Name: "web", Protocol: "tcp", Port: 80},
+		}); err != nil {
+			t.Fatalf("ReplaceNodeServices: %v", err)
+		}
+
+		// Tracked but never reported: not discoverable (fail-closed), and the
+		// untracked service is untouched.
+		got := serviceByName(t, s, "api")
+		if !got.Health || got.Healthy || !got.HealthReportedAt.IsZero() {
+			t.Fatalf("unreported tracked service = %+v", got)
+		}
+		if got.EffectiveHealth() != ServiceHealthUnhealthy {
+			t.Errorf("EffectiveHealth = %q, want unhealthy", got.EffectiveHealth())
+		}
+		if web := serviceByName(t, s, "web"); web.Health || web.EffectiveHealth() != ServiceHealthUntracked {
+			t.Errorf("untracked service = %+v", web)
+		}
+
+		// First ready report is a transition; repeating it is not.
+		changes, err := s.ReportServiceHealth(node.ID, []ServiceHealthReport{{Name: "api", Ready: true}}, time.Minute)
+		if err != nil {
+			t.Fatalf("ReportServiceHealth: %v", err)
+		}
+		if len(changes) != 1 || changes[0].Name != "api" || !changes[0].Healthy || changes[0].Reason != ServiceHealthReasonReported {
+			t.Fatalf("changes = %+v", changes)
+		}
+		got = serviceByName(t, s, "api")
+		if !got.Healthy || got.EffectiveHealth() != ServiceHealthHealthy {
+			t.Fatalf("reported service = %+v", got)
+		}
+		if got.HealthReportedAt.IsZero() || !got.HealthUntil.After(got.HealthReportedAt) {
+			t.Errorf("report timestamps = %+v", got)
+		}
+		if again, err := s.ReportServiceHealth(node.ID, []ServiceHealthReport{{Name: "api", Ready: true}}, time.Minute); err != nil {
+			t.Fatalf("ReportServiceHealth again: %v", err)
+		} else if len(again) != 0 {
+			t.Errorf("repeated report produced changes: %+v", again)
+		}
+
+		// A complete report omits "api": it becomes not ready.
+		changes, err = s.ReportServiceHealth(node.ID, nil, time.Minute)
+		if err != nil {
+			t.Fatalf("ReportServiceHealth (empty): %v", err)
+		}
+		if len(changes) != 1 || changes[0].Healthy {
+			t.Fatalf("changes after an empty report = %+v", changes)
+		}
+		if got = serviceByName(t, s, "api"); got.Healthy {
+			t.Errorf("service stayed healthy after being left out of a report")
+		}
+
+		// Reports must name a tracked service.
+		if _, err := s.ReportServiceHealth(node.ID, []ServiceHealthReport{{Name: "web", Ready: true}}, time.Minute); !errors.Is(err, ErrServiceHealthUnknown) {
+			t.Errorf("reporting an untracked service = %v, want ErrServiceHealthUnknown", err)
+		}
+		if _, err := s.ReportServiceHealth(node.ID, []ServiceHealthReport{{Name: "missing", Ready: true}}, time.Minute); !errors.Is(err, ErrServiceHealthUnknown) {
+			t.Errorf("reporting an unknown service = %v, want ErrServiceHealthUnknown", err)
+		}
+		if _, err := s.ReportServiceHealth(node.ID, []ServiceHealthReport{{Name: "api", Ready: true}, {Name: "api", Ready: false}}, time.Minute); err == nil {
+			t.Error("duplicate report entries were accepted")
+		}
+		if _, err := s.ReportServiceHealth(node.ID, nil, 0); err == nil {
+			t.Error("a non-positive TTL was accepted")
+		}
+		if _, err := s.ReportServiceHealth(node.ID+1000, nil, time.Minute); err == nil {
+			t.Error("reporting for an unknown node succeeded")
+		}
+	})
+
+	t.Run("health survives republish and expires", func(t *testing.T) {
+		s := newStore(t)
+		node := createTestNode(t, s, "health")
+		if err := s.ReplaceNodeServices(node.ID, []Service{{Name: "api", Protocol: "tcp", Port: 8080, Health: true}}); err != nil {
+			t.Fatalf("ReplaceNodeServices: %v", err)
+		}
+		if _, err := s.ReportServiceHealth(node.ID, []ServiceHealthReport{{Name: "api", Ready: true}}, time.Minute); err != nil {
+			t.Fatalf("ReportServiceHealth: %v", err)
+		}
+
+		// A periodic republish of the same declaration keeps the report.
+		if err := s.ReplaceNodeServices(node.ID, []Service{{Name: "api", Protocol: "tcp", Port: 8080, Health: true}}); err != nil {
+			t.Fatalf("republish: %v", err)
+		}
+		if got := serviceByName(t, s, "api"); !got.Healthy {
+			t.Fatalf("republish dropped the standing report: %+v", got)
+		}
+
+		// Turning tracking off clears the health state; turning it back on
+		// starts from not ready.
+		if err := s.ReplaceNodeServices(node.ID, []Service{{Name: "api", Protocol: "tcp", Port: 8080}}); err != nil {
+			t.Fatalf("republish without health: %v", err)
+		}
+		if got := serviceByName(t, s, "api"); got.Health || got.Healthy || !got.HealthReportedAt.IsZero() {
+			t.Fatalf("health state after disabling tracking = %+v", got)
+		}
+		if err := s.ReplaceNodeServices(node.ID, []Service{{Name: "api", Protocol: "tcp", Port: 8080, Health: true}}); err != nil {
+			t.Fatalf("republish with health again: %v", err)
+		}
+		if got := serviceByName(t, s, "api"); got.Healthy || got.HealthReportedAt.IsZero() == false {
+			t.Fatalf("re-enabled tracking kept a stale report: %+v", got)
+		}
+
+		// Expiry withdraws the service; a second sweep is a no-op.
+		if _, err := s.ReportServiceHealth(node.ID, []ServiceHealthReport{{Name: "api", Ready: true}}, time.Minute); err != nil {
+			t.Fatalf("ReportServiceHealth: %v", err)
+		}
+		changes, err := s.ExpireServiceHealth(time.Now().UTC().Add(2 * time.Minute))
+		if err != nil {
+			t.Fatalf("ExpireServiceHealth: %v", err)
+		}
+		if len(changes) != 1 || changes[0].Name != "api" || changes[0].Healthy || changes[0].Reason != ServiceHealthReasonExpired {
+			t.Fatalf("expired changes = %+v", changes)
+		}
+		if got := serviceByName(t, s, "api"); got.Healthy || got.EffectiveHealth() != ServiceHealthUnhealthy {
+			t.Errorf("service after expiry = %+v", got)
+		}
+		if again, err := s.ExpireServiceHealth(time.Now().UTC().Add(2 * time.Minute)); err != nil || len(again) != 0 {
+			t.Errorf("second expiry sweep = %+v, %v", again, err)
+		}
+	})
+}
+
+// serviceByName fetches a service the test just published.
+func serviceByName(t *testing.T, s Store, name string) Service {
+	t.Helper()
+	svc, ok := s.GetServiceByName(name)
+	if !ok {
+		t.Fatalf("GetServiceByName(%q) = not found", name)
+	}
+	return svc
 }
 
 // createTestNode creates a minimal node for service tests.

@@ -2,9 +2,11 @@ package state
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -98,8 +100,51 @@ func (s *SQLiteStore) ReplaceNodeServices(id NodeID, services []Service) error {
 		}
 	}
 
+	if err := replaceServiceHealth(ctx, tx, id, ordered); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("state: replacing services of node %d: %w", id, err)
+	}
+	return nil
+}
+
+// replaceServiceHealth aligns the health table with a freshly written
+// declaration: tracking rows for services that are gone or no longer opted in
+// are dropped, and newly tracked services start out not ready. Kept rows are
+// left untouched, so a periodic republish never resets a standing report.
+func replaceServiceHealth(ctx context.Context, tx *sql.Tx, id NodeID, services []Service) error {
+	tracked := make([]any, 0, len(services))
+	for _, svc := range services {
+		if svc.Health {
+			tracked = append(tracked, svc.Name)
+		}
+	}
+
+	// Drop tracking rows for services that are gone or no longer opted in.
+	if len(tracked) == 0 {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM node_service_health WHERE node_id = ?", int64(id)); err != nil {
+			return fmt.Errorf("state: clearing service health of node %d: %w", id, err)
+		}
+		return nil
+	}
+	args := append([]any{int64(id)}, tracked...)
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(tracked)), ", ")
+	if _, err := tx.ExecContext(ctx,
+		"DELETE FROM node_service_health WHERE node_id = ? AND name NOT IN ("+placeholders+")", args...); err != nil {
+		return fmt.Errorf("state: pruning service health of node %d: %w", id, err)
+	}
+
+	// Newly tracked services start out not ready; rows that survive the
+	// prune keep their standing report, so a periodic republish cannot flap
+	// discovery.
+	for _, name := range tracked {
+		if _, err := tx.ExecContext(ctx,
+			"INSERT OR IGNORE INTO node_service_health (node_id, name, healthy) VALUES (?, ?, 0)",
+			int64(id), name); err != nil {
+			return fmt.Errorf("state: enabling service health for %q: %w", name.(string), err)
+		}
 	}
 	return nil
 }
@@ -107,7 +152,7 @@ func (s *SQLiteStore) ReplaceNodeServices(id NodeID, services []Service) error {
 // ListServices implements [ServiceStore].
 func (s *SQLiteStore) ListServices() []Service {
 	rows, err := s.db.QueryContext(context.Background(),
-		"SELECT node_id, name, protocol, port, metadata, created, updated FROM node_services ORDER BY name")
+		serviceSelect("ORDER BY s.name"))
 	if err != nil {
 		return nil
 	}
@@ -127,7 +172,7 @@ func (s *SQLiteStore) ListServices() []Service {
 // ServicesForNode implements [ServiceStore].
 func (s *SQLiteStore) ServicesForNode(id NodeID) ([]Service, error) {
 	rows, err := s.db.QueryContext(context.Background(),
-		"SELECT node_id, name, protocol, port, metadata, created, updated FROM node_services WHERE node_id = ? ORDER BY name",
+		serviceSelect("WHERE s.node_id = ? ORDER BY s.name"),
 		int64(id))
 	if err != nil {
 		return nil, fmt.Errorf("state: reading services of node %d: %w", id, err)
@@ -151,7 +196,7 @@ func (s *SQLiteStore) ServicesForNode(id NodeID) ([]Service, error) {
 // GetServiceByName implements [ServiceStore].
 func (s *SQLiteStore) GetServiceByName(name string) (Service, bool) {
 	row := s.db.QueryRowContext(context.Background(),
-		"SELECT node_id, name, protocol, port, metadata, created, updated FROM node_services WHERE name = ?", name)
+		serviceSelect("WHERE s.name = ?"), name)
 	svc, err := scanService(row)
 	if err != nil {
 		return Service{}, false
@@ -193,20 +238,29 @@ type rowScanner interface {
 // scanService reads one service row.
 func scanService(row rowScanner) (Service, error) {
 	var (
-		svc      Service
-		nodeID   int64
-		port     int
-		metadata string
-		created  int64
-		updated  int64
+		svc        Service
+		nodeID     int64
+		port       int
+		metadata   string
+		created    int64
+		updated    int64
+		healthy    int
+		tracked    int
+		reportedAt *int64
+		until      *int64
 	)
-	if err := row.Scan(&nodeID, &svc.Name, &svc.Protocol, &port, &metadata, &created, &updated); err != nil {
+	if err := row.Scan(&nodeID, &svc.Name, &svc.Protocol, &port, &metadata, &created, &updated,
+		&healthy, &reportedAt, &until, &tracked); err != nil {
 		return Service{}, err
 	}
 	svc.NodeID = NodeID(nodeID)
 	svc.Port = uint16(port)
 	svc.Created = time.Unix(created, 0).UTC()
 	svc.Updated = time.Unix(updated, 0).UTC()
+	svc.Health = tracked != 0
+	svc.Healthy = healthy != 0
+	svc.HealthReportedAt = unixPtr(reportedAt)
+	svc.HealthUntil = unixPtr(until)
 	if metadata != "" {
 		var meta map[string]string
 		if err := json.Unmarshal([]byte(metadata), &meta); err == nil && len(meta) > 0 {
@@ -214,4 +268,206 @@ func scanService(row rowScanner) (Service, error) {
 		}
 	}
 	return svc, nil
+}
+
+// serviceSelect builds the read query every service lookup shares: the
+// declaration row joined with its optional health row. Callers append their
+// own filter/order clause over the aliases.
+func serviceSelect(suffix string) string {
+	return `SELECT s.node_id, s.name, s.protocol, s.port, s.metadata, s.created, s.updated,
+			COALESCE(h.healthy, 0), h.reported_at, h.until, h.name IS NOT NULL
+		FROM node_services s
+		LEFT JOIN node_service_health h ON h.node_id = s.node_id AND h.name = s.name ` + suffix
+}
+
+// ReportServiceHealth implements [ServiceStore].
+func (s *SQLiteStore) ReportServiceHealth(id NodeID, reports []ServiceHealthReport, ttl time.Duration) ([]ServiceHealthChange, error) {
+	if ttl <= 0 {
+		return nil, fmt.Errorf("state: service health TTL must be positive")
+	}
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("state: reporting service health of node %d: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	var exists int
+	if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM nodes WHERE id = ?", int64(id)).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("state: looking up node %d: %w", id, err)
+	}
+	if exists == 0 {
+		return nil, errUnknownNode(id)
+	}
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT h.name, h.healthy, s.protocol, s.port
+		FROM node_service_health h
+		JOIN node_services s ON s.node_id = h.node_id AND s.name = h.name
+		WHERE h.node_id = ? ORDER BY h.name`, int64(id))
+	if err != nil {
+		return nil, fmt.Errorf("state: reading service health of node %d: %w", id, err)
+	}
+	type tracked struct {
+		protocol string
+		port     uint16
+		healthy  bool
+	}
+	byName := make(map[string]tracked)
+	names := make([]string, 0, 8)
+	for rows.Next() {
+		var (
+			name     string
+			healthy  int
+			protocol string
+			port     int
+		)
+		if err := rows.Scan(&name, &healthy, &protocol, &port); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("state: scanning service health of node %d: %w", id, err)
+		}
+		byName[name] = tracked{protocol: protocol, port: uint16(port), healthy: healthy != 0}
+		names = append(names, name)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("state: reading service health of node %d: %w", id, err)
+	}
+	rows.Close()
+
+	ready := make(map[string]bool, len(reports))
+	for _, report := range reports {
+		if _, ok := byName[report.Name]; !ok {
+			return nil, errServiceHealthUnknown(report.Name)
+		}
+		if _, duplicate := ready[report.Name]; duplicate {
+			return nil, fmt.Errorf("state: duplicate health report for service %q", report.Name)
+		}
+		ready[report.Name] = report.Ready
+	}
+
+	now := time.Now().UTC()
+	until := now.Add(ttl)
+	var changes []ServiceHealthChange
+	for _, name := range names {
+		entry := byName[name]
+		want := ready[name]
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE node_service_health SET healthy = ?, reported_at = ?, until = ?
+			WHERE node_id = ? AND name = ?`,
+			boolInt(want), now.Unix(), until.Unix(), int64(id), name); err != nil {
+			return nil, fmt.Errorf("state: storing health of service %q: %w", name, err)
+		}
+		if entry.healthy != want {
+			changes = append(changes, ServiceHealthChange{
+				NodeID:   id,
+				Name:     name,
+				Protocol: entry.protocol,
+				Port:     entry.port,
+				Healthy:  want,
+				Reason:   ServiceHealthReasonReported,
+			})
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("state: reporting service health of node %d: %w", id, err)
+	}
+	sortHealthChanges(changes)
+	return changes, nil
+}
+
+// ExpireServiceHealth implements [ServiceStore].
+func (s *SQLiteStore) ExpireServiceHealth(now time.Time) ([]ServiceHealthChange, error) {
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("state: expiring service health: %w", err)
+	}
+	defer tx.Rollback()
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT h.node_id, h.name, s.protocol, s.port
+		FROM node_service_health h
+		JOIN node_services s ON s.node_id = h.node_id AND s.name = h.name
+		WHERE h.healthy = 1 AND h.until IS NOT NULL AND h.until < ?
+		ORDER BY h.node_id, h.name`, now.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("state: reading expired service health: %w", err)
+	}
+
+	var changes []ServiceHealthChange
+	for rows.Next() {
+		var (
+			nodeID   int64
+			name     string
+			protocol string
+			port     int
+		)
+		if err := rows.Scan(&nodeID, &name, &protocol, &port); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("state: scanning expired service health: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE node_service_health SET healthy = 0, until = NULL
+			WHERE node_id = ? AND name = ? AND healthy = 1`,
+			nodeID, name); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("state: expiring health of service %q: %w", name, err)
+		}
+		changes = append(changes, ServiceHealthChange{
+			NodeID:   NodeID(nodeID),
+			Name:     name,
+			Protocol: protocol,
+			Port:     uint16(port),
+			Reason:   ServiceHealthReasonExpired,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, fmt.Errorf("state: reading expired service health: %w", err)
+	}
+	rows.Close()
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("state: expiring service health: %w", err)
+	}
+	sortHealthChanges(changes)
+	return changes, nil
+}
+
+// sortHealthChanges orders changes by node and name so audit output and tests
+// are deterministic (the maps iterated above are not).
+func sortHealthChanges(changes []ServiceHealthChange) {
+	slices.SortFunc(changes, func(a, b ServiceHealthChange) int {
+		switch {
+		case a.NodeID != b.NodeID:
+			if a.NodeID < b.NodeID {
+				return -1
+			}
+			return 1
+		case a.Name < b.Name:
+			return -1
+		case a.Name > b.Name:
+			return 1
+		default:
+			return 0
+		}
+	})
+}
+
+// unixPtr converts an optional Unix timestamp to a time; nil reads as zero.
+func unixPtr(at *int64) time.Time {
+	if at == nil {
+		return time.Time{}
+	}
+	return time.Unix(*at, 0).UTC()
+}
+
+// boolInt renders a bool for a SQLite INTEGER column.
+func boolInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }

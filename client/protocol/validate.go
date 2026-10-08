@@ -61,7 +61,7 @@ func ValidateServices(services []Service) ([]Service, error) {
 			return nil, fmt.Errorf("service %q: %w", svc.Name, err)
 		}
 
-		out = append(out, Service{Name: svc.Name, Protocol: proto, Port: svc.Port, Metadata: metadata})
+		out = append(out, Service{Name: svc.Name, Protocol: proto, Port: svc.Port, Metadata: metadata, Health: svc.Health})
 	}
 	return out, nil
 }

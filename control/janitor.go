@@ -17,6 +17,10 @@ import (
 func (s *Server) runJanitor(ctx context.Context) {
 	ticker := time.NewTicker(ephemeralReapInterval)
 	defer ticker.Stop()
+	// Service health expiry runs on its own, faster ticker: withdrawal from
+	// discovery is time-sensitive in a way the other reaps are not.
+	health := time.NewTicker(serviceHealthSweepInterval)
+	defer health.Stop()
 
 	for {
 		select {
@@ -29,8 +33,37 @@ func (s *Server) runJanitor(ctx context.Context) {
 			s.reapACMEChallenges(now)
 			s.reapPasskeyCeremonies(now)
 			s.reapFluxTransfers(now)
+		case <-health.C:
+			s.reapServiceHealth(time.Now().UTC())
 		}
 	}
+}
+
+// reapServiceHealth withdraws health-tracked services whose last readiness
+// report has expired (spec section 26). A node that stopped reporting - agent
+// stopped, network gone - therefore leaves discovery on its own; the service
+// record survives, so administrators still see what the node claims, and the
+// next report makes it discoverable again.
+func (s *Server) reapServiceHealth(now time.Time) {
+	changes, err := s.store.ExpireServiceHealth(now)
+	if err != nil {
+		s.log.Warn("expiring service health", "err", err)
+		return
+	}
+	if len(changes) == 0 {
+		return
+	}
+	for _, change := range changes {
+		node, ok := s.store.GetNodeByID(change.NodeID)
+		if !ok {
+			// The node was deleted; the cascade already dropped its
+			// services, so there is nothing to announce.
+			continue
+		}
+		s.auditServiceHealth(change, node)
+	}
+	s.log.Info("withdrew services with expired health reports", "count", len(changes))
+	s.notifyWatchers()
 }
 
 // reapACMEChallenges removes DNS-01 challenge records past their TTL, from

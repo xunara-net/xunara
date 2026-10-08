@@ -63,6 +63,10 @@ type agentService struct {
 	Protocol string            `json:"protocol"`
 	Port     uint32            `json:"port"`
 	Metadata map[string]string `json:"metadata,omitempty"`
+	// Health opts the service into readiness reporting (section 26). Without
+	// it the service is always discoverable, exactly as before health
+	// reporting existed.
+	Health bool `json:"health,omitempty"`
 }
 
 // serviceView is the JSON shape of a stored service on every read surface.
@@ -77,6 +81,13 @@ type serviceView struct {
 	// DNSName is the MagicDNS name the service is reachable under, when the
 	// deployment has a domain configured.
 	DNSName string `json:"dnsName,omitempty"`
+	// Health is "healthy" or "unhealthy" for services whose declaration
+	// enabled readiness reporting; it is omitted for untracked services,
+	// which are always discoverable.
+	Health string `json:"health,omitempty"`
+	// HealthReportedAt is when the node last reported readiness. Zero (and
+	// therefore omitted) when it never did.
+	HealthReportedAt time.Time `json:"healthReportedAt,omitzero"`
 	// Created and Updated mirror the store's bookkeeping.
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
@@ -184,7 +195,7 @@ func sameServiceSet(stored, declared []state.Service) bool {
 		if !ok {
 			return false
 		}
-		if svc.Protocol != other.Protocol || svc.Port != other.Port {
+		if svc.Protocol != other.Protocol || svc.Port != other.Port || svc.Health != other.Health {
 			return false
 		}
 		if !maps.Equal(svc.Metadata, other.Metadata) {
@@ -230,6 +241,7 @@ func normalizeAgentServices(services []agentService) ([]state.Service, error) {
 			Protocol: protocol,
 			Port:     uint16(svc.Port),
 			Metadata: metadata,
+			Health:   svc.Health,
 		})
 	}
 	return out, nil
@@ -398,6 +410,10 @@ func (s *Server) serviceView(svc state.Service, node state.Node) serviceView {
 	if domain := strings.Trim(s.cfg.Domain, "."); domain != "" {
 		view.DNSName = svc.Name + "." + domain
 	}
+	if svc.Health {
+		view.Health = string(svc.EffectiveHealth())
+		view.HealthReportedAt = svc.HealthReportedAt
+	}
 	return view
 }
 
@@ -428,6 +444,12 @@ func (s *Server) serviceDNSRecords() []state.DNSRecord {
 
 	var out []state.DNSRecord
 	for _, svc := range s.store.ListServices() {
+		// A health-tracked service that is not (or no longer) ready is
+		// withdrawn from discovery: no record, so clients stop resolving it.
+		// This is discovery only; ACLs still decide who may connect.
+		if svc.EffectiveHealth() == state.ServiceHealthUnhealthy {
+			continue
+		}
 		node, ok := s.store.GetNodeByID(svc.NodeID)
 		if !ok {
 			// The node was deleted; the store cascade already dropped the
@@ -443,4 +465,112 @@ func (s *Server) serviceDNSRecords() []state.DNSRecord {
 		}
 	}
 	return out
+}
+
+// agentServiceHealthRequest is the body of POST /api/agent/v1/services/health.
+// The list is the node's complete readiness report for its health-tracked
+// services: a tracked service left out is not ready (section 26).
+type agentServiceHealthRequest struct {
+	agentRequest
+	Services []agentServiceHealth `json:"services"`
+}
+
+// agentServiceHealth is one service's reported readiness.
+type agentServiceHealth struct {
+	Name  string `json:"name"`
+	Ready bool   `json:"ready"`
+}
+
+// handleAgentServiceHealth implements POST /api/agent/v1/services/health: a
+// node reports the readiness of the services its declaration opted into
+// ("health": true). The control plane never probes the endpoint itself; it
+// only records what the node says and withdraws services whose reports stop.
+func (s *Server) handleAgentServiceHealth(w http.ResponseWriter, req *http.Request) {
+	var body agentServiceHealthRequest
+	if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+		httpError(w, NewHTTPError(http.StatusBadRequest, "invalid JSON body", nil))
+		return
+	}
+
+	node, _, err := s.authenticateAgent(req, body.agentRequest)
+	if err != nil {
+		httpError(w, err)
+		return
+	}
+
+	reports, err := normalizeServiceHealth(body.Services)
+	if err != nil {
+		httpError(w, NewHTTPError(http.StatusBadRequest, err.Error(), nil))
+		return
+	}
+
+	changes, err := s.store.ReportServiceHealth(node.ID, reports, s.cfg.ServiceHealthTTL)
+	if err != nil {
+		if errors.Is(err, state.ErrServiceHealthUnknown) {
+			httpError(w, NewHTTPError(http.StatusBadRequest,
+				"a reported service is not advertised with health tracking enabled", nil))
+			return
+		}
+		s.log.Error("recording service health", "node", node.StableID, "err", err)
+		httpError(w, NewHTTPError(http.StatusInternalServerError, "internal error", nil))
+		return
+	}
+	if len(changes) > 0 {
+		for _, change := range changes {
+			s.auditServiceHealth(change, node)
+		}
+		// The service's MagicDNS records appeared or disappeared, so
+		// streaming sessions have a new netmap to send.
+		s.notifyWatchers()
+	}
+
+	stored, err := s.store.ServicesForNode(node.ID)
+	if err != nil {
+		s.log.Error("reading back services", "node", node.StableID, "err", err)
+		httpError(w, NewHTTPError(http.StatusInternalServerError, "internal error", nil))
+		return
+	}
+	writeJSON(w, http.StatusOK, agentServicesResponse{Services: s.serviceViews(node, stored)})
+}
+
+// normalizeServiceHealth validates a readiness report. Like a declaration, it
+// is all-or-nothing: a malformed entry fails the whole report rather than
+// leaving the node half-reported.
+func normalizeServiceHealth(services []agentServiceHealth) ([]state.ServiceHealthReport, error) {
+	if len(services) > maxServicesPerNode {
+		return nil, fmt.Errorf("at most %d services may be reported per node", maxServicesPerNode)
+	}
+
+	out := make([]state.ServiceHealthReport, 0, len(services))
+	seen := make(map[string]bool, len(services))
+	for _, svc := range services {
+		if err := validateServiceName(svc.Name); err != nil {
+			return nil, err
+		}
+		if seen[svc.Name] {
+			return nil, fmt.Errorf("service name %q is listed twice", svc.Name)
+		}
+		seen[svc.Name] = true
+		out = append(out, state.ServiceHealthReport{Name: svc.Name, Ready: svc.Ready})
+	}
+	return out, nil
+}
+
+// auditServiceHealth records one health transition. Only transitions reach
+// here, so a node repeating "ready" produces no audit noise; for the same
+// reason the detail is built from stored fields and fixed strings, never from
+// request text.
+func (s *Server) auditServiceHealth(change state.ServiceHealthChange, node state.Node) {
+	action := identity.AuditServiceUnhealthy
+	verdict := "is not ready"
+	if change.Healthy {
+		action = identity.AuditServiceHealthy
+		verdict = "is ready"
+	}
+	actor := "system"
+	if change.Reason == state.ServiceHealthReasonReported {
+		actor = nodeActor(node)
+	}
+	detail := fmt.Sprintf("%s/%s:%d %s (%s)", change.Name, change.Protocol, change.Port, verdict, change.Reason)
+	s.audit(actor, action, nodeTarget(node), truncateClean(detail, maxAuditDetailsLen))
 }

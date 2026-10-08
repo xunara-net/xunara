@@ -168,6 +168,26 @@ CREATE INDEX IF NOT EXISTS idx_flux_sender ON flux_transfers(sender_node, state)
 CREATE INDEX IF NOT EXISTS idx_flux_recipient ON flux_transfers(recipient_node, state);
 CREATE INDEX IF NOT EXISTS idx_flux_state ON flux_transfers(state, updated_at);
 `,
+
+	// v12: Atlas service health (section 26). Health is telemetry, not part
+	// of the declaration, so it lives in its own table: a row means the
+	// service opted in (the declaration's "health" flag) and carries the last
+	// readiness plus the deadline after which the janitor withdraws the
+	// service from discovery. The table is created rather than a column added
+	// so the migration is replayable, and health rows die with their node
+	// (there is deliberately no reference to node_services: a republish
+	// replaces those rows, and the health state must survive it).
+	`
+CREATE TABLE IF NOT EXISTS node_service_health (
+	node_id     INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+	name        TEXT    NOT NULL,
+	healthy     INTEGER NOT NULL DEFAULT 0,
+	reported_at INTEGER,
+	until       INTEGER,
+	PRIMARY KEY (node_id, name)
+);
+CREATE INDEX IF NOT EXISTS idx_node_service_health_expiry ON node_service_health(healthy, until);
+`,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.

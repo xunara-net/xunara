@@ -30,12 +30,91 @@ type Service struct {
 	// changed the record. A replace preserves Created for unchanged names.
 	Created time.Time
 	Updated time.Time
+
+	// Health is true when the declaration enabled readiness reporting for
+	// this service. Services without it are untracked: they are always
+	// discoverable, exactly as before health reporting existed.
+	Health bool
+	// Healthy is the readiness the node last reported. It is only meaningful
+	// when Health is set; the janitor clears it once the report's deadline
+	// passes, so a stored true is never stale.
+	Healthy bool
+	// HealthReportedAt is when the node last reported this service's
+	// readiness (explicitly ready/not ready, or implicitly by leaving it out
+	// of a complete report). Zero when it never did.
+	HealthReportedAt time.Time
+	// HealthUntil is when the last report stops being valid. Zero when no
+	// report is pending.
+	HealthUntil time.Time
+}
+
+// ServiceHealth is a service's health as discovery surfaces apply it.
+type ServiceHealth string
+
+const (
+	// ServiceHealthUntracked means the declaration did not enable health
+	// reporting: the service is always discoverable.
+	ServiceHealthUntracked ServiceHealth = "untracked"
+	// ServiceHealthHealthy means the node reported the service ready and the
+	// report has not expired.
+	ServiceHealthHealthy ServiceHealth = "healthy"
+	// ServiceHealthUnhealthy means the service was never reported ready, was
+	// reported not ready, or its last report expired. Unhealthy services are
+	// withdrawn from discovery (no MagicDNS record).
+	ServiceHealthUnhealthy ServiceHealth = "unhealthy"
+)
+
+// EffectiveHealth classifies the service for discovery. Unhealthy services
+// stay in listings (administrators must see them) but produce no DNS records.
+func (s Service) EffectiveHealth() ServiceHealth {
+	if !s.Health {
+		return ServiceHealthUntracked
+	}
+	if s.Healthy {
+		return ServiceHealthHealthy
+	}
+	return ServiceHealthUnhealthy
+}
+
+// ServiceHealthReport is one service's reported readiness.
+type ServiceHealthReport struct {
+	Name  string
+	Ready bool
+}
+
+// Static reasons a health change carries into the audit log. They are fixed
+// strings: peer-supplied text never reaches this path.
+const (
+	ServiceHealthReasonReported = "reported"
+	ServiceHealthReasonExpired  = "report expired"
+)
+
+// ServiceHealthChange describes one service whose effective health changed.
+// Only transitions are reported: a node repeating "ready" must not produce
+// audit noise or wake netmap streams.
+type ServiceHealthChange struct {
+	NodeID   NodeID
+	Name     string
+	Protocol string
+	Port     uint16
+	Healthy  bool
+	Reason   string
 }
 
 // ErrServiceNameTaken means another node already advertises this service name.
 // Names are unique per organization, so a conflicting publish must fail rather
 // than silently take the name over.
 var ErrServiceNameTaken = errors.New("state: service name is already taken")
+
+// ErrServiceHealthUnknown means a health report named a service the node does
+// not advertise with health tracking enabled. Reports are fail-closed as a
+// whole: a name the control plane cannot account for is a client bug.
+var ErrServiceHealthUnknown = errors.New("state: service does not track health")
+
+// errServiceHealthUnknown wraps [ErrServiceHealthUnknown] with the name.
+func errServiceHealthUnknown(name string) error {
+	return fmt.Errorf("%w: %q", ErrServiceHealthUnknown, name)
+}
 
 // errServiceNameTaken wraps [ErrServiceNameTaken] with the offending name.
 func errServiceNameTaken(name string) error {
@@ -67,4 +146,16 @@ type ServiceStore interface {
 	// NodeServiceCounts returns how many services each node advertises, for
 	// list views that must not carry every record.
 	NodeServiceCounts() (map[NodeID]int, error)
+	// ReportServiceHealth replaces one node's complete readiness report for
+	// its health-tracked services: named services take their reported
+	// readiness, tracked services left out of the report are marked not
+	// ready, and every report's deadline is now+ttl. It returns the services
+	// whose effective health changed. It fails if the node is unknown, or
+	// with [ErrServiceHealthUnknown] when a reported name is not advertised
+	// with health tracking enabled.
+	ReportServiceHealth(id NodeID, reports []ServiceHealthReport, ttl time.Duration) ([]ServiceHealthChange, error)
+	// ExpireServiceHealth marks reports past their deadline as not ready and
+	// returns the affected services. The janitor runs it; a stored
+	// healthy=true is therefore never stale.
+	ExpireServiceHealth(now time.Time) ([]ServiceHealthChange, error)
 }

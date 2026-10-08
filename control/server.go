@@ -76,6 +76,11 @@ type Config struct {
 	// EphemeralInactivityTimeout is how long an ephemeral node may stay offline
 	// before it is reaped. Zero uses the default.
 	EphemeralInactivityTimeout time.Duration
+	// ServiceHealthTTL bounds how long a service readiness report stays valid
+	// (Xunara Atlas, spec section 26). A node that stops reporting has its
+	// health-tracked services withdrawn from discovery once the deadline
+	// passes. Zero uses [DefaultServiceHealthTTL].
+	ServiceHealthTTL time.Duration
 	// PolicyPath is the ACL policy document (HuJSON). Empty means the tailnet
 	// has no policy and everything is allowed, which is what the official
 	// service does for a tailnet without a policy.
@@ -119,6 +124,21 @@ type Config struct {
 // DefaultEphemeralInactivityTimeout is how long an ephemeral node may stay
 // offline before it is deleted.
 const DefaultEphemeralInactivityTimeout = 30 * time.Minute
+
+// Service health reporting (spec section 26). The TTL must comfortably exceed
+// a sensible reporting interval: the default pairs with the agent's 30s
+// cadence, giving three missed reports before a service is withdrawn.
+const (
+	// DefaultServiceHealthTTL is how long a readiness report stays valid.
+	DefaultServiceHealthTTL = 90 * time.Second
+	// MinServiceHealthTTL and MaxServiceHealthTTL bound a configured TTL.
+	MinServiceHealthTTL = 30 * time.Second
+	MaxServiceHealthTTL = 15 * time.Minute
+	// serviceHealthSweepInterval is how often the janitor withdraws services
+	// whose report expired. It is deliberately shorter than the general
+	// janitor cadence: withdrawal is the user-visible half of this feature.
+	serviceHealthSweepInterval = 15 * time.Second
+)
 
 // ephemeralReapInterval is how often the janitor looks for reaped nodes.
 const ephemeralReapInterval = 1 * time.Minute
@@ -235,6 +255,13 @@ func New(cfg Config) (*Server, error) {
 	}
 	if cfg.EphemeralInactivityTimeout == 0 {
 		cfg.EphemeralInactivityTimeout = DefaultEphemeralInactivityTimeout
+	}
+	if cfg.ServiceHealthTTL == 0 {
+		cfg.ServiceHealthTTL = DefaultServiceHealthTTL
+	}
+	if cfg.ServiceHealthTTL < MinServiceHealthTTL || cfg.ServiceHealthTTL > MaxServiceHealthTTL {
+		return nil, fmt.Errorf("control: service health TTL %v is outside %v..%v",
+			cfg.ServiceHealthTTL, MinServiceHealthTTL, MaxServiceHealthTTL)
 	}
 
 	noiseKey, err := loadOrCreateNoiseKey(cfg.StateDir)

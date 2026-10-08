@@ -469,10 +469,11 @@ private key stays on your device; the server stores only its public key.</p>
 <p>Services nodes advertise about themselves. Publishing happens on the node
 (<code>/api/agent/v1/services</code>); this page is read-only. A service name
 resolves in MagicDNS to the advertising node, and reachability is still decided
-by the ACL rules — discovery is not authorization.</p>
+by the ACL rules — discovery is not authorization. Services with health
+reporting enabled are withdrawn from MagicDNS while they are unhealthy.</p>
 {{if .Services}}
 <table>
-<thead><tr><th>Name</th><th>Protocol</th><th>Port</th><th>DNS name</th><th>Node</th><th>Updated</th><th>Metadata</th></tr></thead>
+<thead><tr><th>Name</th><th>Protocol</th><th>Port</th><th>DNS name</th><th>Health</th><th>Node</th><th>Updated</th><th>Metadata</th></tr></thead>
 <tbody>
 {{range .Services}}
 <tr>
@@ -480,6 +481,7 @@ by the ACL rules — discovery is not authorization.</p>
 <td>{{.Protocol}}</td>
 <td>{{.Port}}</td>
 <td>{{if .DNSName}}<code>{{.DNSName}}</code>{{else}}—{{end}}</td>
+<td>{{if .Health}}{{.Health}}{{else}}—{{end}}</td>
 <td>{{.Hostname}} <code>{{.StableID}}</code></td>
 <td>{{fmtTime .Updated}}</td>
 <td>{{if .Metadata}}{{range $k, $v := .Metadata}}<code>{{$k}}={{$v}}</code> {{end}}{{else}}—{{end}}</td>

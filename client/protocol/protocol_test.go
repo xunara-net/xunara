@@ -26,6 +26,9 @@ type fakeControl struct {
 
 	servicesStatus int
 	servicesBody   string
+
+	healthStatus int
+	healthBody   string
 }
 
 type recordedRequest struct {
@@ -68,6 +71,16 @@ func (f *fakeControl) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			f.servicesBody = `{"services":[]}`
 		}
 		_, _ = w.Write([]byte(f.servicesBody))
+	case "/api/agent/v1/services/health":
+		if f.healthStatus != 0 {
+			http.Error(w, "rejected", f.healthStatus)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if f.healthBody == "" {
+			f.healthBody = `{"services":[]}`
+		}
+		_, _ = w.Write([]byte(f.healthBody))
 	default:
 		http.NotFound(w, req)
 	}
@@ -289,6 +302,95 @@ func TestServicesWithdrawAndError(t *testing.T) {
 	}
 	if IsUnauthorized(err) {
 		t.Error("a 409 must not be read as a revoked credential")
+	}
+}
+
+// TestReportServiceHealthShape checks the Atlas readiness report: the bearer
+// credential, the key binding, the complete report body and the response
+// decode.
+func TestReportServiceHealthShape(t *testing.T) {
+	fake := &fakeControl{healthBody: `{"services":[{
+		"name":"api","protocol":"tcp","port":8080,"health":"healthy",
+		"healthReportedAt":"2026-10-08T00:00:00Z",
+		"nodeId":7,"stableId":"n7","hostname":"agent","dnsName":"api.example.com",
+		"created":"2026-10-01T00:00:00Z","updated":"2026-10-02T00:00:00Z"}]}`}
+	hs := httptest.NewServer(fake)
+	defer hs.Close()
+
+	client := New(hs.URL)
+	machine, node := key.NewMachine(), key.NewNode()
+
+	views, err := client.ReportServiceHealth(context.Background(), "secret-token", Keys{Machine: machine, Node: node}, []ServiceHealth{
+		{Name: "api", Ready: true},
+		{Name: "db", Ready: false},
+	})
+	if err != nil {
+		t.Fatalf("ReportServiceHealth: %v", err)
+	}
+	if len(views) != 1 || views[0].Health != "healthy" || views[0].HealthReportedAt.IsZero() {
+		t.Fatalf("views = %+v", views)
+	}
+
+	got := fake.requests[0]
+	if got.path != "/api/agent/v1/services/health" || got.contentType != "application/json" {
+		t.Errorf("request = %+v", got)
+	}
+	if got.auth != "Bearer secret-token" {
+		t.Errorf("auth = %q, want the bearer token", got.auth)
+	}
+	if strings.Contains(string(got.raw), "secret-token") {
+		t.Errorf("token leaked into the body: %s", got.raw)
+	}
+
+	var body struct {
+		MachineKey string          `json:"machine_key"`
+		NodeKey    string          `json:"node_key"`
+		Services   []ServiceHealth `json:"services"`
+	}
+	if err := json.Unmarshal(got.raw, &body); err != nil {
+		t.Fatalf("decoding health body: %v", err)
+	}
+	if body.MachineKey != machine.Public().String() || body.NodeKey != node.Public().String() {
+		t.Errorf("keys = %q / %q", body.MachineKey, body.NodeKey)
+	}
+	if len(body.Services) != 2 || body.Services[0] != (ServiceHealth{Name: "api", Ready: true}) || body.Services[1] != (ServiceHealth{Name: "db", Ready: false}) {
+		t.Errorf("services = %+v", body.Services)
+	}
+}
+
+// TestReportServiceHealthEmptyAndError checks that a nil report sends an
+// empty array (a complete "nothing is ready" report) and that a rejected
+// report surfaces the server's answer.
+func TestReportServiceHealthEmptyAndError(t *testing.T) {
+	fake := &fakeControl{}
+	hs := httptest.NewServer(fake)
+	defer hs.Close()
+
+	keys := Keys{Machine: key.NewMachine(), Node: key.NewNode()}
+	if _, err := New(hs.URL).ReportServiceHealth(context.Background(), "secret-token", keys, nil); err != nil {
+		t.Fatalf("ReportServiceHealth(nil): %v", err)
+	}
+
+	var body struct {
+		Services []ServiceHealth `json:"services"`
+	}
+	if err := json.Unmarshal(fake.requests[0].raw, &body); err != nil {
+		t.Fatalf("decoding empty report: %v", err)
+	}
+	if body.Services == nil || len(body.Services) != 0 {
+		t.Errorf("empty report sent services = %#v, want an empty array", body.Services)
+	}
+
+	fake2 := &fakeControl{healthStatus: http.StatusForbidden}
+	hs2 := httptest.NewServer(fake2)
+	defer hs2.Close()
+
+	_, err := New(hs2.URL).ReportServiceHealth(context.Background(), "revoked", keys, []ServiceHealth{{Name: "api", Ready: true}})
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("ReportServiceHealth error = %v, want HTTP 403", err)
+	}
+	if !IsUnauthorized(err) {
+		t.Error("a 403 on a rejected readiness report must read as a revoked credential")
 	}
 }
 

@@ -423,6 +423,10 @@ func (g *grpcPlatformServer) ListServices(ctx context.Context, req *xunarav2.Lis
 			DnsName:   view.DNSName,
 			Created:   timestamppb.New(view.Created),
 			Updated:   timestamppb.New(view.Updated),
+			Health:    view.Health,
+		}
+		if !view.HealthReportedAt.IsZero() {
+			entry.HealthReportedAt = timestamppb.New(view.HealthReportedAt)
 		}
 		out = append(out, entry)
 		last = svc.Name

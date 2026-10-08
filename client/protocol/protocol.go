@@ -137,6 +137,11 @@ type Service struct {
 	// It must not carry secrets: it is stored on the control plane and shown
 	// on its read surfaces.
 	Metadata map[string]string `json:"metadata,omitempty"`
+	// Health opts this service into readiness reporting: the node must
+	// report it through [Client.ReportServiceHealth], and the control plane
+	// withdraws it from MagicDNS while it is not ready or its report
+	// expired. Without it the service is always discoverable.
+	Health bool `json:"health,omitempty"`
 }
 
 // ServiceView is a stored service as the control plane reports it.
@@ -150,9 +155,53 @@ type ServiceView struct {
 	Hostname string            `json:"hostname"`
 	// DNSName is the MagicDNS name the service is reachable under; empty when
 	// the deployment has no domain configured.
-	DNSName string    `json:"dnsName,omitempty"`
-	Created time.Time `json:"created"`
-	Updated time.Time `json:"updated"`
+	DNSName string `json:"dnsName,omitempty"`
+	// Health is "healthy" or "unhealthy" for services that opted into
+	// readiness reporting; empty for untracked services, which are always
+	// discoverable.
+	Health string `json:"health,omitempty"`
+	// HealthReportedAt is when the node last reported readiness; zero when it
+	// never did.
+	HealthReportedAt time.Time `json:"healthReportedAt,omitzero"`
+	Created          time.Time `json:"created"`
+	Updated          time.Time `json:"updated"`
+}
+
+// ServiceHealth is one service's reported readiness.
+type ServiceHealth struct {
+	Name  string `json:"name"`
+	Ready bool   `json:"ready"`
+}
+
+// serviceHealthBody is the authenticated body of a readiness report.
+type serviceHealthBody struct {
+	keyBody
+	Services []ServiceHealth `json:"services"`
+}
+
+// ReportServiceHealth sends this node's complete readiness report for the
+// services its declaration marked with "health": true. Services left out are
+// reported not ready, so the control plane can withdraw them; the returned
+// views show the resulting state.
+func (c *Client) ReportServiceHealth(ctx context.Context, token string, keys Keys, reports []ServiceHealth) ([]ServiceView, error) {
+	if reports == nil {
+		reports = []ServiceHealth{}
+	}
+	body := serviceHealthBody{
+		keyBody: keyBody{
+			MachineKey: keys.Machine.Public().String(),
+			NodeKey:    keys.Node.Public().String(),
+		},
+		Services: reports,
+	}
+
+	var resp struct {
+		Services []ServiceView `json:"services"`
+	}
+	if err := c.postJSON(ctx, "/api/agent/v1/services/health", token, body, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Services, nil
 }
 
 // servicesBody is the authenticated body of a service publish.

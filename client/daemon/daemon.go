@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,11 @@ const maxInterval = 5 * time.Minute
 // service declaration. The publish is declarative and the control plane
 // leaves an unchanged set alone, so a refresh only costs one request.
 const defaultServicesInterval = 5 * time.Minute
+
+// defaultHealthInterval is how often a running agent reports the readiness of
+// health-tracked services. The control plane's default TTL (90s) tolerates
+// two missed reports at this cadence.
+const defaultHealthInterval = 30 * time.Second
 
 // State is the agent's durable identity and credential.
 //
@@ -274,6 +280,10 @@ type Agent struct {
 	// ServicesInterval is how often the declaration is re-published. Zero
 	// uses the default.
 	ServicesInterval time.Duration
+	// HealthInterval is how often the readiness of health-tracked services is
+	// reported. Zero uses the default; the control plane's TTL must be at
+	// least a few times this to tolerate a missed report.
+	HealthInterval time.Duration
 
 	// netmapMu guards the netmap the agent last applied and how many it has
 	// applied in total.
@@ -326,6 +336,12 @@ func (a *Agent) Run(ctx context.Context) error {
 
 	if len(a.Services) > 0 || a.StateDir != "" {
 		go a.servicesLoop(ctx, keys)
+	}
+	if a.StateDir != "" {
+		// Readiness is only meaningful while a declaration exists; the loop
+		// re-reads both files each cycle, so enabling health on a service
+		// takes effect without a restart.
+		go a.healthLoop(ctx, keys)
 	}
 
 	backoff := interval
@@ -452,6 +468,99 @@ func (a *Agent) servicesLoop(ctx context.Context, keys protocol.Keys) {
 
 		timer.Reset(interval)
 	}
+}
+
+// healthLoop reports the readiness of health-tracked services on a timer. It
+// sends a complete report every cycle: services missing from the readiness
+// file - or the whole file being absent - are reported not ready, which
+// withdraws them from discovery until they are reported ready again.
+func (a *Agent) healthLoop(ctx context.Context, keys protocol.Keys) {
+	interval := a.healthInterval()
+	timer := time.NewTimer(0)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+
+		if reports, ok := a.healthReports(); ok && len(reports) > 0 {
+			_, err := a.Client.ReportServiceHealth(ctx, a.State.Token, keys, reports)
+			switch {
+			case err == nil:
+				a.Logger.Debug("service health reported", "count", len(reports))
+			case ctx.Err() != nil:
+				return
+			case protocol.IsUnauthorized(err):
+				// The main loop turns this into a stopped agent.
+				return
+			default:
+				a.Logger.Warn("reporting service health failed", "err", err)
+			}
+		}
+
+		timer.Reset(interval)
+	}
+}
+
+// healthReports builds the complete readiness report for this cycle. It
+// returns ok=false when the agent has nothing to report (no health-tracked
+// service in the declaration) or cannot read the input files; in the latter
+// case the services stay unreported, which withdraws them once the TTL passes.
+func (a *Agent) healthReports() ([]protocol.ServiceHealth, bool) {
+	tracked := make(map[string]bool)
+	for _, svc := range a.declaredServices() {
+		if svc.Health {
+			tracked[svc.Name] = true
+		}
+	}
+	if len(tracked) == 0 {
+		return nil, false
+	}
+
+	// Every tracked service starts as not ready and only the readiness file
+	// can flip it: a missing file is an explicit "not ready", not silence.
+	ready := make(map[string]bool, len(tracked))
+	file, err := LoadServiceHealth(a.StateDir)
+	switch {
+	case err == nil:
+		for _, entry := range file {
+			if !tracked[entry.Name] {
+				// A stale line for a service that was removed or no longer
+				// opts in must not fail the whole report.
+				a.Logger.Warn("ignoring readiness for an untracked service", "service", entry.Name)
+				continue
+			}
+			ready[entry.Name] = entry.Ready
+		}
+	case errors.Is(err, os.ErrNotExist):
+		// No readiness file: everything is not ready.
+	default:
+		a.Logger.Warn("reading service readiness failed", "err", err)
+		return nil, false
+	}
+
+	names := make([]string, 0, len(tracked))
+	for name := range tracked {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	reports := make([]protocol.ServiceHealth, 0, len(names))
+	for _, name := range names {
+		reports = append(reports, protocol.ServiceHealth{Name: name, Ready: ready[name]})
+	}
+	return reports, true
+}
+
+// healthInterval returns the configured reporting interval with the default
+// applied.
+func (a *Agent) healthInterval() time.Duration {
+	if a.HealthInterval > 0 {
+		return a.HealthInterval
+	}
+	return defaultHealthInterval
 }
 
 // declaredServices returns the set to publish. A state directory is
