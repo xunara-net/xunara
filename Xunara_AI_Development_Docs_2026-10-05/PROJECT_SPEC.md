@@ -944,14 +944,31 @@ POST /api/agent/v1/flux/transfers/{id}/fail          收件人 {reason?}（解�
 
 ### 25.5 本机落盘与 CLI
 
+- 种子：`<state-dir>/flux.seed`（32 字节，0600）。首次使用生成（`O_EXCL`
+  收敛并发首用：输者读取胜者文件）；已存在但组/他人可读时拒绝运行并要求
+  `chmod 600`，不静默接受。种子丢失后在途传输不可解，收件人 fail、发送方
+  重发。
 - `xunara-agent flux send -to <hostname|stable-id> -file <path> [-timeout 5m]
-  [-json]`：报价 → 等待 accept（超时退出）→ 加密上传 → 等待终态并报告。
-- `xunara-agent flux list [-json]`：本人参与的传输（id/方向/对端/状态/大小/时间）。
-- `xunara-agent flux deny <id> [-reason ...]`：拒绝一条 inbound。
-- `xunara-agent flux receive -dir <dir> [-yes] [-watch]`：接受并取回 pending
-  inbound 传输；解密校验后原子写入 `<dir>/<name>`（0600）；`-yes` 表示无需
-  确认（非交互环境必须显式给出），`-watch` 持续轮询。默认不覆盖已存在文件
-  （改名为 `<name>.1` 等）。
+  [-json]`：报价 → 等待 accept（超时退出，传输保持 open 直到 TTL）→ 加密
+  上传 → 等待终态并报告；成功才退出 0。`-to` 先经 netmap 精确匹配
+  stable ID / Hostinfo hostname / MagicDNS 名（含短标签与 ComputedName）；
+  多匹配报错并列出 stable ID；无匹配但形如 stable ID（`n`+16 hex）时直传，
+  由服务端校验。`-file` 上传前预检：普通文件、≤64 MiB（客户端硬上限，与
+  服务端一致），SHA-256 覆盖**实际上传的字节**；stat 与读取之间大小变化即
+  拒绝（收件人不会收到无法校验的内容）。
+- `xunara-agent flux list [-json]`：本人参与的传输（id/方向/对端/状态/大小/
+  更新时间；reason 附在表后）。
+- `xunara-agent flux deny [-reason <text>] <id>`：拒绝一条 inbound（Go flag
+  约定：flag 在位置参数之前）。
+- `xunara-agent flux receive -dir <dir> [-yes] [-watch] [-interval 5s]`：接受
+  并取回 pending/uploaded inbound 传输。接受后最多等待 1 分钟让发送方上传；
+  超时则本轮结束，传输保持 accepted，之后的 receive/`-watch` 继续取回。
+  解密校验后原子写入 `<dir>/<name>`（0600，temp+rename）；`-yes` 表示无需
+  确认（无终端时不给出 `-yes` 即报错，绝不隐式接受），`-watch` 持续轮询。
+  不覆盖已存在文件（改名为 `<name>.1` 等）。以下情况调用 fail 并附固定
+  reason：文件名不安全、密文超过声明大小、解密失败、SHA-256 不匹配；本地
+  写入失败不 fail，保持 uploaded 供重试。传给对端的 reason 只使用固定
+  字符串，绝不携带本地路径或本地错误文本。
 - 上传前 CLI 预检（名字/大小/路径存在），服务端仍是权威。
 
 ### 25.6 清理与审计

@@ -1167,21 +1167,24 @@ authorization 分离（AGENTS §5/§10）。规格见
 
 ---
 
-## M18 — Xunara Flux 文件投递（v1，进行中）
+## M18 — Xunara Flux 文件投递（v1，已完成）
 
 目标：两台 `xunara-agent` 之间投递文件，控制面存储转发 + 端到端加密
 （spec §25）。不触碰 TS2021/Noise/netmap；与官方 Taildrop 不互通。
 
-- M18a（进行中）：`state` 迁移 v11 `flux_transfers`（id/双方节点/名字/大小/
+- M18a（完成）：`state` 迁移 v11 `flux_transfers`（id/双方节点/名字/大小/
   sha256/状态/收件人公钥/时间戳/过期），`FluxStore`（创建、按节点列出、
   条件 UPDATE 的状态转移、配额计数、过期与终态清理、级联删除），内存与
   SQLite 同步实现 + 一致性套件。
-- M18b：控制面 `/api/agent/v1/flux/transfers`（报价/接受/拒绝/取消/上传/
+- M18b（完成）：控制面 `/api/agent/v1/flux/transfers`（报价/接受/拒绝/取消/上传/
   下载/完成/失败；密文落盘 `<state-dir>/flux/<id>.bin` 0600 原子写；
   限额/状态机/参与方校验 fail-closed；审计 flux.*；janitor 过期与孤儿清理）。
-- M18c：客户端 `client/flux`（X25519+HKDF+AES-GCM 封装）+ `client/protocol`
-  + `client/daemon`（flux 种子 0600、send/receive 流程）+ `xunara-agent flux
-  send|list|deny|receive` + 端到端测试与文档。
+- M18c（完成）：客户端 `client/flux`（X25519+HKDF+AES-GCM 封装、种子
+  0600）+ `client/protocol`（flux 类型与九个客户端方法，凭据全部走头）+
+  `xunara-agent flux send|list|deny|receive`（接收端显式确认、解密后校验
+  SHA-256 才 complete；不覆盖已存在文件，改名 `name.1` 等）+ 单元与真实
+  控制面端到端测试（send→accept→upload→download→complete、deny 理由回传、
+  无终端拒绝隐式接受）。
 - 明确不做（v1）：与官方客户端 Taildrop 互通、断点续传/分片、目录递归、
   杀毒/DLP、控制面明文可见、ACL 细粒度授权（v1 以收件人显式接受为授权；
   ACL 集成留待后续 spec）。

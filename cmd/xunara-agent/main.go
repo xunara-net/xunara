@@ -45,6 +45,8 @@ func main() {
 		err = runStatus(ctx, os.Args[2:])
 	case "services":
 		err = runServices(ctx, os.Args[2:])
+	case "flux":
+		err = runFlux(ctx, os.Args[2:])
 	case "version":
 		fmt.Println("xunara-agent", daemon.Version)
 	case "help", "-h", "--help":
@@ -224,6 +226,10 @@ usage:
   xunara-agent services import -from consul [-consul-addr addr] [-dry-run] [-state-dir d]
   xunara-agent services list [-state-dir d] [-json]
   xunara-agent services clear [-state-dir d]
+  xunara-agent flux send -to <hostname|stable-id> -file <path> [-timeout 5m] [-json]
+  xunara-agent flux list [-json]
+  xunara-agent flux deny [-reason <text>] <id>
+  xunara-agent flux receive -dir <dir> [-yes] [-watch] [-interval 5s]
   xunara-agent version
 
 The pre-auth key is read from the environment variable `+authKeyEnv+` or from
@@ -233,6 +239,11 @@ The services declaration file is
   {"services": [{"name": "api", "protocol": "tcp", "port": 443}]}
 Import reads the Consul ACL token from the environment variable
 `+consulTokenEnv+`; it is never accepted as a flag.
+
+Flux sends files to other agents through the control plane, end-to-end
+encrypted: the control plane relays ciphertext it cannot read. The recipient
+must accept a transfer before anything is uploaded, and "flux receive -yes"
+is required when stdin is not interactive.
 `)
 }
 
