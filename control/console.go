@@ -77,6 +77,7 @@ func (s *Server) consoleRouter() http.Handler {
 	r.Get("/derp", s.handleConsoleDERP)
 	r.Get("/auth-keys", s.handleConsoleAuthKeys)
 	r.Get("/agents", s.handleConsoleAgents)
+	r.Get("/api-keys", s.handleConsoleAPIKeys)
 	r.Get("/services", s.handleConsoleServices)
 	r.Get("/reach", s.handleConsoleReach)
 	r.Get("/reach/{id}", s.handleConsoleReachSession)
@@ -107,6 +108,8 @@ func (s *Server) consoleRouter() http.Handler {
 		r.Post("/auth-keys", s.handleConsoleCreateAuthKey)
 		r.Post("/auth-keys/{id}/delete", s.handleConsoleDeleteAuthKey)
 		r.Post("/agents/{id}/revoke", s.handleConsoleRevokeAgentToken)
+		r.Post("/api-keys", s.handleConsoleCreateAPIKey)
+		r.Post("/api-keys/{id}/revoke", s.handleConsoleRevokeAPIKey)
 		r.Post("/webhooks", s.handleConsoleCreateWebhook)
 		r.Post("/webhooks/{id}/delete", s.handleConsoleDeleteWebhook)
 	})
@@ -1013,6 +1016,154 @@ func (s *Server) handleConsoleRevokeAgentToken(w http.ResponseWriter, r *http.Re
 	data["Notice"] = "Agent credential revoked."
 	data["Tokens"] = s.consoleAgentTokenViews()
 	s.renderConsole(w, consoleAgentsTemplate, data)
+}
+
+// consoleAPIKeyView is a service identity credential as the console lists it.
+// The token is deliberately absent: only its hash is stored, and the console
+// shows it exactly once, at creation.
+type consoleAPIKeyView struct {
+	ID      string
+	Name    string
+	Owner   string
+	Scopes  []string
+	Created time.Time
+	// Expires, LastUsed and Revoked are pointers so the template can tell
+	// "never" from a real timestamp (a zero time.Time is always truthy).
+	Expires  *time.Time
+	LastUsed *time.Time
+	Revoked  *time.Time
+}
+
+// consoleAPIKeyViews renders every API key, newest first.
+func (s *Server) consoleAPIKeyViews() []consoleAPIKeyView {
+	keys := s.identity.ListAPIKeys()
+	out := make([]consoleAPIKeyView, 0, len(keys))
+	for _, key := range keys {
+		view := consoleAPIKeyView{
+			ID:      key.ID,
+			Name:    key.Name,
+			Owner:   s.userLoginName(key.UserID),
+			Scopes:  key.Scopes,
+			Created: key.CreatedAt,
+		}
+		if !key.ExpiresAt.IsZero() {
+			expires := key.ExpiresAt
+			view.Expires = &expires
+		}
+		if !key.LastUsedAt.IsZero() {
+			used := key.LastUsedAt
+			view.LastUsed = &used
+		}
+		if !key.RevokedAt.IsZero() {
+			revoked := key.RevokedAt
+			view.Revoked = &revoked
+		}
+		out = append(out, view)
+	}
+	return out
+}
+
+// handleConsoleAPIKeys implements GET /console/api-keys: the service identity
+// credential list (spec section 36.1).
+func (s *Server) handleConsoleAPIKeys(w http.ResponseWriter, r *http.Request) {
+	_, data, ok := s.consoleSession(w, r, "api-keys")
+	if !ok {
+		return
+	}
+	data["Keys"] = s.consoleAPIKeyViews()
+	s.renderConsole(w, consoleAPIKeysTemplate, data)
+}
+
+// handleConsoleCreateAPIKey implements POST /console/api-keys. The owner is
+// always the signed-in user; the role guard already ensured they may write,
+// and the server still bounds the key's scopes by the owner's role at use
+// time, so a key can never outgrow its creator.
+func (s *Server) handleConsoleCreateAPIKey(w http.ResponseWriter, r *http.Request) {
+	session, data, ok := s.consoleSession(w, r, "api-keys")
+	if !ok {
+		return
+	}
+	if !s.consoleCheckCSRF(w, r) {
+		return
+	}
+
+	var scopes []string
+	for _, scope := range []string{identity.ScopeRead, identity.ScopeWrite} {
+		if r.PostFormValue("scope_"+scope) != "" {
+			scopes = append(scopes, scope)
+		}
+	}
+	if len(scopes) == 0 {
+		s.renderError(w, http.StatusBadRequest, "Invalid scopes",
+			"Select at least one scope for the key.")
+		return
+	}
+
+	opts := identity.NewAPIKeyOptions{
+		Name:   strings.TrimSpace(r.PostFormValue("name")),
+		UserID: session.UserID,
+		Scopes: scopes,
+	}
+	if opts.Name == "" {
+		s.renderError(w, http.StatusBadRequest, "Invalid name",
+			"Give the key a name that says which automation holds it.")
+		return
+	}
+	if ttlRaw := strings.TrimSpace(r.PostFormValue("ttl")); ttlRaw != "" {
+		ttl, err := time.ParseDuration(ttlRaw)
+		if err != nil || ttl <= 0 {
+			s.renderError(w, http.StatusBadRequest, "Invalid lifetime",
+				"The key lifetime is not a valid duration.")
+			return
+		}
+		opts.TTL = ttl
+	}
+
+	key, token, err := s.identity.CreateAPIKey(opts)
+	if err != nil {
+		s.log.Error("creating API key", "err", err)
+		s.renderError(w, http.StatusBadRequest, "Create failed", err.Error())
+		return
+	}
+	s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditAPIKeyCreated,
+		"apikey:"+key.ID, "created through the console")
+
+	// The token is shown exactly once.
+	data["CreatedToken"] = token
+	data["Keys"] = s.consoleAPIKeyViews()
+	s.renderConsole(w, consoleAPIKeysTemplate, data)
+}
+
+// handleConsoleRevokeAPIKey implements POST /console/api-keys/{id}/revoke.
+// Revocation is idempotent: a second click reports success, not an error.
+func (s *Server) handleConsoleRevokeAPIKey(w http.ResponseWriter, r *http.Request) {
+	session, data, ok := s.consoleSession(w, r, "api-keys")
+	if !ok {
+		return
+	}
+	if !s.consoleCheckCSRF(w, r) {
+		return
+	}
+
+	id := chi.URLParam(r, "id")
+	key, ok := s.identity.GetAPIKeyByID(id)
+	if !ok {
+		s.renderError(w, http.StatusNotFound, "Unknown key", "This API key does not exist.")
+		return
+	}
+	if key.RevokedAt.IsZero() {
+		if err := s.identity.RevokeAPIKey(id); err != nil {
+			s.log.Error("revoking API key", "key", id, "err", err)
+			s.renderError(w, http.StatusInternalServerError, "Revoke failed", "Please try again.")
+			return
+		}
+		s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditAPIKeyRevoked,
+			"apikey:"+id, "revoked through the console")
+	}
+
+	data["Notice"] = "API key revoked."
+	data["Keys"] = s.consoleAPIKeyViews()
+	s.renderConsole(w, consoleAPIKeysTemplate, data)
 }
 
 // consoleWebhookView is a webhook receiver as the console lists it. The

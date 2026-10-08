@@ -80,6 +80,7 @@ footer { text-align: center; color: #5b616e; font-size: .8rem; }
 <a href="/console/derp"{{if eq .Nav "derp"}} class="active"{{end}}>DERP</a>
 <a href="/console/auth-keys"{{if eq .Nav "auth-keys"}} class="active"{{end}}>Auth keys</a>
 <a href="/console/agents"{{if eq .Nav "agents"}} class="active"{{end}}>Agents</a>
+<a href="/console/api-keys"{{if eq .Nav "api-keys"}} class="active"{{end}}>API keys</a>
 <a href="/console/reach"{{if eq .Nav "reach"}} class="active"{{end}}>Reach</a>
 <a href="/console/flux"{{if eq .Nav "flux"}} class="active"{{end}}>Flux</a>
 <a href="/console/ssh-check"{{if eq .Nav "ssh-check"}} class="active"{{end}}>SSH checks</a>
@@ -113,6 +114,7 @@ var consoleTitles = map[string]string{
 	"derp":      "DERP",
 	"auth-keys": "Auth keys",
 	"agents":    "Agents",
+	"api-keys":  "API keys",
 	"reach":     "Reach",
 	"flux":      "Flux",
 	"ssh-check": "SSH checks",
@@ -521,6 +523,56 @@ reporting enabled are withdrawn from MagicDNS while they are unhealthy.</p>
 {{else}}
 <p>No services have been advertised. An agent publishes them with
 <code>xunara-agent</code> / <code>/api/agent/v1/services</code>.</p>
+{{end}}
+`)
+
+	consoleAPIKeysTemplate = consolePage("api-keys", `
+<h2>API keys</h2>
+<p>Service identity credentials for automation: the <code>xunara_…</code> tokens
+<code>/api/v1</code> and <code>/api/v2</code> accept. A key carries the scopes
+it was granted, but never more than its owner's role allows; only the token's
+hash is stored, and this page never shows it again. OAuth/OIDC login providers
+are server configuration and are not managed here.</p>
+{{if .CreatedToken}}
+<p class="notice">New API key created. Copy the token now — it cannot be shown
+again:</p>
+<pre>{{.CreatedToken}}</pre>
+{{end}}
+{{if .CanWrite}}
+<h3>Create a key</h3>
+<form method="post" action="/console/api-keys">
+<input type="hidden" name="csrf" value="{{.CSRF}}">
+<div class="field">
+<label for="api-key-name">Name</label>
+<input id="api-key-name" name="name" required placeholder="ci-deploy">
+<label><input type="checkbox" name="scope_read" value="1" checked> read</label>
+<label><input type="checkbox" name="scope_write" value="1"> write</label>
+<label for="api-key-ttl">Lifetime</label>
+<input id="api-key-ttl" name="ttl" placeholder="720h (empty = no expiry)">
+<button type="submit">Create key</button>
+</div>
+</form>
+{{end}}
+{{if .Keys}}
+<table>
+<thead><tr><th>Name</th><th>Owner</th><th>Scopes</th><th>Created</th><th>Expires</th><th>Last used</th><th>State</th>{{if .CanWrite}}<th></th>{{end}}</tr></thead>
+<tbody>
+{{range .Keys}}
+<tr>
+<td>{{.Name}}<br><code>{{.ID}}</code></td>
+<td>{{.Owner}}</td>
+<td>{{range .Scopes}}<span class="tag">{{.}}</span> {{end}}</td>
+<td>{{fmtTime .Created}}</td>
+<td>{{if .Expires}}{{fmtTime .Expires}}{{else}}never{{end}}</td>
+<td>{{if .LastUsed}}{{fmtTime .LastUsed}}{{else}}never{{end}}</td>
+<td>{{if .Revoked}}<span class="warn">revoked {{fmtTime .Revoked}}</span>{{else}}<span class="ok">live</span>{{end}}</td>
+{{if $.CanWrite}}<td>{{if not .Revoked}}<form method="post" action="/console/api-keys/{{.ID}}/revoke"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger" type="submit">Revoke</button></form>{{end}}</td>{{end}}
+</tr>
+{{end}}
+</tbody>
+</table>
+{{else}}
+<p>No API keys yet.</p>
 {{end}}
 `)
 

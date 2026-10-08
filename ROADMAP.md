@@ -1571,6 +1571,29 @@ write 角色 + CSRF），管理面没有任何写入口。
 
 ---
 
+## M30 — API 密钥 Console 管理面（v1，已完成）
+
+目标：管理员不必登录机器执行 `xunara apikey`：在 Console 里看到自动化凭据
+（Service Identity API Key）的清单、按需创建并把 token 一次性展示、即时
+吊销。规格见 `Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §36
+（spec §20 P1 "OAuth/API Keys"）。
+
+- Console `/console/api-keys`（nav "API keys"）：列表显示 ID/name/owner/
+  scopes/创建/过期/最后使用/吊销时间，**永不显示 token**；创建（write 角色 +
+  CSRF，name 必填、scope 至少一个、TTL 可选）后一次性展示 `xunara_…`；
+  吊销幂等（已吊销再点不报错）；审计沿用 `apikey.created`/`apikey.revoked`，
+  detail 标明 through the console。
+- 身份边界不变：key 是 Service Identity（AGENTS §5）；owner 恒为当前登录
+  用户，且 scope 只是上限——服务端仍要求 owner 角色允许 write，Console
+  创建不出超过创建者角色的凭据。
+- 不加 v2/gRPC：自动化面仍是既有的 `/api/v1/api-keys` 与 CLI（同一张
+  identity 表，多包一层 API 只会引入语义漂移，spec §36 已说明）。
+- 测试：`control/console_test.go`（创建一次性 token、列表不泄漏、token
+  真实可用、吊销后 401、二次吊销幂等、缺 name/scope 400、member 看不到
+  写控件且 POST 403）。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。

@@ -604,6 +604,113 @@ func TestConsoleSSHCheckPage(t *testing.T) {
 	}
 }
 
+// extractPre reads the first <pre>…</pre> block, which is how the console
+// shows a one-time secret.
+func extractPre(t *testing.T, html string) string {
+	t.Helper()
+	start := strings.Index(html, "<pre>")
+	if start < 0 {
+		t.Fatalf("no <pre> block in page:\n%s", html)
+	}
+	rest := html[start+len("<pre>"):]
+	end := strings.Index(rest, "</pre>")
+	if end < 0 {
+		t.Fatalf("unterminated <pre> block in page:\n%s", html)
+	}
+	return rest[:end]
+}
+
+// TestConsoleAPIKeysPage covers the API key console: create shows the token
+// once, the list never leaks it, the key authenticates, revoke takes it away,
+// and a read-only member may look but not create or revoke.
+func TestConsoleAPIKeysPage(t *testing.T) {
+	s := newTestServer(t)
+	hs := newTestHTTPServer(t, s)
+	client := noRedirectClient()
+	cookie := loginLocal(t, client, hs.URL, "/console/api-keys")
+
+	page := bodyString(t, getRequest(t, client, hs.URL+"/console/api-keys", cookie))
+	if !strings.Contains(page, "No API keys yet") {
+		t.Fatalf("empty api keys page:\n%s", page)
+	}
+
+	csrf := extractCSRF(t, page)
+	resp := postForm(t, client, hs.URL+"/console/api-keys", url.Values{
+		"csrf": {csrf}, "name": {"ci-deploy"}, "scope_read": {"1"}, "ttl": {"1h"},
+	}, cookie)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create status = %d", resp.StatusCode)
+	}
+	created := bodyString(t, resp)
+	token := extractPre(t, created)
+	if !strings.HasPrefix(token, identity.APIKeyPrefix) {
+		t.Fatalf("created token = %q, want the xunara_ prefix", token)
+	}
+
+	// The token authenticates as a service identity.
+	if resp := apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/meta", token, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("api status with the new key = %d, want 200", resp.StatusCode)
+	}
+
+	// The list shows the key's metadata, never the token.
+	page = bodyString(t, getRequest(t, client, hs.URL+"/console/api-keys", cookie))
+	for _, want := range []string{"ci-deploy", "read", "live"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("api keys page lacks %q:\n%s", want, page)
+		}
+	}
+	if strings.Contains(page, token) {
+		t.Error("the api keys page leaks the token")
+	}
+
+	// Revoke: the key stops working, and a second revoke is a no-op.
+	keys := s.Identity().ListAPIKeys()
+	if len(keys) != 1 {
+		t.Fatalf("api keys = %d, want 1", len(keys))
+	}
+	csrf = extractCSRF(t, page)
+	if resp := postForm(t, client, hs.URL+"/console/api-keys/"+keys[0].ID+"/revoke",
+		url.Values{"csrf": {csrf}}, cookie); resp.StatusCode != http.StatusOK {
+		t.Fatalf("revoke status = %d", resp.StatusCode)
+	}
+	if resp := apiRequest(t, client, http.MethodGet, hs.URL+"/api/v2/meta", token, nil); resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("revoked key status = %d, want 401", resp.StatusCode)
+	}
+	if resp := postForm(t, client, hs.URL+"/console/api-keys/"+keys[0].ID+"/revoke",
+		url.Values{"csrf": {csrf}}, cookie); resp.StatusCode != http.StatusOK {
+		t.Errorf("second revoke status = %d, want 200", resp.StatusCode)
+	}
+
+	// Validation: a missing name or scope is refused.
+	resp = postForm(t, client, hs.URL+"/console/api-keys", url.Values{
+		"csrf": {csrf}, "scope_read": {"1"}}, cookie)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("nameless create status = %d, want 400", resp.StatusCode)
+	}
+	resp = postForm(t, client, hs.URL+"/console/api-keys", url.Values{
+		"csrf": {csrf}, "name": {"no-scope"}}, cookie)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("scopeless create status = %d, want 400", resp.StatusCode)
+	}
+
+	// A read-only member sees the list but no controls, and a direct POST is
+	// refused.
+	memberID := seedRoleUser(t, s, "api-member@example.com", identity.RoleMember)
+	memberCookie, memberToken := seedUserSession(t, s, memberID)
+	memberPage := bodyString(t, getRequest(t, client, hs.URL+"/console/api-keys", memberCookie))
+	for _, form := range []string{`action="/console/api-keys"`, `action="/console/api-keys/`} {
+		if strings.Contains(memberPage, form) {
+			t.Errorf("read-only member sees a write control %s:\n%s", form, memberPage)
+		}
+	}
+	resp = postForm(t, client, hs.URL+"/console/api-keys", url.Values{
+		"csrf": {csrfTokenFor(memberToken)}, "name": {"escalate"}, "scope_write": {"1"},
+	}, memberCookie)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("member create status = %d, want 403", resp.StatusCode)
+	}
+}
+
 // TestConsoleAuditNewestFirst checks the audit page shows recent events first.
 func TestConsoleAuditNewestFirst(t *testing.T) {
 	s := newTestServer(t)

@@ -1632,3 +1632,32 @@ GET /api/v2/ssh-check/sessions?state=&node=&limit=&cursor=  # 最新在前，游
 过期时间、判定与决定人），state 过滤（未知值 400，与 API 一致），pending 行
 显式标注；最多 200 条。页面本身只读、不含任何写表单：ID 链接到既有审批页
 `/ssh/check/{authID}`，该页自行要求 console session、write 角色与 CSRF。
+
+## 36. API 密钥管理面（Console，v1）
+
+目标：管理员不必登录机器执行 `xunara apikey`：在 Console 里看到自动化凭据
+（Service Identity API Key）的清单、按需创建并把 token 一次性展示、即时
+吊销。对应 §20 P1 的 "OAuth/API Keys"。
+
+范围说明：自动化读写仍以 `/api/v1/api-keys`（以及 `xunara apikey` CLI）为
+准，本版本**不**新增 v2/gRPC 端点——同一张 identity 表再包一层 API 没有
+新增能力，只会引入第二套语义。Console 是唯一新增面；登录用的 OAuth/OIDC
+providers 是启动配置（§13/§15），本页只提示、不管理。
+
+### 36.1 Console
+
+`/console/api-keys`（nav "API keys"）：
+
+- 列表：ID、name、owner（login name）、scopes、创建/过期/最后使用/吊销
+  时间；**永不显示 token**（只有创建响应出现一次，且服务端只存哈希）。
+- 创建（write 角色 + CSRF）：name 必填、scopes 至少一个（read/write 复选）、
+  TTL 可选（Go duration，>0）；owner 恒为当前登录用户。创建成功后页面用
+  `notice` 一次性展示 `<code>xunara_…</code>` token，并提示不可再次查看。
+  身份隔离（AGENTS §5）：这是 Service Identity，不会变成任何人的登录方式。
+- 吊销（write 角色 + CSRF）：写 `revoked_at`，幂等（已吊销再点不报错）；
+  审计 `apikey.created` / `apikey.revoked`（与 v1 相同 action），detail 标明
+  "through the console"。
+- 授权边界：scope 只是上限，服务端仍要求 owner 的角色允许 write
+  （`authorizeScope`），Console 创建因此不会产生超出创建者角色的凭据。
+- 明确不做（v1）：编辑已有 key（scope/TTL 不可变，只能吊销重建）、显示或
+  导出 token、OAuth provider 增删改（启动配置）、按 key 的用量统计。
