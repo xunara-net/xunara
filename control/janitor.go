@@ -68,6 +68,8 @@ func (s *Server) reapServiceHealth(now time.Time) {
 	if len(changes) == 0 {
 		return
 	}
+	var affected []state.Node
+	seen := make(map[state.NodeID]bool, len(changes))
 	for _, change := range changes {
 		node, ok := s.store.GetNodeByID(change.NodeID)
 		if !ok {
@@ -76,9 +78,17 @@ func (s *Server) reapServiceHealth(now time.Time) {
 			continue
 		}
 		s.auditServiceHealth(change, node)
+		if !seen[node.ID] {
+			seen[node.ID] = true
+			affected = append(affected, node)
+		}
 	}
 	s.log.Info("withdrew services with expired health reports", "count", len(changes))
-	s.notifyWatchers()
+	// Withdrawal removes MagicDNS records, so every session whose netmap
+	// carries them must be woken - including the other side of a share.
+	for _, node := range affected {
+		s.notifyNodePeers(node)
+	}
 }
 
 // reapACMEChallenges removes DNS-01 challenge records past their TTL, from
@@ -209,6 +219,7 @@ func (s *Server) ReapEphemeral(now time.Time) int {
 	}
 
 	reaped := 0
+	var removed []state.Node
 	for _, n := range s.store.ListNodes() {
 		if !n.Ephemeral || s.isOnline(n.ID) {
 			continue
@@ -229,11 +240,12 @@ func (s *Server) ReapEphemeral(now time.Time) int {
 		s.log.Info("reaped ephemeral node", "node_id", int(n.ID), "stable_id", n.StableID)
 		s.audit("system", identity.AuditNodeReaped, nodeTarget(n),
 			"deleted an ephemeral node that stayed offline past the inactivity timeout")
+		removed = append(removed, n)
 		reaped++
 	}
 
-	if reaped > 0 {
-		s.notifyWatchers()
+	for _, n := range removed {
+		s.notifyNodePeers(n)
 	}
 	return reaped
 }

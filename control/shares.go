@@ -384,6 +384,46 @@ func (s *Server) notifyShareParties(share Share) {
 	}
 }
 
+// notifyNodePeers wakes this organization's netmap watchers and the
+// organizations on the other side of every accepted share this node takes
+// part in. Node state a shared peer can observe - endpoints, hostinfo,
+// liveness, deletion, service declarations - must reach the peer's netmap
+// without waiting for a client reconnect (spec section 38.6).
+//
+// It is a superset of notifyWatchers, so call sites announcing node changes
+// use it unconditionally; a deployment without sharing just wakes itself.
+func (s *Server) notifyNodePeers(node state.Node) {
+	s.notifyWatchers()
+	if !s.sharingEnabled() {
+		return
+	}
+	orgID := s.Organization().ID
+	if orgID == "" {
+		return
+	}
+	// Outbound: this machine is shared into other organizations.
+	for _, share := range s.shares.ListShares(ShareFilter{
+		SourceOrg:  orgID,
+		SourceNode: int64(node.ID),
+		Statuses:   []string{ShareAccepted},
+	}) {
+		if org := s.shareDir.Org(share.TargetOrg); org != nil {
+			org.ShareNotify()
+		}
+	}
+	// Inbound: this machine belongs to a user who accepted a share, so the
+	// source organization's netmap shows it to the shared machine.
+	for _, share := range s.shares.ListShares(ShareFilter{
+		TargetOrg:  orgID,
+		TargetUser: int64(node.UserID),
+		Statuses:   []string{ShareAccepted},
+	}) {
+		if org := s.shareDir.Org(share.SourceOrg); org != nil {
+			org.ShareNotify()
+		}
+	}
+}
+
 // shareView builds the wire view of one share. direction is "outgoing" or
 // "incoming" from the caller's organization point of view.
 func (s *Server) shareView(share Share, direction string) shareView {

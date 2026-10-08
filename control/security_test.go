@@ -55,8 +55,8 @@ func TestAPIV2SecuritySnapshot(t *testing.T) {
 	if err := s.store.UpdateNode(online); err != nil {
 		t.Fatalf("UpdateNode(online): %v", err)
 	}
-	s.markOnline(online.ID)
-	defer s.markOffline(online.ID)
+	s.markOnline(online)
+	defer s.markOffline(online)
 
 	expired := seedAPIMachine(t, s, "expired", nil)
 	expired.Expiry = now.Add(-time.Hour)

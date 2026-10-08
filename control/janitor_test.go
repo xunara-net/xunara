@@ -133,8 +133,8 @@ func TestReapEphemeralSparesOnlineNodes(t *testing.T) {
 		t.Fatalf("CreateNode: %v", err)
 	}
 
-	s.markOnline(node.ID)
-	defer s.markOffline(node.ID)
+	s.markOnline(node)
+	defer s.markOffline(node)
 
 	if got := s.ReapEphemeral(time.Now()); got != 0 {
 		t.Fatalf("reaped = %d, want 0 while the node holds a session", got)

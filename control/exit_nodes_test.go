@@ -71,8 +71,8 @@ func newExitFixture(t *testing.T) *exitFixture {
 // TestExitNodesView checks the join between approvals and client selections.
 func TestExitNodesView(t *testing.T) {
 	f := newExitFixture(t)
-	f.server.markOnline(f.exit.ID)
-	defer f.server.markOffline(f.exit.ID)
+	f.server.markOnline(f.exit)
+	defer f.server.markOffline(f.exit)
 
 	view := f.server.exitNodesView()
 	if len(view.ExitNodes) != 2 {

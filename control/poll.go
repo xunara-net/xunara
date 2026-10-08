@@ -94,8 +94,8 @@ func (ns *noiseServer) handleMap(w http.ResponseWriter, req *http.Request) {
 func (ns *noiseServer) serveStreamingMap(ctx context.Context, w http.ResponseWriter, node state.Node, req tailcfg.MapRequest) {
 	s := ns.server
 
-	s.markOnline(node.ID)
-	defer s.markOffline(node.ID)
+	s.markOnline(node)
+	defer s.markOffline(node)
 
 	updates, cancel := s.watch()
 	defer cancel()
@@ -474,7 +474,7 @@ func (s *Server) recordMapRequest(node state.Node, req tailcfg.MapRequest) state
 		s.log.Warn("updating node from map request", "node_id", int(node.ID), "err", err)
 		return node
 	}
-	s.notifyWatchers()
+	s.notifyNodePeers(node)
 	return node
 }
 

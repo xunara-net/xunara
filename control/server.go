@@ -539,32 +539,33 @@ func (s *Server) Close() error {
 }
 
 // markOnline records that a node holds a control session.
-func (s *Server) markOnline(id state.NodeID) {
+func (s *Server) markOnline(node state.Node) {
 	s.sessMu.Lock()
-	s.online[id]++
+	s.online[node.ID]++
 	s.sessMu.Unlock()
-	s.notifyWatchers()
+	s.notifyNodePeers(node)
 }
 
 // markOffline releases a control session and records the node's last-seen time.
-func (s *Server) markOffline(id state.NodeID) {
+func (s *Server) markOffline(node state.Node) {
 	s.sessMu.Lock()
-	if n := s.online[id]; n > 1 {
-		s.online[id] = n - 1
+	if n := s.online[node.ID]; n > 1 {
+		s.online[node.ID] = n - 1
 	} else {
-		delete(s.online, id)
+		delete(s.online, node.ID)
 	}
 	s.sessMu.Unlock()
 
-	if node, ok := s.store.GetNodeByID(id); ok {
+	if stored, ok := s.store.GetNodeByID(node.ID); ok {
 		now := time.Now().UTC()
-		node.LastSeen = &now
-		if err := s.store.UpdateNode(node); err != nil {
-			s.log.Warn("recording last seen", "node_id", int(id), "err", err)
+		stored.LastSeen = &now
+		if err := s.store.UpdateNode(stored); err != nil {
+			s.log.Warn("recording last seen", "node_id", int(node.ID), "err", err)
 		}
+		node = stored
 	}
 
-	s.notifyWatchers()
+	s.notifyNodePeers(node)
 }
 
 // isOnline reports whether a node currently holds a control session.

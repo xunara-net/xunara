@@ -228,7 +228,7 @@ func (s *Server) storeRegistrationKeys(req tailcfg.RegisterRequest) {
 	if signed {
 		s.audit(nodeActor(node), identity.AuditTailnetLockNodeSigned, nodeTarget(node), "node key signed at registration")
 	}
-	s.notifyWatchers()
+	s.notifyNodePeers(node)
 }
 
 // decideRegistration applies the registration state machine.
@@ -245,6 +245,8 @@ func (s *Server) decideRegistration(ctx context.Context, req tailcfg.RegisterReq
 				return nil, fmt.Errorf("deleting logged-out node: %w", err)
 			}
 			s.audit(nodeActor(node), identity.AuditNodeDeleted, nodeTarget(node), "client logout")
+			// Peers must drop the node from their netmaps.
+			s.notifyNodePeers(node)
 		}
 		return &tailcfg.RegisterResponse{}, nil
 	}
@@ -315,7 +317,7 @@ func (s *Server) shortenNodeExpiry(node state.Node, requested time.Time) (state.
 	s.audit(nodeActor(node), identity.AuditNodeExpiryShortened, nodeTarget(node),
 		"node key expiry shortened to "+requested.UTC().Format(time.RFC3339))
 	// Peers see the new expiry in the netmap, so wake the streaming sessions.
-	s.notifyWatchers()
+	s.notifyNodePeers(updated)
 	return updated, nil
 }
 
@@ -407,7 +409,7 @@ func (s *Server) registerWithAuthKey(req tailcfg.RegisterRequest, machineKey key
 
 	s.audit(actor, identity.AuditNodeRegistered, nodeTarget(node),
 		"authorized with a pre-auth key")
-	s.notifyWatchers()
+	s.notifyNodePeers(node)
 
 	return s.nodeToRegisterResponse(node), nil
 }
@@ -725,15 +727,18 @@ func (s *Server) approveDevice(authID string, userID tailcfg.UserID, actor strin
 		return da, fmt.Errorf("approving device: %w", err)
 	}
 
-	if stored, ok := s.store.GetNodeByNodeKey(node.NodeKey); ok {
+	stored, storedOK := s.store.GetNodeByNodeKey(node.NodeKey)
+	if storedOK {
 		s.audit(actor, identity.AuditNodeApproved, nodeTarget(stored),
 			"approved device registration "+authID)
 	}
 
 	s.wakePending(authID)
 
-	// A new node changes every other node's netmap.
-	s.notifyWatchers()
+	if storedOK {
+		// A new node changes every other node's netmap.
+		s.notifyNodePeers(stored)
+	}
 	return approved, nil
 }
 

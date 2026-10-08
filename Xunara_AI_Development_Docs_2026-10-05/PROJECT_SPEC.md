@@ -1800,8 +1800,12 @@ ID：
 - 共享创建/接受/拒绝/吊销后，两侧组织的 netmap watcher 都被唤醒（同进程内直
   接调用），客户端无需重连即可看到对等体增减。
 - 被共享节点的状态变化（endpoints/hostinfo/在线状态/删除）同样唤醒目标组织里
-  有已接受共享的接收用户所在组织的 watcher；反向亦然。v1 是"尽力而为"的同进
-  程通知：跨实例不传播（38.2 已限定同 Router），客户端重连时总能拿到最新网图。
+  有已接受共享的接收用户所在组织的 watcher；反向亦然。实现由
+  `control/shares.go` 的 `notifyNodePeers` 承担：记录 MapRequest、注册/轮换/
+  过期调整、服务声明、健康摘除与节点删除都经它通知，接收侧按
+  (SourceOrg, SourceNode) 与 (TargetOrg, TargetUser) 两个方向查
+  `shares` 表后唤醒对侧。v1 是"尽力而为"的同进程通知：跨实例不传播
+  （38.2 已限定同 Router），客户端重连时总能拿到最新网图。
 - 节点删除：共享记录保留，网图里不再出现该节点（视同不可用）；Console 显示为
   missing。
 

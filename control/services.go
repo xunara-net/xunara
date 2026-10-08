@@ -168,7 +168,7 @@ func (s *Server) handleAgentServices(w http.ResponseWriter, req *http.Request) {
 	s.audit(nodeActor(node), identity.AuditServicesUpdated, nodeTarget(node), servicesAuditDetail(services))
 	// The service's MagicDNS records changed, so streaming sessions have a new
 	// netmap to send.
-	s.notifyWatchers()
+	s.notifyNodePeers(node)
 
 	stored, err := s.store.ServicesForNode(node.ID)
 	if err != nil {

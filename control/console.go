@@ -276,7 +276,7 @@ func (s *Server) handleConsoleDeleteMachine(w http.ResponseWriter, r *http.Reque
 	}
 	s.audit(fmt.Sprintf("user:%d", session.UserID), identity.AuditNodeDeleted, nodeTarget(node),
 		"deleted through the console")
-	s.notifyWatchers()
+	s.notifyNodePeers(node)
 
 	data["Notice"] = fmt.Sprintf("Machine %s deleted.", node.Hostname)
 	s.handleConsoleMachinesNotice(w, data)

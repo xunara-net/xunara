@@ -132,7 +132,7 @@ func (s *Server) rotateNodeKey(existing, want state.Node, applyTags bool, actor 
 	s.audit(actor, identity.AuditNodeKeyRotated, nodeTarget(updated), fmt.Sprintf(
 		"node key rotated in place; machine identity unchanged (old %s, new %s)",
 		existing.NodeKey.ShortString(), updated.NodeKey.ShortString()))
-	s.notifyWatchers()
+	s.notifyNodePeers(updated)
 
 	return updated, nil
 }

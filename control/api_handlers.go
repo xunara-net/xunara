@@ -193,7 +193,7 @@ func (s *Server) handleAPIDeleteMachine(w http.ResponseWriter, r *http.Request) 
 	}
 
 	s.audit(principal.actor(), identity.AuditNodeDeleted, nodeTarget(node), "deleted through the platform API")
-	s.notifyWatchers()
+	s.notifyNodePeers(node)
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": node.StableID})
 }
 
