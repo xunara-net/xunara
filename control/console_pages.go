@@ -516,7 +516,9 @@ reporting enabled are withdrawn from MagicDNS while they are unhealthy, and
 the whole organization). <em>Shared</em> services are also projected into the
 organizations that accepted a share of the advertising machine, under
 <code>&lt;name&gt;-&lt;org&gt;</code> (discovery only: the ACL rules of both
-organizations still decide who may connect).</p>
+organizations still decide who may connect). A service whose
+<em>visibility</em> comes <em>from the ACL</em> is discoverable exactly by the
+nodes that may already connect to it.</p>
 {{if .Services}}
 <table>
 <thead><tr><th>Name</th><th>Protocol</th><th>Port</th><th>DNS name</th><th>Visibility</th><th>Shared</th><th>Health</th><th>Node</th><th>Updated</th><th>Metadata</th></tr></thead>
@@ -527,7 +529,7 @@ organizations still decide who may connect).</p>
 <td>{{.Protocol}}</td>
 <td>{{.Port}}</td>
 <td>{{if .DNSName}}<code>{{.DNSName}}</code>{{else}}—{{end}}</td>
-<td>{{join .Visibility}}</td>
+<td>{{if .VisibilityFromACL}}acl{{else}}{{join .Visibility}}{{end}}</td>
 <td>{{if .Shared}}yes{{else}}—{{end}}</td>
 <td>{{if .Health}}{{.Health}}{{else}}—{{end}}</td>
 <td>{{.Hostname}} <code>{{.StableID}}</code></td>

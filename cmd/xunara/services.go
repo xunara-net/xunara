@@ -88,12 +88,17 @@ func serviceSharedCell(svc state.Service) string {
 }
 
 // serviceVisibilityCell renders a service's discovery scope: the v1 default
-// (the whole organization) reads as "*".
+// (the whole organization) reads as "*", a service that derives discovery
+// from the ACL reads as "acl".
 func serviceVisibilityCell(svc state.Service) string {
-	if len(svc.Visibility) == 0 {
+	parts := make([]string, 0, len(svc.Visibility)+1)
+	if svc.VisibilityFromACL {
+		parts = append(parts, "acl")
+	}
+	if len(parts) == 0 && len(svc.Visibility) == 0 {
 		return "*"
 	}
-	return strings.Join(svc.Visibility, ", ")
+	return strings.Join(append(parts, svc.Visibility...), ", ")
 }
 
 // serviceHealthCell renders a service's health for the list: untracked

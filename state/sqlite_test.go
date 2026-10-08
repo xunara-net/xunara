@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -480,6 +481,56 @@ func TestSQLiteMigratesV16ToV17(t *testing.T) {
 	}
 	if svc, ok := second.GetServiceByName("api"); !ok || !svc.Shared {
 		t.Errorf("shared flag after migration = %+v, %v, want true", svc, ok)
+	}
+}
+
+// TestSQLiteMigratesV17ToV18 simulates a database written before ACL-derived
+// service visibility existed: reopening it must add the table, read the old
+// services back as selector-visible, and accept new writes that derive
+// visibility from the ACL.
+func TestSQLiteMigratesV17ToV18(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.db")
+
+	ctx := context.Background()
+	first := openTestSQLite(t, path)
+	node := Node{Hostname: "old", NodeKey: key.NewNode().Public()}
+	if err := first.CreateNode(&node); err != nil {
+		t.Fatalf("CreateNode: %v", err)
+	}
+	if err := first.ReplaceNodeServices(node.ID, []Service{
+		{Name: "api", Protocol: "tcp", Port: 8080, Visibility: []string{"group:eng"}},
+	}); err != nil {
+		t.Fatalf("ReplaceNodeServices: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "DROP TABLE node_service_acl_visibility"); err != nil {
+		t.Fatalf("dropping node_service_acl_visibility: %v", err)
+	}
+	if _, err := first.db.ExecContext(ctx, "PRAGMA user_version = 17"); err != nil {
+		t.Fatalf("downgrading schema version: %v", err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	second := openTestSQLite(t, path)
+	svc, ok := second.GetServiceByName("api")
+	if !ok || svc.Port != 8080 {
+		t.Fatalf("service after migration = %+v, %v", svc, ok)
+	}
+	if svc.VisibilityFromACL {
+		t.Error("service after migration derives visibility from the ACL, want the stored selectors")
+	}
+	if !slices.Equal(svc.Visibility, []string{"group:eng"}) {
+		t.Errorf("service visibility after migration = %v, want group:eng", svc.Visibility)
+	}
+
+	if err := second.ReplaceNodeServices(node.ID, []Service{
+		{Name: "api", Protocol: "tcp", Port: 8080, VisibilityFromACL: true},
+	}); err != nil {
+		t.Fatalf("ReplaceNodeServices(acl): %v", err)
+	}
+	if svc, ok := second.GetServiceByName("api"); !ok || !svc.VisibilityFromACL {
+		t.Errorf("ACL-derived flag after migration = %+v, %v, want true", svc, ok)
 	}
 }
 

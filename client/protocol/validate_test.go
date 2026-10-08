@@ -12,7 +12,7 @@ func TestValidateServicesCanonicalizes(t *testing.T) {
 	services, err := ValidateServices([]Service{
 		{Name: "api", Protocol: " TCP ", Port: 8080, Metadata: map[string]string{"version": "1.2"},
 			Visibility: []string{" tag:prod ", "group:eng", "tag:prod"}, Shared: true},
-		{Name: "metrics", Protocol: "UDP", Port: 9090},
+		{Name: "metrics", Protocol: "UDP", Port: 9090, VisibilityFromACL: true},
 	})
 	if err != nil {
 		t.Fatalf("ValidateServices: %v", err)
@@ -40,6 +40,12 @@ func TestValidateServicesCanonicalizes(t *testing.T) {
 	}
 	if services[1].Shared {
 		t.Error("default shared flag = true, want false")
+	}
+	if !services[1].VisibilityFromACL {
+		t.Error("metrics visibilityFromACL = false, want true")
+	}
+	if services[0].VisibilityFromACL {
+		t.Error("api visibilityFromACL = true, want false")
 	}
 }
 
@@ -88,6 +94,9 @@ func TestValidateServicesRejects(t *testing.T) {
 		{"visibility selector with control character", []Service{
 			{Name: "api", Protocol: "tcp", Port: 1, Visibility: []string{"tag:a\x1b"}},
 		}, "printable"},
+		{"both visibility axes", []Service{
+			{Name: "api", Protocol: "tcp", Port: 1, Visibility: []string{"tag:a"}, VisibilityFromACL: true},
+		}, "cannot be combined"},
 	}
 
 	for _, tc := range cases {

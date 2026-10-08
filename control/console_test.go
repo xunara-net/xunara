@@ -905,6 +905,7 @@ func TestConsoleServicesPage(t *testing.T) {
 	if err := s.store.ReplaceNodeServices(web.ID, []state.Service{
 		{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"}},
 		{Name: "db", Protocol: "tcp", Port: 5432, Health: true, Visibility: []string{"tag:app", "group:eng"}, Shared: true},
+		{Name: "acl-only", Protocol: "tcp", Port: 7000, VisibilityFromACL: true},
 	}); err != nil {
 		t.Fatalf("ReplaceNodeServices: %v", err)
 	}
@@ -932,6 +933,17 @@ func TestConsoleServicesPage(t *testing.T) {
 	if !strings.Contains(sharedRow, ">yes<") {
 		t.Errorf("db row lacks the shared marker:\n%s", sharedRow)
 	}
+	// An ACL-derived service renders its discovery scope as "acl".
+	var aclRow string
+	for _, row := range strings.Split(page, "<tr>") {
+		if strings.Contains(row, "acl-only") {
+			aclRow = row
+			break
+		}
+	}
+	if !strings.Contains(aclRow, ">acl<") {
+		t.Errorf("acl-only row lacks the ACL marker:\n%s", aclRow)
+	}
 
 	// The machines page counts services per machine, with a dash when there
 	// are none.
@@ -952,7 +964,7 @@ func TestConsoleServicesPage(t *testing.T) {
 		t.Fatalf("machines page has no row for %s", hostname)
 		return ""
 	}
-	if row := find("web"); !strings.Contains(row, "<td>2</td>") {
+	if row := find("web"); !strings.Contains(row, "<td>3</td>") {
 		t.Errorf("web row lacks the service count:\n%s", row)
 	}
 	if row := find("quiet"); !strings.Contains(row, ">—<") {

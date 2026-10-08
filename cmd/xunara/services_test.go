@@ -32,6 +32,7 @@ func seedServiceStore(t *testing.T) (state.Store, state.Node) {
 		{Name: "metrics", Protocol: "tcp", Port: 9090},
 		{Name: "db", Protocol: "tcp", Port: 5432, Health: true},
 		{Name: "cache", Protocol: "tcp", Port: 6379, Health: true, Visibility: []string{"group:eng"}, Shared: true},
+		{Name: "admin", Protocol: "tcp", Port: 9000, VisibilityFromACL: true},
 	}); err != nil {
 		t.Fatalf("ReplaceNodeServices: %v", err)
 	}
@@ -70,6 +71,9 @@ func TestWriteServicesList(t *testing.T) {
 		}
 		if len(fields) > 5 && fields[0] == "cache" && (fields[3] != "group:eng" || fields[4] != "yes") {
 			t.Errorf("cache row = %v, want visibility group:eng and shared yes:\n%s", fields, out)
+		}
+		if len(fields) > 5 && fields[0] == "admin" && fields[3] != "acl" {
+			t.Errorf("admin visibility = %q, want acl:\n%s", fields[3], out)
 		}
 	}
 

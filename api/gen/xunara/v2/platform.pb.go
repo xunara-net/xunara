@@ -3374,9 +3374,14 @@ type Service struct {
 	// organizations whose users accepted a share of the advertising node.
 	// Projected records resolve to the consumer's masquerade address for the
 	// machine; reachability is still decided by ACL rules alone.
-	Shared        bool `protobuf:"varint,14,opt,name=shared,proto3" json:"shared,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Shared bool `protobuf:"varint,14,opt,name=shared,proto3" json:"shared,omitempty"`
+	// visibility_from_acl reports whether discovery is derived from the ACL
+	// instead of the selector list: the service is discoverable exactly by the
+	// nodes whose packet filter lets them connect on its protocol and port.
+	// Mutually exclusive with a non-default visibility list.
+	VisibilityFromAcl bool `protobuf:"varint,15,opt,name=visibility_from_acl,json=visibilityFromAcl,proto3" json:"visibility_from_acl,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *Service) Reset() {
@@ -3503,6 +3508,13 @@ func (x *Service) GetVisibility() []string {
 func (x *Service) GetShared() bool {
 	if x != nil {
 		return x.Shared
+	}
+	return false
+}
+
+func (x *Service) GetVisibilityFromAcl() bool {
+	if x != nil {
+		return x.VisibilityFromAcl
 	}
 	return false
 }
@@ -5100,7 +5112,7 @@ const file_xunara_v2_platform_proto_rawDesc = "" +
 	"\b_node_id\"n\n" +
 	"\x14ListServicesResponse\x12.\n" +
 	"\bservices\x18\x01 \x03(\v2\x12.xunara.v2.ServiceR\bservices\x12&\n" +
-	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xc1\x04\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\xf1\x04\n" +
 	"\aService\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1a\n" +
 	"\bprotocol\x18\x02 \x01(\tR\bprotocol\x12\x12\n" +
@@ -5119,7 +5131,8 @@ const file_xunara_v2_platform_proto_rawDesc = "" +
 	"\n" +
 	"visibility\x18\r \x03(\tR\n" +
 	"visibility\x12\x16\n" +
-	"\x06shared\x18\x0e \x01(\bR\x06shared\x1a;\n" +
+	"\x06shared\x18\x0e \x01(\bR\x06shared\x12.\n" +
+	"\x13visibility_from_acl\x18\x0f \x01(\bR\x11visibilityFromAcl\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xaa\x01\n" +

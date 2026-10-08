@@ -297,6 +297,9 @@ type serviceRow struct {
 	// Visibility lists the selectors that may discover the service; empty
 	// (or "*") means the whole organization.
 	Visibility []string
+	// VisibilityFromACL reports whether discovery follows the ACL instead of
+	// the selector list.
+	VisibilityFromACL bool
 	// Shared reports whether the service is projected into organizations
 	// that accepted a share of the advertising node.
 	Shared   bool
@@ -328,15 +331,16 @@ func writePublishedServices(w io.Writer, views []protocol.ServiceView) error {
 	rows := make([]serviceRow, 0, len(views))
 	for _, view := range views {
 		rows = append(rows, serviceRow{
-			Name:       view.Name,
-			Protocol:   view.Protocol,
-			Port:       uint32(view.Port),
-			DNSName:    view.DNSName,
-			Visibility: view.Visibility,
-			Shared:     view.Shared,
-			Health:     view.Health,
-			Updated:    view.Updated,
-			Metadata:   view.Metadata,
+			Name:              view.Name,
+			Protocol:          view.Protocol,
+			Port:              uint32(view.Port),
+			DNSName:           view.DNSName,
+			Visibility:        view.Visibility,
+			VisibilityFromACL: view.VisibilityFromACL,
+			Shared:            view.Shared,
+			Health:            view.Health,
+			Updated:           view.Updated,
+			Metadata:          view.Metadata,
 		})
 	}
 	return writeServicesTable(w, rows, "No services are advertised by this node.")
@@ -347,7 +351,7 @@ func writeDeclaredServices(w io.Writer, services []protocol.Service) error {
 	rows := make([]serviceRow, 0, len(services))
 	for _, svc := range services {
 		row := serviceRow{Name: svc.Name, Protocol: svc.Protocol, Port: svc.Port,
-			Visibility: svc.Visibility, Shared: svc.Shared, Metadata: svc.Metadata}
+			Visibility: svc.Visibility, VisibilityFromACL: svc.VisibilityFromACL, Shared: svc.Shared, Metadata: svc.Metadata}
 		if svc.Health {
 			row.Health = "tracked"
 		}
@@ -376,7 +380,7 @@ func writeServicesTable(w io.Writer, rows []serviceRow, empty string) error {
 		if row.Health != "" {
 			tracked = true
 		}
-		if len(row.Visibility) > 0 && !(len(row.Visibility) == 1 && row.Visibility[0] == "*") {
+		if row.VisibilityFromACL || (len(row.Visibility) > 0 && !(len(row.Visibility) == 1 && row.Visibility[0] == "*")) {
 			restricted = true
 		}
 		if row.Shared {
@@ -408,7 +412,7 @@ func writeServicesTable(w io.Writer, rows []serviceRow, empty string) error {
 			fields = append(fields, dashIfEmpty(row.Health))
 		}
 		if restricted {
-			fields = append(fields, visibilityCell(row.Visibility))
+			fields = append(fields, visibilityCell(row.Visibility, row.VisibilityFromACL))
 		}
 		if shared {
 			fields = append(fields, sharedCell(row.Shared))
@@ -458,12 +462,17 @@ func dashIfEmpty(value string) string {
 }
 
 // visibilityCell renders a service's discovery scope: the v1 default (the
-// whole organization) reads as "*".
-func visibilityCell(visibility []string) string {
-	if len(visibility) == 0 {
+// whole organization) reads as "*", a service that derives discovery from the
+// ACL reads as "acl".
+func visibilityCell(visibility []string, fromACL bool) string {
+	parts := make([]string, 0, len(visibility)+1)
+	if fromACL {
+		parts = append(parts, "acl")
+	}
+	if len(parts) == 0 && len(visibility) == 0 {
 		return "*"
 	}
-	return strings.Join(visibility, ", ")
+	return strings.Join(append(parts, visibility...), ", ")
 }
 
 // dashIfZeroTime renders a time the local declaration does not know.

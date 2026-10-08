@@ -69,15 +69,19 @@ func ValidateServices(services []Service) ([]Service, error) {
 		if err != nil {
 			return nil, fmt.Errorf("service %q: %w", svc.Name, err)
 		}
+		if svc.VisibilityFromACL && len(visibility) > 0 {
+			return nil, fmt.Errorf("service %q: visibilityFromACL cannot be combined with visibility selectors", svc.Name)
+		}
 
 		out = append(out, Service{
-			Name:       svc.Name,
-			Protocol:   proto,
-			Port:       svc.Port,
-			Metadata:   metadata,
-			Visibility: visibility,
-			Shared:     svc.Shared,
-			Health:     svc.Health,
+			Name:              svc.Name,
+			Protocol:          proto,
+			Port:              svc.Port,
+			Metadata:          metadata,
+			Visibility:        visibility,
+			VisibilityFromACL: svc.VisibilityFromACL,
+			Shared:            svc.Shared,
+			Health:            svc.Health,
 		})
 	}
 	return out, nil

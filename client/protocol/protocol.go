@@ -143,6 +143,11 @@ type Service struct {
 	// Empty means the whole organization. It never grants access — ACL rules
 	// still decide who may connect.
 	Visibility []string `json:"visibility,omitempty"`
+	// VisibilityFromACL derives discovery from the ACL instead of the
+	// selector list: a node discovers the service exactly when the packet
+	// filter lets it connect to this node on the service's protocol and port.
+	// It cannot be combined with Visibility.
+	VisibilityFromACL bool `json:"visibilityFromACL,omitempty"`
 	// Health opts this service into readiness reporting: the node must
 	// report it through [Client.ReportServiceHealth], and the control plane
 	// withdraws it from MagicDNS while it is not ready or its report
@@ -165,6 +170,9 @@ type ServiceView struct {
 	// Visibility lists the selectors that may discover the service; ["*"] is
 	// the default (the whole organization).
 	Visibility []string `json:"visibility"`
+	// VisibilityFromACL reports whether discovery follows the ACL instead of
+	// the selector list.
+	VisibilityFromACL bool `json:"visibilityFromACL"`
 	// Shared reports whether the service is projected into organizations
 	// that accepted a share of the advertising node.
 	Shared   bool   `json:"shared"`

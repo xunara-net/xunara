@@ -69,6 +69,11 @@ type agentService struct {
 	// MagicDNS (section 46): ACL source selectors resolved against the node
 	// that publishes it. Empty means the whole organization.
 	Visibility []string `json:"visibility,omitempty"`
+	// VisibilityFromACL derives discovery from the ACL instead of the
+	// selector list (section 48): a node sees the service exactly when the
+	// packet filter lets it connect on this protocol and port. It cannot be
+	// combined with Visibility.
+	VisibilityFromACL bool `json:"visibilityFromACL,omitempty"`
 	// Health opts the service into readiness reporting (section 26). Without
 	// it the service is always discoverable, exactly as before health
 	// reporting existed.
@@ -89,6 +94,9 @@ type serviceView struct {
 	// Visibility lists the selectors that may discover the service; ["*"] is
 	// the default (the whole organization).
 	Visibility []string `json:"visibility"`
+	// VisibilityFromACL reports whether discovery follows the ACL instead of
+	// the selector list.
+	VisibilityFromACL bool `json:"visibilityFromACL"`
 	// Shared reports whether the service is projected into the MagicDNS of
 	// organizations whose users accepted a share of the advertising node.
 	Shared   bool   `json:"shared"`
@@ -227,6 +235,9 @@ func sameServiceSet(stored, declared []state.Service) bool {
 		if svc.Shared != other.Shared {
 			return false
 		}
+		if svc.VisibilityFromACL != other.VisibilityFromACL {
+			return false
+		}
 		if !slices.Equal(svc.Visibility, other.Visibility) {
 			return false
 		}
@@ -286,15 +297,19 @@ func (s *Server) normalizeAgentServices(services []agentService) ([]state.Servic
 				return nil, fmt.Errorf("service %q: %w", svc.Name, err)
 			}
 		}
+		if svc.VisibilityFromACL && len(visibility) > 0 {
+			return nil, fmt.Errorf("service %q: visibilityFromACL cannot be combined with visibility selectors", svc.Name)
+		}
 
 		out = append(out, state.Service{
-			Name:       svc.Name,
-			Protocol:   protocol,
-			Port:       uint16(svc.Port),
-			Visibility: visibility,
-			Shared:     svc.Shared,
-			Metadata:   metadata,
-			Health:     svc.Health,
+			Name:              svc.Name,
+			Protocol:          protocol,
+			Port:              uint16(svc.Port),
+			Visibility:        visibility,
+			VisibilityFromACL: svc.VisibilityFromACL,
+			Shared:            svc.Shared,
+			Metadata:          metadata,
+			Health:            svc.Health,
 		})
 	}
 	return out, nil
@@ -450,17 +465,18 @@ func (s *Server) checkServiceBudget(node state.Node, services []state.Service) e
 // serviceView renders one stored service for the read surfaces.
 func (s *Server) serviceView(svc state.Service, node state.Node) serviceView {
 	view := serviceView{
-		Name:       svc.Name,
-		Protocol:   svc.Protocol,
-		Port:       svc.Port,
-		Metadata:   svc.Metadata,
-		Visibility: visibilityOrDefault(svc.Visibility),
-		Shared:     svc.Shared,
-		NodeID:     uint64(node.ID),
-		StableID:   node.StableID,
-		Hostname:   node.Hostname,
-		Created:    svc.Created,
-		Updated:    svc.Updated,
+		Name:              svc.Name,
+		Protocol:          svc.Protocol,
+		Port:              svc.Port,
+		Metadata:          svc.Metadata,
+		Visibility:        visibilityOrDefault(svc.Visibility),
+		VisibilityFromACL: svc.VisibilityFromACL,
+		Shared:            svc.Shared,
+		NodeID:            uint64(node.ID),
+		StableID:          node.StableID,
+		Hostname:          node.Hostname,
+		Created:           svc.Created,
+		Updated:           svc.Updated,
 	}
 	if domain := strings.Trim(s.cfg.Domain, "."); domain != "" {
 		view.DNSName = svc.Name + "." + domain
@@ -499,6 +515,7 @@ func (s *Server) serviceDNSRecordsFor(self state.Node) []state.DNSRecord {
 
 	services := s.store.ListServices()
 	visible := s.visibleServiceNames(self, services)
+	s.filterACLDerivedServices(self, services, visible)
 	var out []state.DNSRecord
 	for _, svc := range services {
 		if !visible[svc.Name] {

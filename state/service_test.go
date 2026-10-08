@@ -18,9 +18,9 @@ func runServiceConformance(t *testing.T, newStore storeFactory) {
 		second := createTestNode(t, s, "second")
 
 		if err := s.ReplaceNodeServices(first.ID, []Service{
-			{Name: "metrics", Protocol: "tcp", Port: 9090},
+			{Name: "metrics", Protocol: "tcp", Port: 9090, VisibilityFromACL: true},
 			{Name: "api", Protocol: "tcp", Port: 8080, Metadata: map[string]string{"version": "2"},
-				Visibility: []string{"group:eng", "tag:prod"}, Shared: true},
+				Visibility: []string{"group:eng", "tag:prod"}, Shared: true, VisibilityFromACL: false},
 		}); err != nil {
 			t.Fatalf("ReplaceNodeServices: %v", err)
 		}

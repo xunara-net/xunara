@@ -593,6 +593,11 @@ message Service {
   // Projected records resolve to the consumer's masquerade address for the
   // machine; reachability is still decided by ACL rules alone.
   bool shared = 14;
+  // visibility_from_acl reports whether discovery is derived from the ACL
+  // instead of the selector list: the service is discoverable exactly by the
+  // nodes whose packet filter lets them connect on its protocol and port.
+  // Mutually exclusive with a non-default visibility list.
+  bool visibility_from_acl = 15;
 }
 
 message AuditEvent {

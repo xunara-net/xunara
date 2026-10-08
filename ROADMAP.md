@@ -1862,6 +1862,32 @@ A/AAAA 记录；ACL 仍是唯一授权来源（发现不等于授权）。规格
 
 ---
 
+## M41 — Atlas 可见性按 ACL 收敛（v2.1，已完成）
+
+目标：交付 spec §46.4 预留的"ACL 自动收敛"。服务声明 `visibilityFromACL`
+后，恰好对"包过滤器允许连上它的节点"可见——评估用目的节点的 ingress 规则
+（与发布者客户端执行的是同一份），因此"可见"等于"连接会被接受"。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §48。
+
+- `state`（迁移 v18，独立表 `node_service_acl_visibility`，可重放）：
+  `Service.VisibilityFromACL` 随 republish 重写，读回默认 false。
+- `policy/ingress.go`：`AllowsIngress(rules, dst, src, proto, port)` 按
+  tailcfg 规则语义判定（SrcIPs 前缀/通配、DstPorts 端口范围、协议列表；
+  空协议列表匹配 TCP/UDP/ICMP）；`autogroup:internet` 编译出的 /0 前缀与
+  无法解析的形式一律不放行。
+- `control`：发布校验拒绝 `visibility` 与 `visibilityFromACL` 同时出现
+  （400）；`filterACLDerivedServices` 在 MagicDNS 派生时按目的 ingress
+  过滤；按（策略引擎 + 节点快照指纹）缓存每个目的节点的规则，无相关服务时
+  零成本，节点身份/地址/tag 变化或策略重载立即失效。
+- 视图：agent 协议、HTTP v2、gRPC、Console、CLI 显示 `visibilityFromACL`
+  （Discovery 列渲染为 `acl`）。
+- 测试：`policy/ingress_test.go`（选择器解析、协议/端口、internet 例外、
+  fail-closed）、`control/service_acl_test.go`（组内/组外可见性、协议不匹配、
+  发布者恒可见、无策略等价默认、缓存失效、发布校验）、protocol/gRPC/Console/
+  CLI 断言、state v17→v18 迁移。
+
+---
+
 ## 后续计划（用户指定的排序）
 
 - **Web Console 现代化（最后）**：用户要求把"用户控制中心"的 Web 页面现代化

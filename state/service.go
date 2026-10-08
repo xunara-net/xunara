@@ -30,6 +30,13 @@ type Service struct {
 	// Visibility narrows discovery only; the ACL rules still decide who may
 	// connect.
 	Visibility []string
+	// VisibilityFromACL derives discovery from the ACL instead of a selector
+	// list: a node discovers the service exactly when the packet filter lets
+	// it connect to the publishing node on the service's protocol and port.
+	// It is mutually exclusive with Visibility (control rejects a declaration
+	// that sets both). Discovery still grants nothing: the ACL remains the
+	// only authorization.
+	VisibilityFromACL bool
 	// Shared marks the service for cross-organization discovery: when the
 	// advertising node itself is shared (section 38), the target user's nodes
 	// see it in their MagicDNS as "<name>-<source-org>". It is an independent

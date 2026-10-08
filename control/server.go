@@ -249,6 +249,10 @@ type Server struct {
 	shares   *ShareRegistry
 	shareDir ShareDirectory
 
+	// aclIngress memoizes per-destination ingress filters for services whose
+	// visibility is derived from the ACL (spec section 48).
+	aclIngress aclIngressCache
+
 	// derpMap is the DERP map served to this organization's clients after
 	// DERPPolicy is applied; nil when there is no map to advertise.
 	derpMap *tailcfg.DERPMap

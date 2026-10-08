@@ -260,6 +260,18 @@ CREATE TABLE IF NOT EXISTS node_service_shared (
 	PRIMARY KEY (node_id, name)
 );
 `,
+
+	// v18: ACL-derived service visibility (section 48). Same replayable shape
+	// as the other per-service flags: a row means "derive discovery from the
+	// ACL", a missing row means the declaration uses selector visibility (or
+	// the organization default).
+	`
+CREATE TABLE IF NOT EXISTS node_service_acl_visibility (
+	node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+	name    TEXT    NOT NULL,
+	PRIMARY KEY (node_id, name)
+);
+`,
 }
 
 // SQLiteStore is a durable [Store] backed by SQLite.
