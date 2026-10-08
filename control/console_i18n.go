@@ -31,10 +31,18 @@ var (
 type consoleDict struct {
 	text  map[string]string
 	block map[string]string
+	// prefix maps a leading English fragment to Chinese; the remainder of the
+	// string is appended unchanged, which covers sentences that embed a
+	// runtime value (an error, a file name, a count).
+	prefix map[string]string
 }
 
 // consoleTranslations holds one dictionary per language keyed by message id.
-var consoleTranslations = map[string]consoleDict{"zh": {text: consoleZH, block: consoleZHBlock}}
+var consoleTranslations = map[string]consoleDict{"zh": {
+	text:   consoleZH,
+	block:  consoleZHBlock,
+	prefix: consoleZHPrefix,
+}}
 
 // consoleLangFromRequest resolves the UI language: the preference cookie the
 // operator set in the console wins, otherwise the browser's Accept-Language

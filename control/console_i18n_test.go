@@ -251,6 +251,20 @@ func TestLocalizeHTML(t *testing.T) {
 		t.Error("an untranslated paragraph was dropped or altered")
 	}
 
+	// Prefix rules translate a sentence built around a runtime value, and
+	// T formats the counts the templates pass in.
+	pref := consoleDict{text: map[string]string{}, prefix: map[string]string{"Fix the file:": "请修复文件："}}
+	got = localizeHTML(pref, `<p>Fix the file: /etc/policy.hujson</p>`)
+	if !strings.Contains(got, "请修复文件：/etc/policy.hujson") {
+		t.Errorf("prefix rule did not apply:\n%s", got)
+	}
+	if got := translator("zh")("%d rules", 3); got != "3 条规则" {
+		t.Errorf("T with arguments = %q, want 3 条规则", got)
+	}
+	if got := translator("en")("%d rules", 3); got != "3 rules" {
+		t.Errorf("T with arguments (en) = %q, want 3 rules", got)
+	}
+
 	// English is a pass-through: the same bytes come back.
 	dictEN := consoleTranslations[consoleDefaultLang]
 	if dictEN.text != nil || dictEN.block != nil {

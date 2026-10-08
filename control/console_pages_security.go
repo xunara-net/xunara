@@ -28,8 +28,8 @@ live monitoring: findings are deterministic observations (spec section 39).</p>
 {{range .View.Findings}}
 <tr>
 <td>{{if eq .Severity "high"}}<span class="warn">high</span>{{else if eq .Severity "medium"}}<span class="tag warn">medium</span>{{else if eq .Severity "low"}}<span class="tag">low</span>{{else}}<span class="off">info</span>{{end}}</td>
-<td><code>{{.ID}}</code><br>{{.Title}}</td>
-<td>{{.Detail}}</td>
+<td><code>{{.ID}}</code><br>{{T .Title}}</td>
+<td>{{T .Detail}}</td>
 </tr>
 {{end}}
 </tbody>
@@ -63,10 +63,10 @@ keys are the actionable subset; the rest is the schedule.</p>
 <dl>
 <dt>Tailnet lock</dt><dd>{{if .View.TailnetLock.Enabled}}enforced{{else if .View.TailnetLock.Disabled}}disabled (chain kept){{else}}never enabled{{end}}</dd>
 <dt>Policy</dt><dd>{{if .View.Policy.Configured}}{{.View.Policy.RuleCount}} rule(s), {{.View.Policy.WarningCount}} warning(s){{else}}not configured (allow-all){{end}}</dd>
-<dt>Auth keys</dt><dd>{{.View.AuthKeys.Total}} total, {{.View.AuthKeys.Expired}} expired, {{.View.AuthKeys.Unused}} unused single-use</dd>
-<dt>API keys</dt><dd>{{.View.APIKeys.Live}} live, {{.View.APIKeys.Revoked}} revoked, {{.View.APIKeys.Expired}} expired, {{.View.APIKeys.NeverExpires}} without expiry</dd>
+<dt>Auth keys</dt><dd>{{T "%d total, %d expired, %d unused single-use" .View.AuthKeys.Total .View.AuthKeys.Expired .View.AuthKeys.Unused}}</dd>
+<dt>API keys</dt><dd>{{T "%d live, %d revoked, %d expired, %d without expiry" .View.APIKeys.Live .View.APIKeys.Revoked .View.APIKeys.Expired .View.APIKeys.NeverExpires}}</dd>
 <dt>Sharing</dt><dd>{{if .View.Sharing.Enabled}}outgoing {{.View.Sharing.OutgoingPending}} pending / {{.View.Sharing.OutgoingAccepted}} accepted; incoming {{.View.Sharing.IncomingPending}} pending / {{.View.Sharing.IncomingAccepted}} accepted{{else}}not enabled{{end}}</dd>
 <dt>Webhooks</dt><dd>{{if .View.Webhooks.Enabled}}delivering ({{.View.Webhooks.Configured}} configured, {{.View.Webhooks.ManagedActive}} managed, {{.View.Webhooks.ManagedPaused}} paused){{else}}not delivering{{end}}</dd>
-<dt>DERP</dt><dd>{{if .View.DERP.MapConfigured}}map configured{{else}}default map{{end}}, policy {{if .View.DERP.Policy}}{{.View.DERP.Policy}}{{else}}open{{end}}, {{.View.DERP.RegionsServed}} region(s)</dd>
+<dt>DERP</dt><dd>{{if .View.DERP.MapConfigured}}{{T "map configured"}}{{else}}{{T "default map"}}{{end}}, {{if .View.DERP.Policy}}{{T "policy %s" .View.DERP.Policy}}{{else}}{{T "policy open"}}{{end}}, {{T "%d region(s)" .View.DERP.RegionsServed}}</dd>
 </dl>
 `)

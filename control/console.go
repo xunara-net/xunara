@@ -207,9 +207,11 @@ func (s *Server) handleConsoleOverview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	engine := s.policy.Load()
-	policyState := "allow-all (no policy document)"
 	if engine != nil {
-		policyState = fmt.Sprintf("%d rules", engine.RuleCount())
+		// The page composes the sentence from the count so both languages can
+		// order the number and the noun their own way.
+		data["PolicyDocument"] = true
+		data["PolicyRules"] = engine.RuleCount()
 	}
 
 	data["MachinesTotal"] = len(nodes)
@@ -226,7 +228,6 @@ func (s *Server) handleConsoleOverview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	data["Agents"] = liveAgents
-	data["Policy"] = policyState
 	data["TailnetLock"] = s.TKAStatus()
 	// The issuer view is best-effort: a keyring an operator must fix (bad
 	// permissions, corrupt file) should not blank the whole overview.

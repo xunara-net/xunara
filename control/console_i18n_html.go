@@ -33,7 +33,7 @@ func translateHTML(lang, page string) string {
 
 // localizeHTML rewrites one rendered page with one dictionary.
 func localizeHTML(dict consoleDict, page string) string {
-	if len(page) == 0 || (len(dict.text) == 0 && len(dict.block) == 0) {
+	if len(page) == 0 || (len(dict.text) == 0 && len(dict.block) == 0 && len(dict.prefix) == 0) {
 		return page
 	}
 	var b strings.Builder
@@ -129,7 +129,7 @@ func (l *localizer) writeText(text string) {
 		l.out.WriteString(text)
 		return
 	}
-	translated, ok := l.dict.text[html.UnescapeString(trimmed)]
+	translated, ok := l.lookup(html.UnescapeString(trimmed))
 	if !ok {
 		l.out.WriteString(text)
 		return
@@ -154,6 +154,25 @@ func lookupBlock(dict consoleDict, inner string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// lookup resolves one text node: an exact message id first, then the longest
+// leading fragment. A prefix rule keeps the rest of the string, so a sentence
+// built around a runtime value still translates.
+func (l *localizer) lookup(source string) (string, bool) {
+	if translated, ok := l.dict.text[source]; ok {
+		return translated, true
+	}
+	best, bestLen := "", -1
+	for prefix := range l.dict.prefix {
+		if len(prefix) > bestLen && len(prefix) <= len(source) && strings.HasPrefix(source, prefix) {
+			best, bestLen = prefix, len(prefix)
+		}
+	}
+	if bestLen < 0 {
+		return "", false
+	}
+	return l.dict.prefix[best] + strings.TrimLeft(source[len(best):], " "), true
 }
 
 func localizeAttrs(dict consoleDict, tag string) string {

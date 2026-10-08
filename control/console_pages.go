@@ -446,7 +446,7 @@ var (
 <div class="card"><span class="num">{{.Agents}}</span><span>agent credentials</span></div>
 </div>
 <h2>Access control</h2>
-<p>{{.Policy}}</p>
+<p>{{if .PolicyDocument}}{{T "%d rules" .PolicyRules}}{{else}}{{T "allow-all (no policy document)"}}{{end}}</p>
 <h2>Tailnet lock</h2>
 {{if .TailnetLock.Enabled}}
 <p><span class="ok">enabled</span> — chain head <code>{{.TailnetLock.Head}}</code>;
@@ -467,10 +467,9 @@ with <code>tailscale lock init</code> from a trusted machine.</p>
 <p><span class="ok">issuer enabled</span> — nodes fetch identity tokens at
 <code>{{.IDToken.Issuer}}</code>/machine/id-token; relying parties verify them with the
 public keys at <code>{{.IDToken.JWKSURL}}</code>.</p>
-<p>{{len .IDToken.Keys}} signing key(s) published; the active key is
-<code>{{.IDToken.ActiveKeyID}}</code>. Issued tokens are valid for
-{{.IDToken.TokenTTLSeconds}} seconds and name the requesting node, never another one.
-Rotate the key with <code>xunara id-token rotate</code>.</p>
+<p>{{T "%d signing key(s) published; the active key is" (len .IDToken.Keys)}}
+<code>{{.IDToken.ActiveKeyID}}</code>{{T ". Issued tokens are valid for %d seconds and name the requesting node, never another one." .IDToken.TokenTTLSeconds}}
+{{T "Rotate the key with"}} <code>xunara id-token rotate</code>.</p>
 {{else}}
 <p>Not enabled: this deployment has no externally reachable <code>-server-url</code>,
 so it has no issuer URL to be a trust anchor for, and nodes receive 501 from
@@ -851,7 +850,7 @@ again:</p>
 <td>{{fmtTime .Created}}</td>
 <td>{{if .Expires}}{{fmtTime .Expires}}{{else}}never{{end}}</td>
 <td>{{if .LastUsed}}{{fmtTime .LastUsed}}{{else}}never{{end}}</td>
-<td>{{if .Revoked}}<span class="warn">revoked {{fmtTime .Revoked}}</span>{{else}}<span class="ok">live</span>{{end}}</td>
+<td>{{if .Revoked}}<span class="warn">{{T "revoked"}} {{fmtTime .Revoked}}</span>{{else}}<span class="ok">live</span>{{end}}</td>
 {{if $.CanWrite}}<td>{{if not .Revoked}}<form method="post" action="/console/api-keys/{{.ID}}/revoke"><input type="hidden" name="csrf" value="{{$.CSRF}}"><button class="danger" type="submit">Revoke</button></form>{{end}}</td>{{end}}
 </tr>
 {{end}}
@@ -946,8 +945,7 @@ An operator enables it with <code>-flux</code> (single organization) or
 {{end}}
 </tbody>
 </table>
-{{if .More}}<p>Only the newest {{len .Transfers}} transfers are shown; filter by
-state or use the API to page through the rest.</p>{{end}}
+{{if .More}}<p>{{T "Only the newest %d transfers are shown; filter by state or use the API to page through the rest." (len .Transfers)}}</p>{{end}}
 {{else}}
 <p>No Flux transfers match.</p>
 {{end}}
@@ -1016,8 +1014,7 @@ operator enables it per organization (<code>reach_enabled</code>) and runs
 {{end}}
 </tbody>
 </table>
-{{if .More}}<p>Only the newest {{len .Sessions}} sessions are shown; filter by
-state or use the API to page through the rest.</p>{{end}}
+{{if .More}}<p>{{T "Only the newest %d sessions are shown; filter by state or use the API to page through the rest." (len .Sessions)}}</p>{{end}}
 {{else}}
 <p>No Reach sessions match.</p>
 {{end}}
@@ -1041,17 +1038,15 @@ state or use the API to page through the rest.</p>{{end}}
 <dt>Created</dt><dd>{{fmtTime .CreatedAt}}</dd>
 <dt>Updated</dt><dd>{{fmtTime .UpdatedAt}}</dd>
 <dt>Expires</dt><dd>{{fmtTime .ExpiresAt}}</dd>
-<dt>Output</dt><dd>{{.OutputBytes.Stdout}} bytes on stdout, {{.OutputBytes.Stderr}} bytes on stderr</dd>
+<dt>Output</dt><dd>{{T "%d bytes on stdout, %d bytes on stderr" .OutputBytes.Stdout .OutputBytes.Stderr}}</dd>
 </dl>
 <p>The output is retained with the session (one hour after the last update)
 and may contain sensitive data; it never enters the audit log.</p>
 <h3>stdout</h3>
-{{if $.TruncatedOut}}<p class="warn">Showing the first {{$.OutputLimit}} bytes;
-more output was written.</p>{{end}}
+{{if $.TruncatedOut}}<p class="warn">{{T "Showing the first %d bytes; more output was written." $.OutputLimit}}</p>{{end}}
 {{if $.Stdout}}<pre>{{$.Stdout}}</pre>{{else}}<p>No stdout output.</p>{{end}}
 <h3>stderr</h3>
-{{if $.TruncatedErr}}<p class="warn">Showing the first {{$.OutputLimit}} bytes;
-more output was written.</p>{{end}}
+{{if $.TruncatedErr}}<p class="warn">{{T "Showing the first %d bytes; more output was written." $.OutputLimit}}</p>{{end}}
 {{if $.Stderr}}<pre>{{$.Stderr}}</pre>{{else}}<p>No stderr output.</p>{{end}}
 {{else}}
 <p>No Reach session has that ID.</p>
@@ -1070,7 +1065,7 @@ enforceable half, and it only covers the relay Xunara runs.</p>
 {{if .Status.PolicyRegions}}<dt>Allowed regions</dt><dd>{{range .Status.PolicyRegions}}<code>{{.}}</code> {{end}}</dd>{{end}}
 <dt>Map</dt><dd>{{if .Status.MapConfigured}}configured{{else}}not configured — clients keep their built-in default regions{{end}}</dd>
 <dt>Regions served</dt><dd>{{.Status.RegionsServed}}</dd>
-<dt>Machines</dt><dd>{{len .Nodes}} total; {{.Status.NodesWithoutHome}} without a home region; {{.Status.NodesWithUnservedHome}} homed to a region no longer served</dd>
+<dt>Machines</dt><dd>{{T "%d total; %d without a home region; %d homed to a region no longer served" (len .Nodes) .Status.NodesWithoutHome .Status.NodesWithUnservedHome}}</dd>
 </dl>
 {{if .Status.Regions}}
 <table>
@@ -1270,8 +1265,7 @@ page is read-only. A verdict is handed to exactly one follow-up request, so
 {{end}}
 </tbody>
 </table>
-{{if .More}}<p>Only the newest {{len .Sessions}} sessions are shown; filter by
-state or use the API to page through the rest.</p>{{end}}
+{{if .More}}<p>{{T "Only the newest %d sessions are shown; filter by state or use the API to page through the rest." (len .Sessions)}}</p>{{end}}
 {{else}}
 <p>No SSH checks match.</p>
 {{end}}
