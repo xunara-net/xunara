@@ -1764,6 +1764,32 @@ write 角色 + CSRF），管理面没有任何写入口。
 
 ---
 
+## M37 — Xunara Serve / Funnel 管理面（只读）+ Flow Logs 结论（v1，已完成）
+
+目标：为 spec §20 P2 的最后两项给出交付物——Serve/Funnel 的只读管理面，以及
+Flow Logs 的明确结论。规格见
+`Xunara_AI_Development_Docs_2026-10-05/PROJECT_SPEC.md` §43/§44。
+
+- HTTP `GET /api/v2/serve`（read scope）与 Console `/console/serve`
+  （nav "Serve"，任意角色可读）：`certificates`（是否配置 DNS provider）、
+  `certDomains`（附加证书域名）、`funnelSupported`（本构建恒 false）、
+  `nodes`（`https` 授权 ∪ Funnel 报告 ∪ ingress 需求，按 nodeId 升序，含
+  serve/funnel/wantsIngress/certDomains）；不返回证书或 ACME 挑战值。
+- 判据：`https` nodeAttr → `CapabilityHTTPS`；证书可用性来自 `certDomainsFor`
+  （无 provider 时为空数组）；Funnel 报告（`Hostinfo.IngressEnabled` /
+  `WireIngress`）按事实显示为异常——策略加载拒绝 `funnel` 属性，本构建不运营
+  公网 ingress。
+- Flow Logs（§44）：明确不做。客户端 netlog 需要控制面下发
+  `data-plane-audit-logs` 能力 + `DataPlaneAuditLogID`/`DomainAuditLogID` 并把
+  流量元数据交给 Tailscale 的 logtail；Xunara 从不设置这两个 ID，因此不存在
+  发往第三方收集器的路径。自建上报属于 Xunara Pulse 的新规格，不在 v1。
+- 不做：远程启停 serve/Funnel、下发 serve 配置、公网 ingress、证书内容查看、
+  流量统计、gRPC（§43.3）。
+- 测试：`control/serve_test.go`（四种姿态、有无 DNS provider 的证书口径、HTTP
+  401/200/member、Console 无表单跨角色可读）。
+
+---
+
 ## 横切注意事项
 
 - **禁止猜 API**：改 `control/` 前先查 `reference/`（AGENTS.md §3）。

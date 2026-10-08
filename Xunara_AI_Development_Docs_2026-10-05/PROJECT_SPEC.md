@@ -2136,3 +2136,87 @@ Console `/console/relays`（nav "Relays"，任意角色可看）：
   - Console：两个表、跨角色可读、无表单；
   - 兼容性：真实客户端路径下 relay grant 进入 `PacketFilters.base`、
     `disable-relay-*` 进入 self 的 `CapMap`、peer 的 `PeerRelay` 供给可见。
+
+---
+
+## 43. Xunara Serve / Funnel 管理面（只读，v1）
+
+目标：把 tailnet 的 HTTPS 发布能力放到一个面上——哪些设备被授权 `tailscale
+serve`、证书能不能签发、哪些设备报告了 Funnel 或 ingress 活动。只读：serve
+配置在节点本地，控制面只会授予能力与代理 ACME 挑战。
+
+### 43.1 数据模型与判据
+
+- **授权**：策略 `nodeAttrs` 的 `https` → `tailcfg.CapabilityHTTPS` 进入节点
+  CapMap，是 `tailscale serve` 在设备上能被启用的前提（§M6b/M6f）。
+- **证书**：配置 DNS provider 后控制面为节点代写 `_acme-challenge` TXT（DNS-01，
+  私钥与 CSR 始终留在客户端），并按 `certDomainsFor` 下发 `CertDomains`；没有
+  provider 时客户端报告"证书不支持"，serve 无法完成 TLS。
+- **Funnel**：需要公网 ingress，本构建不运营；策略加载即拒绝 `funnel` 属性，
+  任何 netmap 都不会授予它。设备仍可能上报 `Hostinfo.IngressEnabled` 或
+  `WireIngress`（例如手工配置），管理面把这类报告按事实显示为异常，而不是
+  静默丢弃或假装支持。
+
+### 43.2 HTTP 与 Console
+
+`GET /api/v2/serve`（read scope）：
+
+```text
+{
+  "certificates": true,            // 是否配置了 DNS provider
+  "certDomains": ["extra.example.com"],
+  "funnelSupported": false,        // 本构建恒为 false
+  "nodes": [
+    { nodeId, stableId, hostname, owner, online,
+      serve, funnel, wantsIngress,
+      certDomains: ["node.tailnet.example.com", "extra.example.com"] }
+  ]
+}
+```
+
+- `nodes` = 被授予 `https` ∪ 上报 Funnel ∪ 上报 ingress 需求的节点，按 nodeId
+  升序；`certDomains` 在该节点无证书能力时为空数组（不是 null）。
+- 不返回证书、私钥、ACME 挑战值或任何 DNS 记录内容。
+- gRPC 不做（只读管理面走 HTTP/Console，与 §31/§33/§35/§39/§40/§41/§42 同构）。
+
+Console `/console/serve`（nav "Serve"，任意角色可看）：
+
+- 证书状态（是否配置 DNS provider）、附加证书域名、Funnel 明确不支持的说明；
+- 节点表：节点/所有者/在线/`https` 授权/可用证书域名/Funnel 与 ingress 报告；
+- 无表单、无写入口；serve 配置仍在设备本地。
+
+### 43.3 明确不做（v1）
+
+- 远程开启/停止 serve 或 Funnel、下发 serve 配置（客户端本地状态）；
+- 运行公网 ingress、为 Funnel 分配域名/地址（架构排除，策略 fail-closed 拒绝）；
+- 证书内容的查看/导出/吊销（私钥从不经过控制面，见 M6f）；
+- 按域名/端口的 serve 流量统计（控制面没有数据面遥测）。
+
+### 43.4 测试
+
+- `control/serve_test.go`：
+  - `https` 授权、Funnel 报告、ingress 需求、无关节点四种姿态区分；
+  - 配置 DNS provider 时 `certificates=true` 且节点证书域名含自身 FQDN 与附加域
+    名；未配置时为空数组且页面说明证书不可用；
+  - HTTP：匿名 401、read scope 200、member 可读；
+  - Console：渲染四种姿态、Funnel 不支持的说明、无表单、跨角色可读。
+
+---
+
+## 44. Flow Logs（明确不做，v1）
+
+目标：记录 _spec §20 P2_ 的 Flow Logs 结论，避免以后把"没做"误读成"漏做"。
+
+- 官方客户端的流日志（`wgengine/netlog`）不是控制面数据：其开启条件是
+  self netmap 同时具备 `tailscale.com/cap/data-plane-audit-logs`、
+  合法的 `DataPlaneAuditLogID` 与 `DomainAuditLogID`（参考 upstream
+  `ipn/ipnlocal` 的 `netLogNodeSource.NetLogIDs`），收集端是 Tailscale 的
+  logtail 服务。
+- Xunara 从不设置这两个 audit log ID（netmap 里始终为空），因此即使管理员在
+  `nodeAttrs` 里写了该能力，客户端的 netlog 也不会启动：不存在"日志被悄悄
+  发往第三方"的路径。这是安全决策，不是实现缺口。
+- 控制面看不到数据面包，无法从任何既有状态推导按流日志；若要自建收集协议，
+  那属于 §19 的 Xunara Pulse（Telemetry）新工作，需要单独的规格（上报协议、
+  隐私边界、留存、限额），不在 v1。
+- v1 的替代物是控制面审计日志（平台/Console 的 `audit`）与 §39 Security
+  Center 的安全姿态快照；§39.4 与 §40.3 同样明确排除按流日志。
